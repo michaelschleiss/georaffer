@@ -1,0 +1,322 @@
+"""Tests for base downloader class."""
+
+import os
+from io import BytesIO
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
+
+from georaffer.downloaders.base import RegionDownloader
+
+
+class ConcreteDownloader(RegionDownloader):
+    """Concrete implementation for testing abstract base class."""
+
+    def utm_to_grid_coords(self, utm_x, utm_y):
+        return (int(utm_x // 1000), int(utm_y // 1000)), (int(utm_x // 1000), int(utm_y // 1000))
+
+    def _parse_jp2_feed(self, session, root):
+        return {(350, 5600): "http://example.com/tile.jp2"}
+
+    def _parse_laz_feed(self, session, root):
+        return {(350, 5600): "http://example.com/tile.laz"}
+
+    @property
+    def jp2_feed_url(self):
+        return "http://example.com/jp2_feed.xml"
+
+    @property
+    def laz_feed_url(self):
+        return "http://example.com/laz_feed.xml"
+
+    @property
+    def verify_ssl(self):
+        return True
+
+
+class TestRegionDownloaderInit:
+    """Tests for downloader initialization."""
+
+    def test_init_creates_directories(self, tmp_path):
+        """Test that output directories are set correctly."""
+        downloader = ConcreteDownloader("TEST", str(tmp_path))
+
+        assert downloader.region_name == "TEST"
+        assert downloader.raw_dir == tmp_path / "raw"
+        assert downloader.processed_dir == tmp_path / "processed"
+
+    def test_init_accepts_custom_session(self, tmp_path):
+        """Test session injection for testing."""
+        mock_session = Mock()
+        downloader = ConcreteDownloader("TEST", str(tmp_path), session=mock_session)
+
+        assert downloader.session is mock_session
+
+    def test_init_creates_default_session(self, tmp_path):
+        """Test default session creation."""
+        downloader = ConcreteDownloader("TEST", str(tmp_path))
+
+        assert downloader.session is not None
+
+
+class TestDownloadFile:
+    """Tests for download_file method."""
+
+    @pytest.fixture
+    def downloader(self, tmp_path):
+        mock_session = Mock()
+        return ConcreteDownloader("TEST", str(tmp_path), session=mock_session)
+
+    def test_download_success(self, downloader, tmp_path):
+        """Test successful file download."""
+        # Mock response with context manager support
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = False
+        mock_response.headers = {"content-length": "5000"}
+        mock_response.iter_content.return_value = [b"x" * 5000]
+        mock_response.raise_for_status = Mock()
+        downloader.session.get.return_value = mock_response
+
+        # Mock integrity check
+        with patch.object(downloader, "_verify_file_integrity", return_value=True):
+            output_path = str(tmp_path / "output" / "test.jp2")
+            result = downloader.download_file("http://example.com/test.jp2", output_path)
+
+        assert result is True
+        assert os.path.exists(output_path)
+
+    def test_download_retries_on_small_file(self, downloader, tmp_path):
+        """Test retry when file is too small."""
+        # First response: too small, second: valid
+        small_response = MagicMock()
+        small_response.__enter__.return_value = small_response
+        small_response.__exit__.return_value = False
+        small_response.headers = {"content-length": "100"}
+        small_response.iter_content.return_value = [b"x" * 100]
+        small_response.raise_for_status = Mock()
+
+        valid_response = MagicMock()
+        valid_response.__enter__.return_value = valid_response
+        valid_response.__exit__.return_value = False
+        valid_response.headers = {"content-length": "5000"}
+        valid_response.iter_content.return_value = [b"x" * 5000]
+        valid_response.raise_for_status = Mock()
+
+        downloader.session.get.side_effect = [small_response, valid_response]
+
+        with patch.object(downloader, "_verify_file_integrity", return_value=True):
+            with patch("georaffer.downloaders.base.time.sleep"):  # Skip delays
+                output_path = str(tmp_path / "output" / "test.jp2")
+                result = downloader.download_file("http://example.com/test.jp2", output_path)
+
+        assert result is True
+        assert downloader.session.get.call_count == 2
+
+    def test_download_retries_on_integrity_failure(self, downloader, tmp_path):
+        """Test retry when integrity check fails."""
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = False
+        mock_response.headers = {"content-length": "5000"}
+        mock_response.iter_content.return_value = [b"x" * 5000]
+        mock_response.raise_for_status = Mock()
+        downloader.session.get.return_value = mock_response
+
+        # First call fails integrity, second succeeds
+        with patch.object(downloader, "_verify_file_integrity", side_effect=[False, True]):
+            with patch("georaffer.downloaders.base.time.sleep"):
+                output_path = str(tmp_path / "output" / "test.jp2")
+                result = downloader.download_file("http://example.com/test.jp2", output_path)
+
+        assert result is True
+
+    def test_download_fails_after_max_retries(self, downloader, tmp_path):
+        """Test failure after exhausting retries raises RuntimeError."""
+        import requests
+
+        downloader.session.get.side_effect = requests.RequestException("Network error")
+
+        with patch("georaffer.downloaders.base.time.sleep"):
+            with patch("georaffer.downloaders.base.MAX_RETRIES", 3):
+                output_path = str(tmp_path / "output" / "test.jp2")
+                with pytest.raises(RuntimeError, match="Download failed after 3 retries"):
+                    downloader.download_file("http://example.com/test.jp2", output_path)
+
+    def test_download_atomic_write(self, downloader, tmp_path):
+        """Test that download uses atomic write (temp file + rename)."""
+        mock_response = MagicMock()
+        mock_response.__enter__.return_value = mock_response
+        mock_response.__exit__.return_value = False
+        mock_response.headers = {"content-length": "5000"}
+        mock_response.iter_content.return_value = [b"x" * 5000]
+        mock_response.raise_for_status = Mock()
+        downloader.session.get.return_value = mock_response
+
+        with patch.object(downloader, "_verify_file_integrity", return_value=True):
+            output_path = str(tmp_path / "output" / "test.jp2")
+            result = downloader.download_file("http://example.com/test.jp2", output_path)
+
+        # Temp file should not exist after successful download
+        assert not os.path.exists(output_path + ".tmp")
+        assert os.path.exists(output_path)
+
+
+class TestVerifyFileIntegrity:
+    """Tests for _verify_file_integrity method."""
+
+    @pytest.fixture
+    def downloader(self, tmp_path):
+        return ConcreteDownloader("TEST", str(tmp_path))
+
+    def test_verify_jp2_success(self, downloader):
+        """Test JP2 verification with valid image."""
+        with patch("georaffer.downloaders.base.Image.open") as mock_open:
+            mock_img = Mock()
+            mock_img.size = (1000, 1000)
+            mock_open.return_value = mock_img
+
+            buffer = BytesIO(b"fake jp2 data")
+            result = downloader._verify_file_integrity(buffer, "test.jp2")
+
+        assert result is True
+
+    def test_verify_jp2_invalid_dimensions(self, downloader):
+        """Test JP2 verification fails with zero dimensions."""
+        with patch("georaffer.downloaders.base.Image.open") as mock_open:
+            mock_img = Mock()
+            mock_img.size = (0, 1000)
+            mock_open.return_value = mock_img
+
+            buffer = BytesIO(b"fake jp2 data")
+            result = downloader._verify_file_integrity(buffer, "test.jp2")
+
+        assert result is False
+
+    def test_verify_jp2_corrupt(self, downloader):
+        """Test JP2 verification fails with corrupt file."""
+        with patch("georaffer.downloaders.base.Image.open") as mock_open:
+            mock_open.side_effect = Exception("Invalid image")
+
+            buffer = BytesIO(b"corrupt data")
+            result = downloader._verify_file_integrity(buffer, "test.jp2")
+
+        assert result is False
+
+    def test_verify_laz_success(self, downloader):
+        """Test LAZ verification with valid file."""
+        with patch("georaffer.downloaders.base.laspy.open") as mock_open:
+            mock_laz = MagicMock()
+            mock_laz.__enter__.return_value = mock_laz
+            mock_laz.__exit__ = Mock(return_value=False)
+            mock_laz.header.point_count = 10000
+            mock_laz.chunk_iterator.return_value = iter([[1, 2, 3]])
+            mock_open.return_value = mock_laz
+
+            buffer = BytesIO(b"fake laz data")
+            result = downloader._verify_file_integrity(buffer, "test.laz")
+
+        assert result is True
+
+    def test_verify_laz_zero_points(self, downloader):
+        """Test LAZ verification fails with zero points."""
+        with patch("georaffer.downloaders.base.laspy.open") as mock_open:
+            mock_laz = MagicMock()
+            mock_laz.__enter__.return_value = mock_laz
+            mock_laz.__exit__ = Mock(return_value=False)
+            mock_laz.header.point_count = 0
+            mock_open.return_value = mock_laz
+
+            buffer = BytesIO(b"fake laz data")
+            result = downloader._verify_file_integrity(buffer, "test.laz")
+
+        assert result is False
+
+    def test_verify_unknown_extension(self, downloader):
+        """Test unknown extension returns True (no validation)."""
+        buffer = BytesIO(b"some data")
+        result = downloader._verify_file_integrity(buffer, "test.unknown")
+
+        assert result is True
+
+
+class TestFetchAndParseFeed:
+    """Tests for _fetch_and_parse_feed method."""
+
+    @pytest.fixture
+    def downloader(self, tmp_path):
+        mock_session = Mock()
+        return ConcreteDownloader("TEST", str(tmp_path), session=mock_session)
+
+    def test_fetch_feed_success(self, downloader):
+        """Test successful feed fetch and parse."""
+        mock_response = Mock()
+        mock_response.content = b"<root><item>test</item></root>"
+        mock_response.raise_for_status = Mock()
+        downloader.session.get.return_value = mock_response
+
+        result = downloader._fetch_and_parse_feed("http://example.com/feed.xml", "jp2")
+
+        assert result == {(350, 5600): "http://example.com/tile.jp2"}
+
+    def test_fetch_feed_retries_on_error(self, downloader):
+        """Test retry on network error."""
+        import requests
+
+        # First call fails, second succeeds
+        mock_response = Mock()
+        mock_response.content = b"<root></root>"
+        mock_response.raise_for_status = Mock()
+
+        downloader.session.get.side_effect = [
+            requests.RequestException("Network error"),
+            mock_response,
+        ]
+
+        with patch("georaffer.downloaders.base.time.sleep"):
+            result = downloader._fetch_and_parse_feed("http://example.com/feed.xml", "jp2")
+
+        assert downloader.session.get.call_count == 2
+
+    def test_fetch_feed_raises_after_max_retries(self, downloader):
+        """Test RuntimeError after exhausting retries."""
+        import requests
+
+        downloader.session.get.side_effect = requests.RequestException("Network error")
+
+        with patch("georaffer.downloaders.base.time.sleep"):
+            with patch("georaffer.downloaders.base.MAX_RETRIES", 3):
+                with pytest.raises(RuntimeError, match="Failed to fetch feed"):
+                    downloader._fetch_and_parse_feed("http://example.com/feed.xml", "jp2")
+
+
+class TestGetAvailableTiles:
+    """Tests for get_available_tiles method."""
+
+    @pytest.fixture
+    def downloader(self, tmp_path):
+        mock_session = Mock()
+        return ConcreteDownloader("TEST", str(tmp_path), session=mock_session)
+
+    def test_get_available_tiles_success(self, downloader):
+        """Test successful retrieval of both tile types."""
+        mock_response = Mock()
+        mock_response.content = b"<root></root>"
+        mock_response.raise_for_status = Mock()
+        downloader.session.get.return_value = mock_response
+
+        jp2_tiles, laz_tiles = downloader.get_available_tiles()
+
+        assert (350, 5600) in jp2_tiles
+        assert (350, 5600) in laz_tiles
+
+    def test_get_available_tiles_raises_on_jp2_error(self, downloader):
+        """Test exception propagation on JP2 feed error."""
+        import requests
+
+        downloader.session.get.side_effect = requests.RequestException("Failed")
+
+        with patch("georaffer.downloaders.base.time.sleep"):
+            with patch("georaffer.downloaders.base.MAX_RETRIES", 1):
+                with pytest.raises(RuntimeError):
+                    downloader.get_available_tiles()

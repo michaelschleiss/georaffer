@@ -1,0 +1,146 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "georaffer"
+version = "0.1.0"
+description = "Download and process geospatial tiles (JP2, LAZ) from German state geodata providers"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "Michael Schleiss", email = "michaelschleiss87@gmail.com"}]
+keywords = ["geospatial", "gis", "dsm", "bdom", "orthophoto", "germany", "nrw", "rlp", "gdal"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+    "requests>=2.20",
+    "laspy[lazrs]>=2.0",
+    "numpy>=1.20",
+    "numba>=0.50",
+    "Pillow>=9.0",
+    "rasterio>=1.2",
+    "utm>=0.7",
+    "tqdm>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov"]
+
+[project.scripts]
+georaffer = "georaffer.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/michaelschleiss/georaffer"
+Repository = "https://github.com/michaelschleiss/georaffer"
+Issues = "https://github.com/michaelschleiss/georaffer/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["georaffer"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [".envrc", "scripts/"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "unit: Fast isolated unit tests",
+    "integration: Tests with mocked external dependencies",
+    "slow: Tests that take >1s",
+]
+addopts = "-v --strict-markers"
+
+[tool.coverage.run]
+source = ["georaffer"]
+omit = ["*/__main__.py", "*/cli.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
+
+# Pixi configuration
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "linux-64", "linux-aarch64", "win-64"]
+
+[tool.pixi.dependencies]
+python = "3.10.*"
+tbb = ">=2021.6"
+libgdal-jp2openjpeg = "*"
+lazrs-python = ">=0.7,<0.8"
+
+[tool.pixi.pypi-dependencies]
+georaffer = { path = ".", editable = true }
+
+[tool.pixi.feature.dev.dependencies]
+pytest = ">=7.0"
+pytest-cov = "*"
+pytest-benchmark = "*"
+pyinstrument = ">=4.6"
+ruff = ">=0.14.6,<0.15"
+
+[tool.pixi.environments]
+default = { features = ["dev"] }
+
+[tool.pixi.tasks]
+test = "pytest"
+test-unit = "pytest tests/unit"
+test-integration = "pytest tests/integration"
+lint = "ruff check . --fix"
+format = "ruff format ."
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "F",      # pyflakes (unused imports, undefined names)
+    "I",      # isort (import sorting)
+    "UP",     # pyupgrade (modern Python syntax)
+    "B",      # flake8-bugbear (common bugs)
+    "SIM",    # flake8-simplify
+    "RUF",    # ruff-specific rules
+]
+ignore = [
+    "E501",   # line too long (formatter handles this)
+    "SIM105", # contextlib.suppress (try/except/pass with comment is clearer)
+    "SIM108", # ternary operator (not always clearer)
+    "SIM117", # nested with (sometimes clearer)
+    "RUF001", # ambiguous chars in strings (× in user output is fine)
+    "RUF002", # ambiguous chars in docstrings
+    "RUF003", # ambiguous chars in comments
+    "B905",   # zip strict= (verbose for internal code)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = [
+    "B011",   # assert False
+    "B017",   # assert raises
+    "RUF059", # unused unpacked vars (common in test fixtures)
+    "F841",   # unused local vars
+    "F811",   # redefinition (monkeypatching)
+    "E402",   # imports not at top (test setup)
+]
+"georaffer/workers.py" = ["E402"]  # imports after env setup
+"georaffer/inputs/__init__.py" = ["F401"]  # re-exports
+"scripts/*" = ["E402"]  # path setup before imports
+
+[tool.ruff.lint.isort]
+known-first-party = ["georaffer"]
