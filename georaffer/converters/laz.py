@@ -46,7 +46,6 @@ from georaffer.converters.utils import (
     generate_split_output_path,
     parse_tile_coords,
     resample_raster,
-    uniquify_output_path,
     write_geotiff,
 )
 from georaffer.grids import compute_split_factor
@@ -116,80 +115,6 @@ def _fill_raster_numba(
         if 0 <= row < height and 0 <= col < width:
             raster[row, col] = z
 
-    return raster
-
-
-def _fast_grid_raster(
-    x_int: np.ndarray,
-    y_int: np.ndarray,
-    z_int: np.ndarray,
-    x_scale: float,
-    y_scale: float,
-    z_scale: float,
-    x_offset: float,
-    y_offset: float,
-    z_offset: float,
-    min_x: float,
-    max_y: float,
-    resolution: float,
-    width: int,
-    height: int,
-) -> np.ndarray | None:
-    """Attempt zero-loop rasterization by reshaping if points are in row-major grid order.
-
-    Returns a float32 raster or None if validation fails.
-
-    Fast path optimization (~10x faster than _fill_raster_numba):
-    If the LAZ points are already in perfect row-major grid order (which they usually are
-    for official NRW/RLP datasets), we can skip all looping and just:
-      1. Validate the ordering with O(width + height) checks
-      2. Reshape the z_int array directly from 1D to 2D
-    This avoids iterating through all N points entirely.
-
-    The validation checks ensure points are laid out like:
-      Row 0: x[0...width-1] at y=max_y
-      Row 1: x[0...width-1] at y=max_y-step
-      ...
-    If any check fails, returns None and caller falls back to the robust loop-based method.
-    """
-    # Verify resolution maps to clean integer steps in LAS coordinate space
-    # (required for exact integer comparisons below)
-    x_step_expected = resolution / x_scale
-    y_step_expected = resolution / y_scale
-    if abs(x_step_expected - round(x_step_expected)) > 1e-6:
-        return None
-    if abs(y_step_expected - round(y_step_expected)) > 1e-6:
-        return None
-    x_step_int = round(x_step_expected)
-    y_step_int = round(y_step_expected)
-
-    max_y_int = round((max_y - y_offset) / y_scale)
-    min_x_int = round((min_x - x_offset) / x_scale)
-
-    # Check first row: x should increment uniformly from min_x (O(width) check)
-    expected_x_first_row = min_x_int + np.arange(width, dtype=x_int.dtype) * x_step_int
-    if not np.array_equal(x_int[:width], expected_x_first_row):
-        return None
-
-    # Check y progression: each row start should decrease by y_step (O(height) check)
-    # Row 0 at max_y, row 1 at max_y - step, etc. (top-to-bottom in UTM coordinates)
-    expected_y_rows = max_y_int - np.arange(height, dtype=y_int.dtype) * y_step_int
-    if not np.array_equal(y_int[0::width], expected_y_rows):
-        return None
-
-    # Check x resets: every row should start at min_x and end at max_x
-    if not np.all(x_int[0::width] == min_x_int):
-        return None
-    if not np.all(x_int[width - 1 :: width] == min_x_int + (width - 1) * x_step_int):
-        return None
-
-    # All checks passed - points are in perfect grid order
-    # Reshape z directly from 1D point stream to 2D raster (zero-copy operation)
-    try:
-        raster = z_int.reshape((height, width)).astype(np.float32, copy=False)
-    except ValueError:
-        return None
-    raster = raster * z_scale + z_offset
     return raster
 
 
@@ -281,8 +206,8 @@ def convert_laz(
                     pass  # Could not extract year
 
             # Grid extents from header mins/maxs
-            min_x, min_y, _ = header.mins
-            max_x, max_y, _ = header.maxs
+            header_min_x, header_min_y, _ = header.mins
+            header_max_x, header_max_y, _ = header.maxs
 
             x_scale, y_scale, z_scale = header.scales
             x_offset, y_offset, z_offset = header.offsets
@@ -290,9 +215,32 @@ def convert_laz(
             # Calculate expected grid dimensions from header bounding box
             # Note: LAZ header max values are sometimes inclusive, sometimes exclusive
             # This causes num_points vs num_cells mismatches even for valid regular grids
-            width = round((max_x - min_x) / resolution)
-            height = round((max_y - min_y) / resolution)
+            width = round((header_max_x - header_min_x) / resolution)
+            height = round((header_max_y - header_min_y) / resolution)
             inv_resolution = 1.0 / resolution
+
+            # CRITICAL: Detect sub-pixel offset between header bounds and actual points
+            # RLP data has 0.1m offset (points at 0.1, 0.3, 0.5... not 0.0, 0.2, 0.4...)
+            # NRW data has 0.0m offset (points align with header bounds)
+            # Without correction, banker's rounding causes checkerboard artifacts
+            #
+            # Read first point to detect sub-pixel offset, then apply to header bounds
+            first_chunk = next(reader.chunk_iterator(1))
+            first_x = first_chunk.X[0] * x_scale + x_offset
+            first_y = first_chunk.Y[0] * y_scale + y_offset
+
+            # Calculate sub-pixel offset (how far first point is from header bounds, mod resolution)
+            x_subpixel = (first_x - header_min_x) % resolution
+            y_subpixel = (first_y - header_min_y) % resolution
+
+            # Apply sub-pixel offset to header bounds
+            # min_x: shift right by offset (points start at min + offset)
+            # max_y: shift down by offset (points end at max - offset)
+            min_x = header_min_x + x_subpixel
+            max_y = header_max_y - y_subpixel
+
+            # Re-seek to beginning for full read
+            reader.seek(0)
 
             # Validation: Check for regular grid structure
             # Expected: exactly one point per grid cell (perfectly gridded DSM)
@@ -304,6 +252,9 @@ def convert_laz(
                 side = round(num_points**0.5)
                 if side * side == num_points:
                     # Recovery successful: square grid with header bounding box issue
+                    # The header extent is slightly off, but the actual point spacing
+                    # matches the region's nominal resolution. Keep resolution unchanged
+                    # to avoid rounding errors from tiny extent/spacing mismatches.
                     width = height = side
                     num_cells = num_points
                 else:
@@ -339,7 +290,10 @@ def convert_laz(
                     width,
                 )
         t_decode = time.perf_counter() - t_decode_start
-        transform = from_origin(min_x, max_y, resolution, resolution)
+        # Transform origin is top-left corner of pixel (0,0), but min_x/max_y are pixel centers
+        # Offset by half a pixel so pixel centers align with point positions
+        half_res = resolution / 2
+        transform = from_origin(min_x - half_res, max_y + half_res, resolution, resolution)
         crs = "EPSG:25832"  # UTM Zone 32N
 
         filename = os.path.basename(input_path)
@@ -396,7 +350,7 @@ def convert_laz(
             path_str = output_paths.get(target_size)
             if not path_str:
                 continue
-            output_path = uniquify_output_path(Path(path_str))
+            output_path = Path(path_str)
 
             if target_size:
                 t_res_start = time.perf_counter()
@@ -477,7 +431,7 @@ def _convert_split_laz(
     base_x, base_y = coords
     rows, cols = raster.shape
     tile_size_m = METERS_PER_KM  # grid indices are kilometer-based
-    grid_size_m = round(grid_size_km * 1000)
+    grid_size_m = round(grid_size_km * METERS_PER_KM)
 
     total_resample = 0.0
     total_write = 0.0
@@ -523,7 +477,6 @@ def _convert_split_laz(
                 output_path = generate_split_output_path(
                     base_path, new_x, new_y, easting=easting, northing=northing
                 )
-                output_path = uniquify_output_path(output_path)
 
                 t_res_start = time.perf_counter()
                 if target_size:
