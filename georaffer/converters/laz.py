@@ -224,8 +224,10 @@ def convert_laz(
             # NRW data has 0.0m offset (points align with header bounds)
             # Without correction, banker's rounding causes checkerboard artifacts
             #
-            # Read first point to detect sub-pixel offset, then apply to header bounds
-            first_chunk = next(reader.chunk_iterator(1))
+            # Read first point to detect sub-pixel offset, then apply to header bounds.
+            # Wrap in iter() so this works with any iterable (including lists in tests).
+            first_chunk_iter = iter(reader.chunk_iterator(1))
+            first_chunk = next(first_chunk_iter)
             first_x = first_chunk.X[0] * x_scale + x_offset
             first_y = first_chunk.Y[0] * y_scale + y_offset
 
