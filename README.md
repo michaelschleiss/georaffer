@@ -84,7 +84,7 @@ With `--output ./tiles` the pipeline creates:
     provenance.csv  # Per-tile provenance metadata
 ```
 
-`<pixels>` matches the internal resolution derived from `--pixel-size` (meters per pixel). For example, `--pixel-size 1.0` on a 1 km grid produces `processed/image/1000/` and `processed/dsm/1000/`.
+`<pixels>` matches the internal resolution derived from `--pixel-size` (meters per pixel). For example, with the default `--pixel-size 0.5` on a 1 km grid, georaffer produces `processed/image/2000/` and `processed/dsm/2000/`.
 
 Raw tiles remain cached under `raw/`, so you can re-run conversions with different resolutions without re-downloading.
 

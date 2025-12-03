@@ -259,9 +259,9 @@ Details:
         "--pixel-size",
         type=float,
         nargs="+",
-        default=[1.0],
+        default=[0.5],
         metavar="FLOAT",
-        help="Output resolution in meters per pixel (default: 1.0)",
+        help="Output resolution in meters per pixel (default: 0.5)",
     )
     shared.add_argument(
         "--workers",

@@ -86,7 +86,7 @@ THREADS_PER_WORKER = "auto"
 # Raster output
 DSM_DTYPE = "float32"  # 0.06mm precision, 50% smaller than float64
 DSM_NODATA = -9999.0
-DEFAULT_RESOLUTION = 1.0  # meters
+DEFAULT_RESOLUTION = 0.5  # meters
 GDAL_CACHEMAX_MB = 512
 
 # LAZ point spacing by region (meters)
