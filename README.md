@@ -72,16 +72,16 @@ When large source tiles are split into smaller output tiles (for example RLP 2km
 With `--output ./tiles` the pipeline creates:
 
 ```text
-./tiles/
-  raw/
-    image/        # Provider JP2 orthophotos (NRW, RLP)
-    dsm/          # Provider LAZ DSM tiles
-  processed/
-    image/
-      <pixels>/   # Orthophoto GeoTIFFs (tile size in pixels, e.g. 1000 for 1 m/px on 1 km tiles)
-    dsm/
-      <pixels>/   # DSM GeoTIFFs with the same convention
-    provenance.csv  # Per-tile provenance metadata
+./tiles
+├── raw
+│   ├── image        # Provider JP2 orthophotos (NRW, RLP)
+│   └── dsm          # Provider LAZ DSM tiles
+└── processed
+    ├── image
+    │   └── <pixels>/      # Orthophoto GeoTIFFs (tile size in pixels, e.g. 2000 for 0.5 m/px on 1 km tiles)
+    ├── dsm
+    │   └── <pixels>/      # DSM GeoTIFFs with the same convention
+    └── provenance.csv     # Per-tile provenance metadata
 ```
 
 `<pixels>` matches the internal resolution derived from `--pixel-size` (meters per pixel). For example, with the default `--pixel-size 0.5` on a 1 km grid, georaffer produces `processed/image/2000/` and `processed/dsm/2000/`.
