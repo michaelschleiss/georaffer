@@ -125,7 +125,7 @@ def convert_laz(
     resolution: float | None = None,
     target_sizes: list[int] | None = None,
     num_threads: int | None = None,
-    stream_chunks: int | None = 1_000_000,
+    stream_chunks: int | None = 4_000_000,
     grid_size_km: float = 1.0,
     profiling: bool = False,
 ) -> bool:
@@ -140,7 +140,7 @@ def convert_laz(
         resolution: Grid spacing in meters for initial rasterization (default: region-specific)
         target_sizes: List of target output sizes in pixels. None for native resolution.
         num_threads: Number of threads for reprojection (default: REPROJECT_THREADS)
-        stream_chunks: Chunk size for LAZ streaming (default: 1M points)
+        stream_chunks: Chunk size for LAZ streaming (default: 4M points)
         grid_size_km: User grid size to determine split factor
         profiling: Enable timing output for performance analysis
 
@@ -271,7 +271,7 @@ def convert_laz(
                         f"This converter is for regularly-spaced 2.5D DSM grids only."
                     )
 
-            chunk_size = stream_chunks or 1_000_000
+            chunk_size = stream_chunks or 4_000_000
             raster = np.full((height, width), DSM_NODATA, dtype=np.float32)
             for pts in reader.chunk_iterator(chunk_size):
                 raster = _fill_raster_numba(

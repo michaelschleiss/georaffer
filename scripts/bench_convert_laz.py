@@ -44,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--stream-chunks",
         type=int,
-        default=1_000_000,
+        default=4_000_000,
         help="Chunk size for streaming rasterization; set to 0 to disable streaming",
     )
     p.add_argument(
