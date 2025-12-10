@@ -38,11 +38,11 @@ def extract_year_from_filename(filename: str, require: bool = False) -> str:
 
 
 def compute_split_coordinates(
-    base_x: int | None,
-    base_y: int | None,
+    base_x: int,
+    base_y: int,
     tile_km: float,
     grid_size_km: float,
-) -> list[tuple[int | None, int | None]]:
+) -> list[tuple[int, int]]:
     """Compute output tile coordinates from a source tile after splitting.
 
     When the source tile is larger than the user's grid, it gets split into
@@ -50,8 +50,8 @@ def compute_split_coordinates(
     each output tile.
 
     Args:
-        base_x: Source tile X coordinate (km index), or None if unknown
-        base_y: Source tile Y coordinate (km index), or None if unknown
+        base_x: Source tile X coordinate (km index)
+        base_y: Source tile Y coordinate (km index)
         tile_km: Source tile size in kilometers
         grid_size_km: User's target grid size in kilometers
 
@@ -60,18 +60,18 @@ def compute_split_coordinates(
         If no splitting occurs, returns [(base_x, base_y)].
 
     Raises:
-        RuntimeError: If splitting is needed but base coordinates are None
+        ValueError: If base coordinates are None (unparseable filename)
     """
+    if base_x is None or base_y is None:
+        raise ValueError(
+            "Cannot compute coordinates: base_x and base_y are required. "
+            "Source filename must contain parseable grid coordinates."
+        )
+
     split_factor = compute_split_factor(tile_km, grid_size_km)
 
     if split_factor == 1:
         return [(base_x, base_y)]
-
-    if base_x is None or base_y is None:
-        raise RuntimeError(
-            "Cannot compute split coordinates: base coordinates missing. "
-            "Filename must encode grid positions for splitting."
-        )
 
     ratio_int = round(tile_km / grid_size_km)
     coords = []
@@ -123,21 +123,22 @@ def build_metadata_rows(
     grid_size_m = round(grid_size_km * METERS_PER_KM)
     split_factor = compute_split_factor(tile_km, grid_size_km)
 
-    # Parse coordinates from source filename
+    # Parse coordinates from source filename - fail loudly if unparseable
     coords = parse_tile_coords(filename)
-    base_x, base_y = coords if coords else (None, None)
+    if coords is None:
+        raise ValueError(
+            f"Cannot parse grid coordinates from filename: {filename}. "
+            "Source files must have parseable NRW/RLP naming patterns."
+        )
+    base_x, base_y = coords
 
     # Compute output tile coordinates
-    try:
-        split_coords = compute_split_coordinates(base_x, base_y, tile_km, grid_size_km)
-    except RuntimeError:
-        # Can't split without coordinates - just use base
-        split_coords = [(base_x, base_y)]
+    split_coords = compute_split_coordinates(base_x, base_y, tile_km, grid_size_km)
 
     metadata_rows = []
     for gx, gy in split_coords:
         # Determine output path for this tile
-        if split_factor > 1 and gx is not None and base_x is not None and base_y is not None:
+        if split_factor > 1:
             dx = gx - base_x
             dy = gy - base_y
             easting = int(base_x * tile_size_m + dx * grid_size_m)
@@ -148,22 +149,15 @@ def build_metadata_rows(
         else:
             out_path = output_path
 
-        # Best-effort recover coordinates from output filename if still missing
-        final_x, final_y = gx, gy
-        if final_x is None or final_y is None:
-            fallback = parse_tile_coords(Path(out_path).name) or parse_tile_coords(filename)
-            if fallback:
-                final_x, final_y = fallback
-
         metadata_rows.append(
             {
                 "processed_file": Path(out_path).name,
                 "source_file": filename,
-                "source_region": str(region),
+                "source_region": region.value,
                 "year": year,
                 "file_type": file_type,
-                "grid_x": final_x,
-                "grid_y": final_y,
+                "grid_x": gx,
+                "grid_y": gy,
                 "acquisition_date": acquisition_date,
                 "metadata_source": metadata_source,
             }

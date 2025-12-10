@@ -508,21 +508,23 @@ class TestConvertTiles:
         assert stats.converted == 1
 
     def test_laz_year_falls_back_to_header(self, tmp_path, monkeypatch):
-        """When filename lacks year, use LAS header year for provenance."""
+        """When filename lacks year (RLP LAZ), use LAS header year for provenance."""
         import georaffer.workers as workers_mod
 
         laz_dir = tmp_path / "raw" / "dsm"
         processed_dir = tmp_path / "processed"
         laz_dir.mkdir(parents=True, exist_ok=True)
 
-        laz_file = laz_dir / "bdom50_32350_5600_1_nw.laz"  # no year suffix
+        # RLP LAZ files have no year in filename - must use LAS header
+        laz_file = laz_dir / "bdom20rgbi_32_364_5582_2_rp.laz"
         laz_file.touch()
 
         monkeypatch.setattr(workers_mod, "get_laz_year", lambda _: "2030")
         monkeypatch.setattr(workers_mod, "convert_laz", lambda *args, **kwargs: True)
 
+        # Use grid_size_km=2.0 to match RLP tile size (no split)
         success, metadata, fname, out_count = workers_mod.convert_laz_worker(
-            (laz_file.name, str(laz_dir), str(processed_dir), [1000], 1, 1.0, False)
+            (laz_file.name, str(laz_dir), str(processed_dir), [1000], 1, 2.0, False)
         )
 
         assert success is True

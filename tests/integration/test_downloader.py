@@ -44,6 +44,7 @@ def nrw_catalogs(nrw_downloader):
     return nrw_downloader.get_available_tiles()
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_nrw_fetches_feed(nrw_catalogs):
     """Test that NRW downloader can fetch and parse feeds."""
@@ -55,6 +56,7 @@ def test_nrw_fetches_feed(nrw_catalogs):
     assert NRW_TEST_TILE in laz_catalog, f"Test tile {NRW_TEST_TILE} not in NRW LAZ catalog"
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_nrw_downloads_jp2(nrw_downloader, nrw_catalogs):
     """Test downloading a NRW JP2 tile."""
@@ -78,6 +80,7 @@ def test_nrw_downloads_jp2(nrw_downloader, nrw_catalogs):
     assert output_path.stat().st_size > 1000, "Downloaded file too small"
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_nrw_downloads_laz(nrw_downloader, nrw_catalogs):
     """Test downloading a NRW LAZ tile."""
@@ -101,6 +104,7 @@ def test_nrw_downloads_laz(nrw_downloader, nrw_catalogs):
     assert output_path.stat().st_size > 1000, "Downloaded file too small"
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_nrw_cached_files_readable(nrw_downloader, nrw_catalogs):
     """Test that NRW cached files can be opened by rasterio/laspy."""
@@ -143,6 +147,7 @@ def rlp_catalogs(rlp_downloader):
     return rlp_downloader.get_available_tiles()
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_rlp_fetches_feed(rlp_catalogs):
     """Test that RLP downloader can fetch and parse feeds."""
@@ -154,6 +159,7 @@ def test_rlp_fetches_feed(rlp_catalogs):
     assert RLP_TEST_TILE in laz_catalog, f"Test tile {RLP_TEST_TILE} not in RLP LAZ catalog"
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_rlp_downloads_jp2(rlp_downloader, rlp_catalogs):
     """Test downloading a RLP JP2 tile."""
@@ -177,6 +183,7 @@ def test_rlp_downloads_jp2(rlp_downloader, rlp_catalogs):
     assert output_path.stat().st_size > 1000, "Downloaded file too small"
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_rlp_downloads_laz(rlp_downloader, rlp_catalogs):
     """Test downloading a RLP LAZ tile."""
@@ -200,6 +207,7 @@ def test_rlp_downloads_laz(rlp_downloader, rlp_catalogs):
     assert output_path.stat().st_size > 1000, "Downloaded file too small"
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_rlp_cached_files_readable(rlp_downloader, rlp_catalogs):
     """Test that RLP cached files can be opened by rasterio/laspy."""
@@ -242,6 +250,7 @@ def wms_source():
     )
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_wms_check_coverage_returns_valid_result(wms_source):
     """Canary test: WMS coverage check returns valid result for known tile.
@@ -292,6 +301,7 @@ def test_wms_check_coverage_returns_valid_result(wms_source):
         )
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_wms_check_coverage_returns_none_for_invalid_tile(wms_source):
     """Test that coverage check returns None for tiles outside service area."""
@@ -299,6 +309,7 @@ def test_wms_check_coverage_returns_none_for_invalid_tile(wms_source):
     assert result is None, "Expected None for nonexistent tile (999, 9999)"
 
 
+@pytest.mark.network
 @pytest.mark.integration
 def test_wms_downloads_tile(wms_source, tmp_path):
     """Test that WMS can download a valid GeoTIFF tile."""

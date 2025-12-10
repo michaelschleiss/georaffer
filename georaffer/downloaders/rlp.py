@@ -69,6 +69,7 @@ class RLPDownloader(RegionDownloader):
                 tile_size_m=RLP_GRID_SIZE,
                 resolution_m=0.2,
                 session=self._session,
+                verify_ssl=self.verify_ssl,
             )
         return self._wms
 

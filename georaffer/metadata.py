@@ -100,9 +100,9 @@ def get_wms_metadata(
                 found_dates[found_year] = {
                     "acquisition_date": acquisition_date, "metadata_source": "WMS GetFeatureInfo"
                 }
-            
+
             if year is None or year not in found_dates:
-                return found_dates[max(found_dates.keys())] # return most recent entry
+                return found_dates[max(found_dates.keys())]
 
             return found_dates[year]
 
@@ -119,17 +119,21 @@ def get_wms_metadata(
 
 
 def get_wms_metadata_rlp(
-    utm_x: float, utm_y: float, session: requests.Session | None = None
+    utm_x: float,
+    utm_y: float,
+    session: requests.Session | None = None,
+    year: int | None = None,
 ) -> dict | None:
     """Query RLP WMS GetFeatureInfo for acquisition date.
 
-    Uses rp_dop20 WMS (20cm) with the info layer rp_dop20_info.
-    Returns acquisition_date (erstellung) when available.
+    Uses rp_dop20 WMS (20cm) for current imagery, or rp_hkdop20 for historical.
+    Returns acquisition_date (erstellung or bildflugdatum) when available.
 
     Args:
         utm_x: UTM easting coordinate in meters
         utm_y: UTM northing coordinate in meters
         session: Optional requests.Session for dependency injection (testability)
+        year: Optional year for historical imagery (uses historical WMS endpoint)
 
     Returns:
         Dictionary with acquisition_date and metadata_source, or None if not available
@@ -142,9 +146,15 @@ def get_wms_metadata_rlp(
 
     session = session or _wms_session
 
-    wms_url = "https://geo4.service24.rlp.de/wms/rp_dop20.fcgi"
-    layer = "rp_dop20"
-    info_layer = "rp_dop20_info"
+    # Use historical WMS for past years, current WMS otherwise
+    if year is not None and year < datetime.now().year:
+        wms_url = "https://geo4.service24.rlp.de/wms/rp_hkdop20.fcgi"
+        layer = f"rp_dop20_rgb_{year}"
+        info_layer = f"rp_dop20_info_{year}"
+    else:
+        wms_url = "https://geo4.service24.rlp.de/wms/rp_dop20.fcgi"
+        layer = "rp_dop20"
+        info_layer = "rp_dop20_info"
 
     buffer = WMS_RLP_BUFFER_M
     params = {
@@ -153,6 +163,7 @@ def get_wms_metadata_rlp(
         "REQUEST": "GetFeatureInfo",
         "LAYERS": layer,
         "QUERY_LAYERS": info_layer,
+        "STYLES": "",  # Required by historical WMS
         "CRS": "EPSG:25832",
         "BBOX": f"{utm_x - buffer},{utm_y - buffer},{utm_x + buffer},{utm_y + buffer}",
         "WIDTH": "512",
@@ -211,7 +222,7 @@ def get_wms_metadata_for_region(
         utm_x: UTM easting coordinate in meters
         utm_y: UTM northing coordinate in meters
         region: Region enum (NRW or RLP)
-        year: Optional year for historic layer selection (NRW only)
+        year: Optional year for historic layer selection
         session: Optional requests.Session for dependency injection
 
     Returns:
@@ -220,7 +231,7 @@ def get_wms_metadata_for_region(
     if region == Region.NRW:
         return get_wms_metadata(utm_x, utm_y, "NRW", year, session)
     elif region == Region.RLP:
-        return get_wms_metadata_rlp(utm_x, utm_y, session)
+        return get_wms_metadata_rlp(utm_x, utm_y, session, year)
 
 
 def add_provenance_to_geotiff(

@@ -58,6 +58,7 @@ python_functions = ["test_*"]
 markers = [
     "unit: Fast isolated unit tests",
     "integration: Tests with mocked external dependencies",
+    "network: Tests that require real network connections",
     "slow: Tests that take >1s",
 ]
 addopts = "-v --strict-markers"

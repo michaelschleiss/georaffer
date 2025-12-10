@@ -36,6 +36,7 @@ class WMSImagerySource:
         image_format: str = "image/tiff-lzw",
         crs: str = "EPSG:25832",
         session: requests.Session | None = None,
+        verify_ssl: bool = True,
     ):
         """Initialize WMS imagery source.
 
@@ -48,6 +49,7 @@ class WMSImagerySource:
             image_format: WMS output format (default "image/tiff-lzw" for lossless)
             crs: Coordinate reference system (default "EPSG:25832")
             session: Optional requests session for connection pooling
+            verify_ssl: Whether to verify SSL certificates for WMS requests
         """
         self.base_url = base_url
         self.rgb_layer_pattern = rgb_layer_pattern
@@ -57,6 +59,7 @@ class WMSImagerySource:
         self.image_format = image_format
         self.crs = crs
         self._session = session or requests.Session()
+        self.verify_ssl = verify_ssl
 
     def _rgb_layer(self, year: int) -> str:
         """Get RGB layer name for a year."""
@@ -133,6 +136,7 @@ class WMSImagerySource:
                     self.base_url,
                     params=params,
                     timeout=DEFAULT_TIMEOUT,
+                    verify=self.verify_ssl,
                 )
                 response.raise_for_status()
                 text = response.text
@@ -248,6 +252,7 @@ class WMSImagerySource:
                     url,
                     stream=True,
                     timeout=DEFAULT_TIMEOUT,
+                    verify=self.verify_ssl,
                 )
                 response.raise_for_status()
 

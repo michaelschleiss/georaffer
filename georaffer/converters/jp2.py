@@ -40,7 +40,12 @@ def convert_jp2(
         output_paths: Single output path (str) or dict mapping resolution -> path
         region: Region code ('NRW', 'RLP')
         year: Year string
-        resolutions: List of target resolutions (pixels). None for native resolution.
+        resolutions: Output tile dimensions in pixels per 1km grid. For example:
+            - 2000 = 2000×2000 px per 1km tile (0.5m GSD)
+            - 1000 = 1000×1000 px per 1km tile (1.0m GSD)
+            - 500 = 500×500 px per 1km tile (2.0m GSD)
+            None for native resolution. Must be divisible by split ratio when
+            splitting tiles (e.g., RLP 2km→1km split requires even values).
         num_threads: Number of threads for reprojection (default: REPROJECT_THREADS)
         grid_size_km: User grid size to determine split factor
         profiling: Enable timing output for performance analysis
