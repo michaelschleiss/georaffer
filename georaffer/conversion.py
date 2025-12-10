@@ -15,10 +15,22 @@ from dataclasses import dataclass, field
 
 from tqdm import tqdm
 
+from pathlib import Path
+
+from georaffer.config import get_tile_size_km
 from georaffer.converters import convert_jp2, convert_laz
+from georaffer.converters.utils import parse_tile_coords
+from georaffer.grids import compute_split_factor
 from georaffer.metadata import create_provenance_csv
+from georaffer.provenance import compute_split_coordinates, extract_year_from_filename
 from georaffer.runtime import InterruptManager, shutdown_executor
-from georaffer.workers import convert_jp2_worker, convert_laz_worker, init_worker
+from georaffer.workers import (
+    convert_jp2_worker,
+    convert_laz_worker,
+    detect_region,
+    generate_output_name,
+    init_worker,
+)
 
 
 @dataclass
@@ -30,15 +42,72 @@ class ConversionStats:
     jp2_sources: int = 0
     jp2_converted: int = 0
     jp2_failed: int = 0
+    jp2_skipped: int = 0  # Skipped because output exists
     laz_sources: int = 0
     laz_converted: int = 0
     laz_failed: int = 0
+    laz_skipped: int = 0  # Skipped because output exists
     jp2_duration: float = 0.0
     laz_duration: float = 0.0
     interrupted: bool = False
     jp2_split_performed: bool = False
     laz_split_performed: bool = False
     tiles_metadata: list[dict] = field(default_factory=list)
+
+
+def _outputs_exist(
+    filename: str,
+    processed_dir: str,
+    data_type: str,
+    resolutions: list[int],
+    grid_size_km: float,
+) -> bool:
+    """Check if all output files exist for this source file at all resolutions.
+
+    Args:
+        filename: Source filename (JP2/TIF/LAZ)
+        processed_dir: Output directory
+        data_type: 'image' or 'dsm'
+        resolutions: List of target resolutions
+        grid_size_km: User's grid size for determining splits
+
+    Returns:
+        True if ALL expected output files exist, False if any are missing.
+    """
+    region = detect_region(filename)
+    year = extract_year_from_filename(filename, require=False) or "latest"
+
+    # Get base coordinates from filename
+    coords = parse_tile_coords(filename)
+    if not coords:
+        # Can't predict output without coords - don't skip
+        return False
+
+    base_x, base_y = coords
+    tile_km = get_tile_size_km(region)
+
+    # Get all output coordinates (handles splits)
+    output_coords = compute_split_coordinates(base_x, base_y, tile_km, grid_size_km)
+
+    # Check each resolution and each split coordinate
+    split_factor = compute_split_factor(tile_km, grid_size_km)
+    for res in resolutions:
+        res_dir = Path(processed_dir) / data_type / ("native" if res is None else str(res))
+        for grid_x, grid_y in output_coords:
+            # Generate expected output filename using same logic as workers
+            output_name = generate_output_name(
+                filename, region, year, data_type
+            )
+            # For splits, replace coordinates in the generated name
+            if split_factor > 1:
+                from georaffer.config import METERS_PER_KM, UTM_ZONE_STR
+                easting = grid_x * METERS_PER_KM
+                northing = grid_y * METERS_PER_KM
+                output_name = f"{region.value.lower()}_{UTM_ZONE_STR}_{easting}_{northing}_{year}.tif"
+            output_path = res_dir / output_name
+            if not output_path.exists():
+                return False
+    return True
 
 
 def convert_tiles(
@@ -50,6 +119,7 @@ def convert_tiles(
     process_pointclouds: bool = True,
     grid_size_km: float = 1.0,
     profiling: bool = False,
+    reprocess: bool = False,
 ) -> ConversionStats:
     """Convert all raw tiles to GeoTIFF using parallel workers.
 
@@ -62,6 +132,8 @@ def convert_tiles(
         process_pointclouds: Convert LAZ point clouds
         grid_size_km: User's grid size for splitting
         profiling: Enable profiling output
+        reprocess: If False (default), skip files where outputs already exist.
+            If True, reconvert all files regardless of existing outputs.
 
     Returns:
         ConversionStats with results
@@ -81,11 +153,7 @@ def convert_tiles(
 
     jp2_dir = os.path.join(raw_dir, "image")
     if process_images and os.path.exists(jp2_dir):
-        # Include both JP2 (ATOM feed) and TIF (WMS downloads) files
-        jp2_files = sorted(
-            f for f in os.listdir(jp2_dir)
-            if f.endswith(".jp2") or f.endswith(".tif")
-        )
+        jp2_files = sorted(f for f in os.listdir(jp2_dir) if f.endswith((".jp2", ".tif")))
 
     laz_dir = os.path.join(raw_dir, "dsm")
     if process_pointclouds and os.path.exists(laz_dir):
@@ -185,6 +253,11 @@ def convert_tiles(
                 for args in jp2_args:
                     if stop_event.is_set():
                         break
+                    f = args[0]
+                    if not reprocess and _outputs_exist(f, processed_dir, "image", resolutions, grid_size_km):
+                        stats.jp2_skipped += 1
+                        pbar.update(1)
+                        continue
                     jp2_futures.append(executor.submit(convert_jp2_worker, args))
 
                 pending = set(jp2_futures)
@@ -231,6 +304,11 @@ def convert_tiles(
                 for args in laz_args:
                     if stop_event.is_set():
                         break
+                    f = args[0]
+                    if not reprocess and _outputs_exist(f, processed_dir, "dsm", resolutions, grid_size_km):
+                        stats.laz_skipped += 1
+                        pbar.update(1)
+                        continue
                     laz_futures.append(executor.submit(convert_laz_worker, args))
 
                 pending = set(laz_futures)

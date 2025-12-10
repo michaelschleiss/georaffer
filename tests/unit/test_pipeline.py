@@ -635,3 +635,59 @@ class TestConvertTiles:
         )
 
         assert stats.jp2_split_performed is True
+
+    def test_skip_existing_outputs(self, tmp_path, monkeypatch):
+        """Test that conversion skips files where outputs already exist."""
+        import georaffer.conversion as convert_mod
+
+        raw_dir = tmp_path / "raw"
+        processed_dir = tmp_path / "processed"
+        (raw_dir / "image").mkdir(parents=True)
+        (raw_dir / "dsm").mkdir(parents=True)
+
+        # Create fake JP2 file
+        (raw_dir / "image" / "dop10rgbi_32_350_5600_1_nw_2021.jp2").touch()
+
+        # Pre-create output so it gets skipped
+        output_dir = processed_dir / "image" / "1000"
+        output_dir.mkdir(parents=True)
+        (output_dir / "nrw_32_350000_5600000_2021.tif").touch()
+
+        def fake_jp2_worker(args):
+            return True, [], args[0], 1
+
+        monkeypatch.setenv("GEORAFFER_DISABLE_PROCESS_POOL", "1")
+        monkeypatch.setattr(convert_mod, "convert_jp2_worker", fake_jp2_worker)
+
+        # Without reprocess flag, should skip
+        stats = convert_tiles(str(raw_dir), str(processed_dir), [1000], reprocess=False)
+        assert stats.jp2_skipped == 1
+        assert stats.converted == 0
+
+    def test_reprocess_forces_conversion(self, tmp_path, monkeypatch):
+        """Test that reprocess=True forces conversion even when outputs exist."""
+        import georaffer.conversion as convert_mod
+
+        raw_dir = tmp_path / "raw"
+        processed_dir = tmp_path / "processed"
+        (raw_dir / "image").mkdir(parents=True)
+        (raw_dir / "dsm").mkdir(parents=True)
+
+        # Create fake JP2 file
+        (raw_dir / "image" / "dop10rgbi_32_350_5600_1_nw_2021.jp2").touch()
+
+        # Pre-create output
+        output_dir = processed_dir / "image" / "1000"
+        output_dir.mkdir(parents=True)
+        (output_dir / "nrw_32_350000_5600000_2021.tif").touch()
+
+        def fake_jp2_worker(args):
+            return True, [], args[0], 1
+
+        monkeypatch.setenv("GEORAFFER_DISABLE_PROCESS_POOL", "1")
+        monkeypatch.setattr(convert_mod, "convert_jp2_worker", fake_jp2_worker)
+
+        # With reprocess flag, should convert anyway
+        stats = convert_tiles(str(raw_dir), str(processed_dir), [1000], reprocess=True)
+        assert stats.jp2_skipped == 0
+        assert stats.converted == 1

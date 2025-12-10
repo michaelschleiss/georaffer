@@ -55,9 +55,11 @@ class ProcessingStats:
     jp2_sources: int = 0
     jp2_converted: int = 0
     jp2_failed: int = 0
+    jp2_skipped: int = 0  # Skipped because output exists
     laz_sources: int = 0
     laz_converted: int = 0
     laz_failed: int = 0
+    laz_skipped: int = 0  # Skipped because output exists
     jp2_duration: float = 0.0
     laz_duration: float = 0.0
     interrupted: bool = False
@@ -113,6 +115,7 @@ def process_tiles(
     profiling: bool = False,
     process_images: bool = True,
     process_pointclouds: bool = True,
+    reprocess: bool = False,
 ) -> ProcessingStats:
     """Main entry point: download and process tiles for given coordinates.
 
@@ -129,6 +132,8 @@ def process_tiles(
         profiling: Enable profiling output for conversion timing
         process_images: Download and convert orthophoto imagery (JP2)
         process_pointclouds: Download and convert point clouds to DSM (LAZ → GeoTIFF)
+        reprocess: If True, re-download and re-convert existing files.
+            By default (False), skip files where outputs already exist.
 
     Returns:
         ProcessingStats with processing results
@@ -400,6 +405,7 @@ def process_tiles(
         process_pointclouds=process_pointclouds,
         grid_size_km=grid_size_km,
         profiling=profiling,
+        reprocess=reprocess,
     )
 
     total_stats.converted = convert_stats.converted
@@ -407,9 +413,11 @@ def process_tiles(
     total_stats.jp2_sources = convert_stats.jp2_sources
     total_stats.jp2_converted = convert_stats.jp2_converted
     total_stats.jp2_failed = convert_stats.jp2_failed
+    total_stats.jp2_skipped = convert_stats.jp2_skipped
     total_stats.laz_sources = convert_stats.laz_sources
     total_stats.laz_converted = convert_stats.laz_converted
     total_stats.laz_failed = convert_stats.laz_failed
+    total_stats.laz_skipped = convert_stats.laz_skipped
     total_stats.jp2_duration = convert_stats.jp2_duration
     total_stats.laz_duration = convert_stats.laz_duration
     total_stats.jp2_split_performed = convert_stats.jp2_split_performed

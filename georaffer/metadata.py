@@ -283,7 +283,11 @@ def add_provenance_to_geotiff(
 
 
 def create_provenance_csv(tiles_metadata: list[dict], output_csv: str) -> bool:
-    """Create CSV catalog of tile metadata.
+    """Create or update CSV catalog of tile metadata.
+
+    Merges new metadata with any existing CSV file, preserving existing rows
+    for outputs that weren't processed in this run. Uses processed_file as
+    the unique key for merging.
 
     Args:
         tiles_metadata: List of metadata dictionaries
@@ -306,16 +310,34 @@ def create_provenance_csv(tiles_metadata: list[dict], output_csv: str) -> bool:
             "acquisition_date",
             "file_type",
             "metadata_source",
+            "conversion_date",
             "point_count",
             "split_from",
             "processing_date",
         ]
 
+        # Merge with existing CSV if it exists
+        existing_rows: dict[str, dict] = {}
+        if os.path.exists(output_csv):
+            with open(output_csv, newline="") as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    key = row.get("processed_file", "")
+                    if key:
+                        existing_rows[key] = row
+
+        # Update with new metadata (overwrites existing entries for same processed_file)
+        for row in tiles_metadata:
+            key = row.get("processed_file", "")
+            if key:
+                existing_rows[key] = row
+
+        # Write merged result
         os.makedirs(os.path.dirname(output_csv), exist_ok=True)
         with open(output_csv, "w", newline="") as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(tiles_metadata)
+            writer.writerows(existing_rows.values())
 
         return True
 

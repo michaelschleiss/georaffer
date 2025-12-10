@@ -204,3 +204,109 @@ class TestBuildMetadataRows:
 
         assert rows[0]["acquisition_date"] == "2021-06-15"
         assert rows[0]["metadata_source"] == "WMS GetFeatureInfo"
+
+    def test_conversion_date_is_included(self):
+        """Conversion date is auto-generated and in ISO format."""
+        rows = build_metadata_rows(
+            filename="dop10rgbi_32_350_5600_1_nw_2021.jp2",
+            output_path="/out/nrw_32_350000_5600000_2021.tif",
+            region=Region.NRW,
+            year="2021",
+            file_type="orthophoto",
+            grid_size_km=1.0,
+        )
+
+        # conversion_date should be present and in ISO format
+        conversion_date = rows[0]["conversion_date"]
+        assert conversion_date is not None
+        # Verify it parses as valid ISO datetime
+        from datetime import datetime
+        datetime.fromisoformat(conversion_date)  # Will raise if invalid
+
+
+class TestProvenanceCsvMerge:
+    """Tests for provenance CSV merge functionality."""
+
+    def test_provenance_csv_merges_existing(self, tmp_path):
+        """Test that new provenance rows merge with existing CSV."""
+        from georaffer.metadata import create_provenance_csv
+
+        csv_path = tmp_path / "provenance.csv"
+
+        # Create initial CSV with one row
+        existing_rows = [
+            {
+                "processed_file": "existing_tile.tif",
+                "source_file": "source_existing.jp2",
+                "source_region": "NRW",
+                "grid_x": 350,
+                "grid_y": 5600,
+                "year": "2020",
+                "file_type": "orthophoto",
+            }
+        ]
+        create_provenance_csv(existing_rows, str(csv_path))
+
+        # Add new row
+        new_rows = [
+            {
+                "processed_file": "new_tile.tif",
+                "source_file": "source_new.jp2",
+                "source_region": "RLP",
+                "grid_x": 362,
+                "grid_y": 5604,
+                "year": "2021",
+                "file_type": "orthophoto",
+            }
+        ]
+        create_provenance_csv(new_rows, str(csv_path))
+
+        # Read merged result
+        import csv
+        with open(csv_path) as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+
+        # Should have both rows
+        assert len(rows) == 2
+        files = {r["processed_file"] for r in rows}
+        assert files == {"existing_tile.tif", "new_tile.tif"}
+
+    def test_provenance_csv_overwrites_same_key(self, tmp_path):
+        """Test that reprocessing same file overwrites existing row."""
+        from georaffer.metadata import create_provenance_csv
+
+        csv_path = tmp_path / "provenance.csv"
+
+        # Create initial CSV
+        old_rows = [
+            {
+                "processed_file": "tile.tif",
+                "source_file": "old_source.jp2",
+                "source_region": "NRW",
+                "year": "2020",
+            }
+        ]
+        create_provenance_csv(old_rows, str(csv_path))
+
+        # Reprocess same tile with new metadata
+        new_rows = [
+            {
+                "processed_file": "tile.tif",  # Same key
+                "source_file": "new_source.jp2",  # Different metadata
+                "source_region": "NRW",
+                "year": "2021",
+            }
+        ]
+        create_provenance_csv(new_rows, str(csv_path))
+
+        # Read result
+        import csv
+        with open(csv_path) as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+
+        # Should have only one row with updated metadata
+        assert len(rows) == 1
+        assert rows[0]["source_file"] == "new_source.jp2"
+        assert rows[0]["year"] == "2021"

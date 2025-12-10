@@ -270,7 +270,11 @@ Details:
         metavar="INT",
         help="Parallel conversion workers (default: 4)",
     )
-    shared.add_argument("--force", action="store_true", help="Re-download existing files")
+    shared.add_argument(
+        "--reprocess",
+        action="store_true",
+        help="Re-download and re-convert existing files (by default, skips existing outputs)",
+    )
     shared.add_argument("--profiling", action="store_true", help="Enable conversion timing output")
     shared.add_argument(
         "--from",
@@ -432,11 +436,12 @@ Details:
             grid_size_km=OUTPUT_TILE_SIZE_KM,
             margin_km=margin_km,
             imagery_from=imagery_from,
-            force_download=args.force,
+            force_download=args.reprocess,
             max_workers=workers,
             profiling=args.profiling,
             process_images=process_images,
             process_pointclouds=process_pointclouds,
+            reprocess=args.reprocess,
         )
 
         # Exit with error if there were failures

@@ -6,6 +6,7 @@ dictionaries that get written to provenance.csv.
 """
 
 import re
+from datetime import datetime
 from pathlib import Path
 
 from georaffer.config import METERS_PER_KM, Region, get_tile_size_km
@@ -117,6 +118,7 @@ def build_metadata_rows(
         - file_type: 'orthophoto' or 'dsm'
         - acquisition_date: Optional precise date from WMS
         - metadata_source: Optional source identifier
+        - conversion_date: ISO timestamp when GeoTIFF was created
     """
     tile_km = get_tile_size_km(region)
     tile_size_m = METERS_PER_KM  # Grid indices are kilometer-based
@@ -160,6 +162,7 @@ def build_metadata_rows(
                 "grid_y": gy,
                 "acquisition_date": acquisition_date,
                 "metadata_source": metadata_source,
+                "conversion_date": datetime.now().isoformat(timespec="seconds"),
             }
         )
 
