@@ -81,7 +81,11 @@ def convert_tiles(
 
     jp2_dir = os.path.join(raw_dir, "image")
     if process_images and os.path.exists(jp2_dir):
-        jp2_files = sorted(f for f in os.listdir(jp2_dir) if f.endswith(".jp2"))
+        # Include both JP2 (ATOM feed) and TIF (WMS downloads) files
+        jp2_files = sorted(
+            f for f in os.listdir(jp2_dir)
+            if f.endswith(".jp2") or f.endswith(".tif")
+        )
 
     laz_dir = os.path.join(raw_dir, "dsm")
     if process_pointclouds and os.path.exists(laz_dir):

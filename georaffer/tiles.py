@@ -1,10 +1,52 @@
 """Tile entities and catalog resolution logic."""
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
+from urllib.parse import parse_qs, urlparse
 
 from georaffer.grids import user_tile_to_utm_center
+
+
+def _filename_from_url(url: str) -> str:
+    """Extract or generate a proper filename from a URL.
+
+    For regular URLs (ATOM feed), extracts basename.
+    For WMS GetMap URLs, generates a filename from parameters.
+
+    Args:
+        url: Download URL (either file URL or WMS GetMap URL)
+
+    Returns:
+        Filename like "dop20rgb_32_380_5540_2_rp_2020.tif"
+    """
+    # Check if this is a WMS GetMap URL
+    if "GetMap" in url and "BBOX" in url:
+        # Parse URL query parameters
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+
+        # Extract BBOX to get grid coordinates
+        bbox = params.get("BBOX", [""])[0].split(",")
+        if len(bbox) >= 2:
+            minx = int(float(bbox[0]) / 1000)  # Convert meters to km
+            miny = int(float(bbox[1]) / 1000)
+
+        # Extract year from layer name (e.g., "rp_dop20_rgb_2020")
+        layer = params.get("LAYERS", [""])[0]
+        year_match = re.search(r"_(\d{4})$", layer)
+        year = int(year_match.group(1)) if year_match else 0
+
+        # Determine extension from format
+        fmt = params.get("FORMAT", [""])[0]
+        ext = ".tif" if "tiff" in fmt.lower() else ".png"
+
+        # Generate filename matching RLP JP2 naming convention
+        return f"dop20rgb_32_{minx}_{miny}_2_rp_{year}{ext}"
+
+    # Standard URL - extract basename
+    return os.path.basename(url)
 
 
 class TileCoord(NamedTuple):
@@ -209,11 +251,11 @@ def calculate_required_tiles(
             if all_urls:
                 # Multi-year: add ALL URLs for this coord (different years = different files)
                 for u in all_urls:
-                    p = os.path.join(region.downloader.raw_dir, "image", os.path.basename(u))
+                    p = os.path.join(region.downloader.raw_dir, "image", _filename_from_url(u))
                     downloads[f"{name}_jp2"].append((u, p))
             else:
                 # Standard single-year mode or fallback
-                path = os.path.join(region.downloader.raw_dir, "image", os.path.basename(url))
+                path = os.path.join(region.downloader.raw_dir, "image", _filename_from_url(url))
                 downloads[f"{name}_jp2"].append((url, path))
 
         # LAZ downloads (no multi-year support currently)

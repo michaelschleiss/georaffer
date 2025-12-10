@@ -150,20 +150,41 @@ def process_tiles(
     )
 
     # Initialize downloaders
-    # imagery_from is (from_year, to_year) or None; NRWDownloader takes year range
+    # imagery_from is (from_year, to_year) or None; both NRW and RLP take year range
     nrw_downloader = NRWDownloader(output_dir, imagery_from=imagery_from)
-    rlp_downloader = RLPDownloader(output_dir)
+    rlp_downloader = RLPDownloader(output_dir, imagery_from=imagery_from)
 
     # Create output directories
     for subdir in ["raw/image", "raw/dsm", "processed/image", "processed/dsm"]:
         (Path(output_dir) / subdir).mkdir(parents=True, exist_ok=True)
 
-    # STEP 1: Load tile catalogs
-    print_step_header(1, "Loading Available Tiles from Remote Servers")
+    # STEP 1: Calculate user grid first (needed for RLP WMS queries)
+    print_step_header(1, "Calculating User Grid")
+    print(
+        f"Generating {grid_size_km:.2f}km grid with {margin_km:.2f}km margin around flight path..."
+    )
+    grid_start = time.perf_counter()
+    user_tiles = generate_user_grid_tiles(coords, grid_size_km, margin_km)
+    grid_duration = time.perf_counter() - grid_start
+    print(f"  Generated {len(user_tiles)} user tiles in {grid_duration:.1f}s")
+
+    # Convert user tiles to RLP native grid coords for WMS queries
+    # User tiles are in user grid coords; we need RLP 2km grid coords
+    rlp_native_coords: set[tuple[int, int]] = set()
+    for x, y in user_tiles:
+        # Convert user grid to UTM (center of tile)
+        utm_x = (x + 0.5) * grid_size_km * 1000
+        utm_y = (y + 0.5) * grid_size_km * 1000
+        # Convert to RLP native grid
+        rlp_coords, _ = rlp_downloader.utm_to_grid_coords(utm_x, utm_y)
+        rlp_native_coords.add(rlp_coords)
+
+    # STEP 2: Load tile catalogs
+    print_step_header(2, "Loading Available Tiles from Remote Servers")
     print("Querying tile catalogs from NRW and RLP servers...")
     phase_start = time.perf_counter()
     nrw_jp2, nrw_laz = nrw_downloader.get_available_tiles()
-    rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles()
+    rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(requested_coords=rlp_native_coords)
     catalogs_duration = time.perf_counter() - phase_start
 
     print_catalog_summary(
@@ -174,21 +195,13 @@ def process_tiles(
         catalogs_duration,
     )
 
-    # STEP 2: Calculate required tiles
-    print_step_header(2, "Calculating Required Tiles")
-    print(
-        f"Generating {grid_size_km:.2f}km grid with {margin_km:.2f}km margin around flight path..."
-    )
-    grid_start = time.perf_counter()
-    user_tiles = generate_user_grid_tiles(coords, grid_size_km, margin_km)
-
     # Build region catalogs in priority order (first match wins)
     regions = [
         RegionCatalog("nrw", nrw_downloader, nrw_jp2, nrw_laz),
         RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz),
     ]
     tile_set, downloads_by_source = calculate_required_tiles(user_tiles, grid_size_km, regions)
-    grid_duration = time.perf_counter() - grid_start
+    calc_duration = time.perf_counter() - phase_start
 
     # Print coverage analysis
     covered_jp2 = len(user_tiles) - len(tile_set.missing_jp2)
@@ -214,7 +227,7 @@ def process_tiles(
                 f"{len(tile_set.missing_jp2)} ({100 - coverage_jp2_pct:.0f}%)",
                 f"{covered_laz} ({coverage_laz_pct:.0f}%)",
                 f"{len(tile_set.missing_laz)} ({100 - coverage_laz_pct:.0f}%)",
-                f"{grid_duration:.1f}s",
+                f"{calc_duration:.1f}s",
             )
         ],
     )

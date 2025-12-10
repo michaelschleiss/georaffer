@@ -107,7 +107,8 @@ NRW_JP2_PATTERN = re.compile(r"dop10rgbi_32_(\d{3})_(\d{4})_\d_nw_(\d{4})\.jp2$"
 NRW_LAZ_PATTERN = re.compile(
     r"bdom50_32_?(\d{3})_(\d{4})_\d_nw_(\d{4})\.laz$"
 )  # _? : underscore sometimes missing
-RLP_JP2_PATTERN = re.compile(r"dop20rgb_32_(\d{3})_(\d{4})_2_rp_(\d{4})\.jp2$")
+# Matches both .jp2 (ATOM feed) and .tif (WMS downloads)
+RLP_JP2_PATTERN = re.compile(r"dop20rgb_32_(\d{3})_(\d{4})_2_rp_(\d{4})\.(jp2|tif)$")
 RLP_LAZ_PATTERN = re.compile(r"bdom20rgbi_32_(\d{3})_(\d{4})_2_rp\.laz$")
 
 

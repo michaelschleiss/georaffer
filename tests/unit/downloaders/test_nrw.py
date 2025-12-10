@@ -109,6 +109,7 @@ class TestNRWFilenamePatterns:
         [
             ("bdom50_32350_5600_1_nw_2025.laz", (350, 5600, 2025)),
             ("bdom50_32400_5700_1_nw_2024.laz", (400, 5700, 2024)),
+            ("bdom50_32_350_5600_1_nw_2025.laz", (350, 5600, 2025)),  # With underscore after 32
         ],
     )
     def test_laz_pattern_valid(self, filename, expected):

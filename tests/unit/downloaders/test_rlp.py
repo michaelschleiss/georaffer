@@ -1,7 +1,7 @@
 """Tests for RLP downloader."""
 
 import xml.etree.ElementTree as ET
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -68,6 +68,7 @@ class TestRLPFilenamePatterns:
             ("dop20rgb_32_362_5604_2_rp_2023.jp2", (362, 5604, 2023)),
             ("dop20rgb_32_370_5590_2_rp_2022.jp2", (370, 5590, 2022)),
             ("dop20rgb_32_400_5700_2_rp_2021.jp2", (400, 5700, 2021)),
+            ("dop20rgb_32_380_5540_2_rp_2020.tif", (380, 5540, 2020)),  # WMS download
         ],
     )
     def test_jp2_pattern_valid(self, filename, expected):
@@ -231,3 +232,73 @@ class TestRLPParseLAZFeed:
         tiles = downloader._parse_laz_feed(mock_session, root)
 
         assert len(tiles) == 1
+
+
+class TestRLPHistoricalImagery:
+    """Tests for historical imagery support via WMS."""
+
+    def test_init_without_imagery_from(self, tmp_path):
+        """Test initialization without imagery_from sets None."""
+        downloader = RLPDownloader(str(tmp_path))
+        assert downloader._from_year is None
+        assert downloader._to_year is None
+
+    def test_init_with_single_year(self, tmp_path):
+        """Test initialization with single year (from only)."""
+        downloader = RLPDownloader(str(tmp_path), imagery_from=(2020, None))
+        assert downloader._from_year == 2020
+        assert downloader._to_year is None
+
+    def test_init_with_year_range(self, tmp_path):
+        """Test initialization with year range."""
+        downloader = RLPDownloader(str(tmp_path), imagery_from=(2015, 2020))
+        assert downloader._from_year == 2015
+        assert downloader._to_year == 2020
+
+    def test_init_rejects_year_before_1994(self, tmp_path):
+        """Test initialization rejects years before 1994."""
+        with pytest.raises(ValueError, match="Year 1993 not supported"):
+            RLPDownloader(str(tmp_path), imagery_from=(1993, None))
+
+    def test_init_rejects_year_after_2024(self, tmp_path):
+        """Test initialization rejects years after 2024."""
+        with pytest.raises(ValueError, match="Year 2025 not supported"):
+            RLPDownloader(str(tmp_path), imagery_from=(2025, None))
+
+    def test_historic_years_range(self, tmp_path):
+        """Test HISTORIC_YEARS includes 1994-2024."""
+        downloader = RLPDownloader(str(tmp_path))
+        assert 1994 in downloader.HISTORIC_YEARS
+        assert 2024 in downloader.HISTORIC_YEARS
+        assert 1993 not in downloader.HISTORIC_YEARS
+        assert 2025 not in downloader.HISTORIC_YEARS
+
+    def test_wms_lazy_initialized(self, tmp_path):
+        """Test WMS source is lazily initialized."""
+        downloader = RLPDownloader(str(tmp_path), imagery_from=(2020, None))
+        assert downloader._wms is None
+
+        # Access wms property triggers initialization
+        wms = downloader.wms
+        assert wms is not None
+        assert downloader._wms is wms
+
+    def test_get_all_urls_for_coord_empty_without_wms(self, tmp_path):
+        """Test get_all_urls_for_coord returns empty list without WMS mode."""
+        downloader = RLPDownloader(str(tmp_path))
+        urls = downloader.get_all_urls_for_coord((362, 5604))
+        assert urls == []
+
+    def test_extract_year_from_url(self, tmp_path):
+        """Test _extract_year_from_url parses JP2 URLs."""
+        downloader = RLPDownloader(str(tmp_path))
+        url = "https://example.com/dop20rgb_32_362_5604_2_rp_2023.jp2"
+        year = downloader._extract_year_from_url(url)
+        assert year == 2023
+
+    def test_extract_year_from_url_returns_none_for_invalid(self, tmp_path):
+        """Test _extract_year_from_url returns None for invalid URLs."""
+        downloader = RLPDownloader(str(tmp_path))
+        url = "https://example.com/invalid.jp2"
+        year = downloader._extract_year_from_url(url)
+        assert year is None
