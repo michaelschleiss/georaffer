@@ -116,17 +116,18 @@ def print_catalog_summary(
         nrw_laz_count: Number of NRW LAZ tiles
         rlp_jp2_count: Number of RLP JP2 tiles
         rlp_laz_count: Number of RLP LAZ tiles
-        duration: Query duration in seconds
+        duration: Query duration in seconds (shown in footer)
     """
     print()
     print_table(
         "Available Tiles by Region",
-        ["Region", "Imagery (JP2)", "Point Clouds (LAZ)", "Query Time"],
+        ["Region", "Imagery (JP2)", "Point Clouds (LAZ)"],
         [
-            ("NRW", f"{nrw_jp2_count:,}", f"{nrw_laz_count:,}", f"{duration:.1f}s"),
-            ("RLP", f"{rlp_jp2_count:,}", f"{rlp_laz_count:,}", f"{duration:.1f}s"),
+            ("NRW", f"{nrw_jp2_count:,}", f"{nrw_laz_count:,}"),
+            ("RLP", f"{rlp_jp2_count:,}", f"{rlp_laz_count:,}"),
         ],
     )
+    print(f"  Query time: {duration:.1f}s")
     print()
 
 

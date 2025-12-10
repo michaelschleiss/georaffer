@@ -320,7 +320,6 @@ def _convert_split_jp2(
                 "source_file": source_file,
                 "source_region": region,
                 "file_type": "orthophoto",
-                "split_from": f"{base_x}_{base_y}",
                 "grid_x": new_x,
                 "grid_y": new_y,
             }

@@ -216,12 +216,12 @@ class TestBuildMetadataRows:
             grid_size_km=1.0,
         )
 
-        # conversion_date should be present and in ISO format
+        # conversion_date should be present in YYYY-MM-DD-HH-MM-SS format
         conversion_date = rows[0]["conversion_date"]
         assert conversion_date is not None
-        # Verify it parses as valid ISO datetime
+        # Verify it parses as valid datetime
         from datetime import datetime
-        datetime.fromisoformat(conversion_date)  # Will raise if invalid
+        datetime.strptime(conversion_date, "%Y-%m-%d-%H-%M-%S")
 
 
 class TestProvenanceCsvMerge:

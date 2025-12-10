@@ -170,6 +170,8 @@ class NRWDownloader(RegionDownloader):
         # If not in historic mode, use standard parsing
         if self._from_year is None:
             jp2_tiles = self._fetch_and_parse_feed(self.jp2_feed_url, "jp2")
+            # Set _all_jp2_urls for total_jp2_count property
+            self._all_jp2_urls = list(jp2_tiles.values())
             return jp2_tiles, laz_tiles
 
         # Multi-year historic mode: load feeds for the requested year range
@@ -204,6 +206,8 @@ class NRWDownloader(RegionDownloader):
 
         total_historic = 0
         duplicates_skipped = 0
+        successful_years = []
+        failed_years = []
 
         for hist_year in historic_years:
             feed_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{hist_year}/index.xml"
@@ -221,9 +225,14 @@ class NRWDownloader(RegionDownloader):
                         all_tiles[key] = url
                         added += 1
                 total_historic += added
-                print(f"  hist_{hist_year}: +{added} tiles")
-            except Exception as e:
-                print(f"  hist_{hist_year}: failed ({e})")
+                successful_years.append(f"{hist_year}:+{added}")
+            except Exception:
+                failed_years.append(str(hist_year))
+
+        if successful_years:
+            print(f"  Historic: {', '.join(successful_years)}")
+        if failed_years:
+            print(f"  Skipped (format mismatch): {', '.join(failed_years)}")
 
         # Flatten all_tiles to match the expected return interface
         # Challenge: base interface expects dict[coords -> url] (single URL per location)
@@ -259,6 +268,13 @@ class NRWDownloader(RegionDownloader):
         if hasattr(self, "_all_jp2_by_coord"):
             return self._all_jp2_by_coord.get(coords, [])
         return []
+
+    @property
+    def total_jp2_count(self) -> int:
+        """Total JP2 files including all historical years."""
+        if hasattr(self, "_all_jp2_urls"):
+            return len(self._all_jp2_urls)
+        return 0
 
     def _parse_laz_feed(
         self, session: requests.Session, root: ET.Element

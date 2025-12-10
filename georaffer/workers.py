@@ -231,6 +231,24 @@ def convert_laz_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
             profiling=profiling,
         )
 
+        # Get acquisition date from WMS for provenance
+        acquisition_date = None
+        metadata_source = None
+        coords = parse_tile_coords(filename)
+        if coords:
+            base_x, base_y = coords
+            tile_km = get_tile_size_km(region)
+            center_x, center_y = get_tile_center_utm(base_x, base_y, tile_km)
+            try:
+                wms_meta = get_wms_metadata_for_region(
+                    center_x, center_y, region, int(year) if year.isdigit() else None
+                )
+                if wms_meta:
+                    acquisition_date = wms_meta.get("acquisition_date")
+                    metadata_source = wms_meta.get("metadata_source")
+            except Exception:
+                pass  # WMS failures are not fatal
+
         # Build metadata rows using representative output path
         rep_path = next(iter(output_paths.values()))
         metadata = build_metadata_rows(
@@ -240,6 +258,8 @@ def convert_laz_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
             year=year,
             file_type="dsm",
             grid_size_km=grid_size_km,
+            acquisition_date=acquisition_date,
+            metadata_source=metadata_source,
         )
 
         # Calculate output count: resolutions × split tiles

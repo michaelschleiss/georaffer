@@ -192,10 +192,11 @@ def process_tiles(
     rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(requested_coords=rlp_native_coords)
     catalogs_duration = time.perf_counter() - phase_start
 
+    # Use total counts (includes historical) for JP2, unique locations for LAZ
     print_catalog_summary(
-        len(nrw_jp2),
+        nrw_downloader.total_jp2_count or len(nrw_jp2),
         len(nrw_laz),
-        len(rlp_jp2),
+        rlp_downloader.total_jp2_count or len(rlp_jp2),
         len(rlp_laz),
         catalogs_duration,
     )

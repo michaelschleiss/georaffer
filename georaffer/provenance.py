@@ -151,20 +151,18 @@ def build_metadata_rows(
         else:
             out_path = output_path
 
-        metadata_rows.append(
-            {
-                "processed_file": Path(out_path).name,
-                "source_file": filename,
-                "source_region": region.value,
-                "year": year,
-                "file_type": file_type,
-                "grid_x": gx,
-                "grid_y": gy,
-                "acquisition_date": acquisition_date,
-                "metadata_source": metadata_source,
-                "conversion_date": datetime.now().isoformat(timespec="seconds"),
-            }
-        )
+        metadata_rows.append({
+            "processed_file": Path(out_path).name,
+            "source_file": filename,
+            "source_region": region.value,
+            "year": year,
+            "file_type": file_type,
+            "grid_x": gx,
+            "grid_y": gy,
+            "acquisition_date": acquisition_date,
+            "metadata_source": metadata_source,
+            "conversion_date": datetime.now().strftime("%Y-%m-%d-%H-%M-%S"),
+        })
 
     return metadata_rows
 

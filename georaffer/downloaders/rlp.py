@@ -1,13 +1,42 @@
-"""RLP (Rhineland-Palatinate) tile downloader."""
+"""RLP (Rhineland-Palatinate) tile downloader.
+
+RLP Open Data Portal: https://geobasis-rlp.de/data/
+├── dop20rgb/     - Current orthophotos (JP2, 0.2m resolution)
+├── dop20rgbi/    - Current orthophotos with infrared (JP2, 0.2m resolution)
+├── bdom20rgbi/   - Point clouds / DSM (LAZ, 0.2m spacing)
+└── ...           - Other datasets (DGM, DTK, etc.)
+
+Each dataset has:
+  - current/jp2/ or current/las/  - Raw data files
+  - current/meta4/                - Metalink feeds with SHA-256 hashes
+  - current/*/atomfeed-links/     - ATOM-style link lists (used here)
+  - current/metadata/             - ISO 19139 XML metadata per tile
+
+Historical imagery (1994-2024) is only available via WMS:
+  https://geo4.service24.rlp.de/wms/rp_hkdop20.fcgi
+
+Note: The old geoportal.rlp.de INSPIRE ATOM feeds were deprecated April 2025.
+"""
 
 import sys
+import time
 import xml.etree.ElementTree as ET
 from typing import ClassVar
 
 import requests
 import urllib3
 
-from georaffer.config import METERS_PER_KM, RLP_GRID_SIZE, RLP_JP2_PATTERN, RLP_LAZ_PATTERN, Region
+from georaffer.config import (
+    FEED_TIMEOUT,
+    MAX_RETRIES,
+    METERS_PER_KM,
+    RETRY_BACKOFF_BASE,
+    RETRY_MAX_WAIT,
+    RLP_GRID_SIZE,
+    RLP_JP2_PATTERN,
+    RLP_LAZ_PATTERN,
+    Region,
+)
 from georaffer.downloaders.base import RegionDownloader
 from georaffer.downloaders.wms import WMSImagerySource
 
@@ -38,9 +67,9 @@ class RLPDownloader(RegionDownloader):
     ):
         super().__init__(Region.RLP, output_dir, imagery_from=imagery_from, session=session)
 
-        # ATOM feeds (current imagery)
-        self._jp2_feed_url = "https://www.geoportal.rlp.de/mapbender/php/mod_inspireDownloadFeed.php?id=2b009ae4-aa3e-ff21-870b-49846d9561b2&type=DATASET&generateFrom=remotelist"
-        self._laz_feed_url = "https://www.geoportal.rlp.de/mapbender/php/mod_inspireDownloadFeed.php?id=3d2dda7d-b4b5-47d2-b074-dd45edd36738&type=DATASET&generateFrom=remotelist"
+        # GeoBasis-RLP ATOM feeds (replaced deprecated geoportal feeds April 2025)
+        self._jp2_feed_url = "https://geobasis-rlp.de/data/dop20rgb/current/jp2/atomfeed-links/atomfeed-links.xml"
+        self._laz_feed_url = "https://geobasis-rlp.de/data/bdom20rgbi/current/las/atomfeed-links/atomfeed-links.xml"
 
         # Parse imagery_from (like NRW)
         if imagery_from is None:
@@ -118,6 +147,8 @@ class RLPDownloader(RegionDownloader):
         # Current mode: use ATOM feed
         if self._from_year is None:
             jp2_tiles = self._fetch_and_parse_feed(self.jp2_feed_url, "jp2")
+            # Set _all_jp2_by_coord for total_jp2_count property
+            self._all_jp2_by_coord = {coords: [url] for coords, url in jp2_tiles.items()}
             return jp2_tiles, laz_tiles
 
         # Historical mode: use WMS
@@ -163,7 +194,7 @@ class RLPDownloader(RegionDownloader):
         print(f"  Current feed: {len(current_tiles)} tiles")
 
         # Query WMS for each year (only requested tiles)
-        total_wms = 0
+        successful_years = []
         for hist_year in historic_years:
             added = 0
             for grid_x, grid_y in requested_coords:
@@ -174,9 +205,11 @@ class RLPDownloader(RegionDownloader):
                         url = self.wms.get_tile_url(hist_year, grid_x, grid_y)
                         all_tiles[key] = url
                         added += 1
-            total_wms += added
             if added > 0:
-                print(f"  hist_{hist_year}: +{added} tiles")
+                successful_years.append(f"{hist_year}:+{added}")
+
+        if successful_years:
+            print(f"  Historic: {', '.join(successful_years)}")
 
         # Flatten for interface (same as NRW)
         jp2_tiles = {}
@@ -210,14 +243,58 @@ class RLPDownloader(RegionDownloader):
             return self._all_jp2_by_coord.get(coords, [])
         return []
 
+    @property
+    def total_jp2_count(self) -> int:
+        """Total JP2 files including all historical years."""
+        if hasattr(self, "_all_jp2_by_coord"):
+            return sum(len(urls) for urls in self._all_jp2_by_coord.values())
+        return 0
+
+    def _fetch_and_parse_feed(
+        self, feed_url: str, tile_type: str
+    ) -> dict[tuple[int, int], str]:
+        """Fetch XML feed and parse - wraps content in root element.
+
+        The geobasis-rlp.de atomfeed-links.xml files contain raw <link> elements
+        without a root element, so we wrap them before parsing.
+        """
+        last_error = None
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                if attempt > 0:
+                    delay = min(RETRY_BACKOFF_BASE ** (attempt - 1), RETRY_MAX_WAIT)
+                    time.sleep(delay)
+
+                response = self._session.get(
+                    feed_url, timeout=FEED_TIMEOUT, verify=self.verify_ssl
+                )
+                response.raise_for_status()
+
+                # Wrap raw <link> elements in a root element for valid XML
+                content = response.content.decode("utf-8")
+                wrapped = f"<root>{content}</root>"
+                root = ET.fromstring(wrapped)
+
+                if tile_type == "jp2":
+                    return self._parse_jp2_feed(self._session, root)
+                else:
+                    return self._parse_laz_feed(self._session, root)
+
+            except Exception as e:
+                last_error = e
+
+        raise RuntimeError(
+            f"Failed to fetch feed {feed_url} after {MAX_RETRIES} retries: {last_error}"
+        )
+
     def _parse_jp2_feed(
         self, session: requests.Session, root: ET.Element
     ) -> dict[tuple[int, int], str]:
-        """Parse RLP JP2 feed using INSPIRE/Atom namespace."""
+        """Parse RLP JP2 feed from geobasis-rlp.de atomfeed-links.xml."""
         jp2_tiles = {}
-        ns = {"atom": "http://www.w3.org/2005/Atom"}
 
-        for link_elem in root.findall('.//atom:link[@type="image/jp2"]', ns):
+        for link_elem in root.findall('.//link[@type="image/jp2"]'):
             url = link_elem.get("href")
             if url and url.endswith(".jp2"):
                 filename = url.split("/")[-1]
@@ -236,11 +313,10 @@ class RLPDownloader(RegionDownloader):
     def _parse_laz_feed(
         self, session: requests.Session, root: ET.Element
     ) -> dict[tuple[int, int], str]:
-        """Parse RLP LAZ feed using INSPIRE/Atom namespace."""
+        """Parse RLP LAZ feed from geobasis-rlp.de atomfeed-links.xml."""
         laz_tiles = {}
-        ns = {"atom": "http://www.w3.org/2005/Atom"}
 
-        for link_elem in root.findall(".//atom:link", ns):
+        for link_elem in root.findall(".//link"):
             url = link_elem.get("href")
             if url and url.endswith(".laz"):
                 filename = url.split("/")[-1]

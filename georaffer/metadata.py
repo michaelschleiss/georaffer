@@ -311,9 +311,6 @@ def create_provenance_csv(tiles_metadata: list[dict], output_csv: str) -> bool:
             "file_type",
             "metadata_source",
             "conversion_date",
-            "point_count",
-            "split_from",
-            "processing_date",
         ]
 
         # Merge with existing CSV if it exists

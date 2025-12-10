@@ -19,8 +19,8 @@ class TestRLPDownloaderInit:
     def test_init_sets_feed_urls(self, tmp_path):
         """Test initialization sets feed URLs."""
         downloader = RLPDownloader(str(tmp_path))
-        assert "geoportal.rlp.de" in downloader.jp2_feed_url
-        assert "geoportal.rlp.de" in downloader.laz_feed_url
+        assert "geobasis-rlp.de" in downloader.jp2_feed_url
+        assert "geobasis-rlp.de" in downloader.laz_feed_url
 
     def test_verify_ssl_is_false(self, tmp_path):
         """Test SSL verification is disabled for RLP."""
@@ -123,22 +123,18 @@ class TestRLPFilenamePatterns:
 
 
 class TestRLPParseJP2Feed:
-    """Tests for JP2 feed parsing."""
+    """Tests for JP2 feed parsing (geobasis-rlp.de atomfeed-links format)."""
 
     @pytest.fixture
     def downloader(self, tmp_path):
         return RLPDownloader(str(tmp_path))
 
-    def test_parse_atom_feed(self, downloader):
-        """Test parsing INSPIRE Atom feed with JP2 links."""
-        xml = """<feed xmlns="http://www.w3.org/2005/Atom">
-            <entry>
-                <link type="image/jp2" href="https://example.com/dop20rgb_32_362_5604_2_rp_2023.jp2"/>
-            </entry>
-            <entry>
-                <link type="image/jp2" href="https://example.com/dop20rgb_32_364_5606_2_rp_2023.jp2"/>
-            </entry>
-        </feed>"""
+    def test_parse_atomfeed_links(self, downloader):
+        """Test parsing geobasis-rlp.de atomfeed-links.xml format."""
+        xml = """<root>
+            <link type="image/jp2" href="https://example.com/dop20rgb_32_362_5604_2_rp_2023.jp2"/>
+            <link type="image/jp2" href="https://example.com/dop20rgb_32_364_5606_2_rp_2023.jp2"/>
+        </root>"""
         root = ET.fromstring(xml)
         mock_session = Mock()
 
@@ -150,11 +146,9 @@ class TestRLPParseJP2Feed:
 
     def test_parse_feed_raises_on_invalid_filename(self, downloader):
         """Test that invalid filenames raise ValueError."""
-        xml = """<feed xmlns="http://www.w3.org/2005/Atom">
-            <entry>
-                <link type="image/jp2" href="https://example.com/invalid.jp2"/>
-            </entry>
-        </feed>"""
+        xml = """<root>
+            <link type="image/jp2" href="https://example.com/invalid.jp2"/>
+        </root>"""
         root = ET.fromstring(xml)
         mock_session = Mock()
 
@@ -163,13 +157,11 @@ class TestRLPParseJP2Feed:
 
     def test_parse_feed_skips_non_jp2_links(self, downloader):
         """Test that non-JP2 links are skipped."""
-        xml = """<feed xmlns="http://www.w3.org/2005/Atom">
-            <entry>
-                <link type="image/jp2" href="https://example.com/dop20rgb_32_362_5604_2_rp_2023.jp2"/>
-                <link type="text/html" href="https://example.com/info.html"/>
-                <link type="application/xml" href="https://example.com/metadata.xml"/>
-            </entry>
-        </feed>"""
+        xml = """<root>
+            <link type="image/jp2" href="https://example.com/dop20rgb_32_362_5604_2_rp_2023.jp2"/>
+            <link type="text/html" href="https://example.com/info.html"/>
+            <link type="application/xml" href="https://example.com/metadata.xml"/>
+        </root>"""
         root = ET.fromstring(xml)
         mock_session = Mock()
 
@@ -179,22 +171,18 @@ class TestRLPParseJP2Feed:
 
 
 class TestRLPParseLAZFeed:
-    """Tests for LAZ feed parsing."""
+    """Tests for LAZ feed parsing (geobasis-rlp.de atomfeed-links format)."""
 
     @pytest.fixture
     def downloader(self, tmp_path):
         return RLPDownloader(str(tmp_path))
 
-    def test_parse_atom_feed(self, downloader):
-        """Test parsing INSPIRE Atom feed with LAZ links."""
-        xml = """<feed xmlns="http://www.w3.org/2005/Atom">
-            <entry>
-                <link href="https://example.com/bdom20rgbi_32_364_5582_2_rp.laz"/>
-            </entry>
-            <entry>
-                <link href="https://example.com/bdom20rgbi_32_366_5584_2_rp.laz"/>
-            </entry>
-        </feed>"""
+    def test_parse_atomfeed_links(self, downloader):
+        """Test parsing geobasis-rlp.de atomfeed-links.xml format."""
+        xml = """<root>
+            <link href="https://example.com/bdom20rgbi_32_364_5582_2_rp.laz"/>
+            <link href="https://example.com/bdom20rgbi_32_366_5584_2_rp.laz"/>
+        </root>"""
         root = ET.fromstring(xml)
         mock_session = Mock()
 
@@ -206,11 +194,9 @@ class TestRLPParseLAZFeed:
 
     def test_parse_feed_raises_on_invalid_filename(self, downloader):
         """Test that invalid filenames raise ValueError."""
-        xml = """<feed xmlns="http://www.w3.org/2005/Atom">
-            <entry>
-                <link href="https://example.com/invalid.laz"/>
-            </entry>
-        </feed>"""
+        xml = """<root>
+            <link href="https://example.com/invalid.laz"/>
+        </root>"""
         root = ET.fromstring(xml)
         mock_session = Mock()
 
@@ -219,13 +205,11 @@ class TestRLPParseLAZFeed:
 
     def test_parse_feed_skips_non_laz_links(self, downloader):
         """Test that non-LAZ links are skipped."""
-        xml = """<feed xmlns="http://www.w3.org/2005/Atom">
-            <entry>
-                <link href="https://example.com/bdom20rgbi_32_364_5582_2_rp.laz"/>
-                <link href="https://example.com/metadata.xml"/>
-                <link href="https://example.com/info.html"/>
-            </entry>
-        </feed>"""
+        xml = """<root>
+            <link href="https://example.com/bdom20rgbi_32_364_5582_2_rp.laz"/>
+            <link href="https://example.com/metadata.xml"/>
+            <link href="https://example.com/info.html"/>
+        </root>"""
         root = ET.fromstring(xml)
         mock_session = Mock()
 
