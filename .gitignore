@@ -31,3 +31,6 @@ Thumbs.db
 data/
 test/
 *.tmp
+
+# Local docs (generated or personal notes)
+docs/
