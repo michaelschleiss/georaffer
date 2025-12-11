@@ -1,9 +1,21 @@
 """Console output and progress reporting for pipeline operations."""
 
+import textwrap
 from collections.abc import Iterable, Sequence
 from typing import Any
 
 from georaffer.tiles import TileSet
+
+# ASCII logo printed once at pipeline start.
+PIPELINE_LOGO = textwrap.dedent(
+    r"""
+      ____   _____    ___    ____       _      _____   _____   _____   ____ 
+     / ___| | ____|  / _ \  |  _ \     / \    |  ___| |  ___| | ____| |  _ \
+    | |  _  |  _|   | | | | | |_) |   / _ \   | |_    | |_    |  _|   | |_) |
+    | |_| | | |___  | |_| | |  _ <   / ___ \  |  _|   |  _|   | |___  |  _ <
+     \____| |_____|  \___/  |_| \_\ /_/   \_\ |_|     |_|     |_____| |_| \_\
+    """
+).lstrip("\n")
 
 
 def render_table(headers: Sequence[str], rows: Iterable[Sequence[Any]]) -> str:
@@ -68,6 +80,7 @@ def print_step_header(step_num: int, title: str) -> None:
 def print_pipeline_banner() -> None:
     """Print the pipeline startup banner."""
     print()
+    print(PIPELINE_LOGO)
     print("=" * 80)
     print("GEORAFFER - Geospatial Tile Processing Pipeline")
     print("=" * 80)
