@@ -18,7 +18,7 @@ from tqdm import tqdm
 from pathlib import Path
 
 from georaffer.config import get_tile_size_km
-from georaffer.converters import convert_jp2, convert_laz
+from georaffer.converters import convert_jp2, convert_laz, get_laz_year
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
 from georaffer.metadata import create_provenance_csv
@@ -59,8 +59,10 @@ def _outputs_exist(
     filename: str,
     processed_dir: str,
     data_type: str,
-    resolutions: list[int],
+    resolutions: list[int | None],
     grid_size_km: float,
+    *,
+    source_dir: str | None = None,
 ) -> bool:
     """Check if all output files exist for this source file at all resolutions.
 
@@ -75,7 +77,17 @@ def _outputs_exist(
         True if ALL expected output files exist, False if any are missing.
     """
     region = detect_region(filename)
-    year = extract_year_from_filename(filename, require=False) or "latest"
+    # Match worker year logic as closely as possible to ensure we check
+    # the exact output filenames that conversion would produce.
+    year_require = data_type == "image"
+    year = extract_year_from_filename(filename, require=year_require) or "latest"
+    if data_type == "dsm" and year == "latest" and source_dir is not None:
+        try:
+            header_year = get_laz_year(str(Path(source_dir) / filename))
+            if header_year:
+                year = header_year
+        except Exception:
+            pass
 
     # Get base coordinates from filename
     coords = parse_tile_coords(filename)
@@ -86,27 +98,51 @@ def _outputs_exist(
     base_x, base_y = coords
     tile_km = get_tile_size_km(region)
 
-    # Get all output coordinates (handles splits)
-    output_coords = compute_split_coordinates(base_x, base_y, tile_km, grid_size_km)
+    try:
+        split_factor = compute_split_factor(tile_km, grid_size_km)
+    except Exception:
+        # If splitting isn't possible (non-integer ratio), we can't reliably predict
+        # output paths here, so don't skip.
+        return False
 
-    # Check each resolution and each split coordinate
-    split_factor = compute_split_factor(tile_km, grid_size_km)
+    from georaffer.config import METERS_PER_KM, UTM_ZONE_STR
+    from georaffer.converters.utils import generate_split_output_path
+
+    ratio = int(round(tile_km / grid_size_km)) if split_factor > 1 else 1
+    grid_size_m = round(grid_size_km * METERS_PER_KM)
+
     for res in resolutions:
-        res_dir = Path(processed_dir) / data_type / ("native" if res is None else str(res))
-        for grid_x, grid_y in output_coords:
-            # Generate expected output filename using same logic as workers
-            output_name = generate_output_name(
-                filename, region, year, data_type
-            )
-            # For splits, replace coordinates in the generated name
-            if split_factor > 1:
-                from georaffer.config import METERS_PER_KM, UTM_ZONE_STR
-                easting = grid_x * METERS_PER_KM
-                northing = grid_y * METERS_PER_KM
-                output_name = f"{region.value.lower()}_{UTM_ZONE_STR}_{easting}_{northing}_{year}.tif"
-            output_path = res_dir / output_name
-            if not output_path.exists():
+        # Keep directory conventions aligned with workers.py
+        if data_type == "dsm":
+            res_dir = Path(processed_dir) / "dsm" / str(res)
+        else:
+            res_dir = Path(processed_dir) / "image" / ("native" if res is None else str(res))
+
+        base_output_name = generate_output_name(filename, region, year, data_type)
+        base_output_path = res_dir / base_output_name
+
+        if split_factor == 1:
+            if not base_output_path.exists():
                 return False
+            continue
+
+        # Split outputs use UTM-based filenames derived from the base output path.
+        for r_idx in range(ratio):
+            for c_idx in range(ratio):
+                new_x = base_x + c_idx
+                new_y = base_y + (ratio - 1 - r_idx)
+                easting = int(base_x * METERS_PER_KM + c_idx * grid_size_m)
+                northing = int(base_y * METERS_PER_KM + (ratio - 1 - r_idx) * grid_size_m)
+                output_path = generate_split_output_path(
+                    str(base_output_path),
+                    new_x,
+                    new_y,
+                    easting=easting,
+                    northing=northing,
+                    utm_zone=UTM_ZONE_STR,
+                )
+                if not output_path.exists():
+                    return False
     return True
 
 
@@ -267,7 +303,14 @@ def convert_tiles(
                     if stop_event.is_set():
                         break
                     f = args[0]
-                    if not reprocess and _outputs_exist(f, processed_dir, "image", resolutions, grid_size_km):
+                    if not reprocess and _outputs_exist(
+                        f,
+                        processed_dir,
+                        "image",
+                        resolutions,
+                        grid_size_km,
+                        source_dir=jp2_dir,
+                    ):
                         stats.jp2_skipped += 1
                         pbar.update(1)
                         _update_files_per_second(pbar)
@@ -320,7 +363,14 @@ def convert_tiles(
                     if stop_event.is_set():
                         break
                     f = args[0]
-                    if not reprocess and _outputs_exist(f, processed_dir, "dsm", resolutions, grid_size_km):
+                    if not reprocess and _outputs_exist(
+                        f,
+                        processed_dir,
+                        "dsm",
+                        resolutions,
+                        grid_size_km,
+                        source_dir=laz_dir,
+                    ):
                         stats.laz_skipped += 1
                         pbar.update(1)
                         _update_files_per_second(pbar)
