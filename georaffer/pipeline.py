@@ -458,9 +458,10 @@ def process_tiles(
             f"{laz_rate:.1f} out/s" if convert_stats.laz_duration else "-",
         ),
     ]
+    print()
     print_table(
         "Conversion Summary",
-        ["Type", "Sources", "Outputs", "Resolutions", "Failed", "Duration", "Speed"],
+        ["Type", "In", "Out", "Resolutions", "Failed", "Duration", "Speed"],
         rows,
     )
     print()

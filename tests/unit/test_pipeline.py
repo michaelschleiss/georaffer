@@ -511,6 +511,8 @@ class TestConvertTiles:
         """When filename lacks year (RLP LAZ), use LAS header year for provenance."""
         import georaffer.workers as workers_mod
 
+        monkeypatch.setenv("GEORAFFER_DISABLE_WMS", "1")
+
         laz_dir = tmp_path / "raw" / "dsm"
         processed_dir = tmp_path / "processed"
         laz_dir.mkdir(parents=True, exist_ok=True)
