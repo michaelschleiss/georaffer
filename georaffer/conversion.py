@@ -233,7 +233,20 @@ def convert_tiles(
     signal.signal(signal.SIGTERM, _signal_handler)
 
     try:
-        with tqdm(total=total_files, desc="Converting", unit="file", ncols=100) as pbar:
+        def _update_files_per_second(pbar: tqdm) -> None:
+            rate = pbar.format_dict.get("rate")
+            if rate is None:
+                return
+            pbar.set_description_str(f"{rate:0.1f} files/s", refresh=False)
+
+        with tqdm(
+            total=total_files,
+            desc="0.0 files/s",
+            unit="file",
+            ncols=90,
+            bar_format="Converting: [{bar:25}] {n}/{total} | ⏱ {elapsed} | {desc}",
+            mininterval=0.1,
+        ) as pbar:
             # Convert JP2 files first (fail fast on missing GDAL driver)
             if jp2_files:
                 jp2_args = [
@@ -257,6 +270,7 @@ def convert_tiles(
                     if not reprocess and _outputs_exist(f, processed_dir, "image", resolutions, grid_size_km):
                         stats.jp2_skipped += 1
                         pbar.update(1)
+                        _update_files_per_second(pbar)
                         continue
                     jp2_futures.append(executor.submit(convert_jp2_worker, args))
 
@@ -267,19 +281,20 @@ def convert_tiles(
                             pending.discard(future)
                             stats.jp2_sources += 1  # Count source regardless of success
                             try:
-                                _, metadata, filename, out_count = future.result()
+                                _, metadata, _filename, out_count = future.result()
                                 stats.converted += out_count
                                 stats.jp2_converted += out_count
                                 if out_count > len(resolutions):
                                     stats.jp2_split_performed = True
                                 stats.tiles_metadata.extend(metadata)
-                                pbar.set_postfix_str(filename[:40], refresh=False)
                                 pbar.update(1)
+                                _update_files_per_second(pbar)
                             except Exception as e:
                                 stats.jp2_failed += 1
                                 stats.failed += 1
                                 print(f"\nConversion failed: {e}", file=sys.stderr)
                                 pbar.update(1)
+                                _update_files_per_second(pbar)
                     except TimeoutError:
                         continue
 
@@ -308,6 +323,7 @@ def convert_tiles(
                     if not reprocess and _outputs_exist(f, processed_dir, "dsm", resolutions, grid_size_km):
                         stats.laz_skipped += 1
                         pbar.update(1)
+                        _update_files_per_second(pbar)
                         continue
                     laz_futures.append(executor.submit(convert_laz_worker, args))
 
@@ -318,19 +334,20 @@ def convert_tiles(
                             pending.discard(future)
                             stats.laz_sources += 1  # Count source regardless of success
                             try:
-                                _, metadata, filename, out_count = future.result()
+                                _, metadata, _filename, out_count = future.result()
                                 stats.converted += out_count
                                 stats.laz_converted += out_count
                                 if out_count > len(resolutions):
                                     stats.laz_split_performed = True
                                 stats.tiles_metadata.extend(metadata)
-                                pbar.set_postfix_str(filename[:40], refresh=False)
                                 pbar.update(1)
+                                _update_files_per_second(pbar)
                             except Exception as e:
                                 stats.laz_failed += 1
                                 stats.failed += 1
                                 print(f"\nConversion failed: {e}", file=sys.stderr)
                                 pbar.update(1)
+                                _update_files_per_second(pbar)
                     except TimeoutError:
                         continue
 
