@@ -417,6 +417,7 @@ def convert_tiles(
     if stats.tiles_metadata and not interrupted:
         csv_path = os.path.join(processed_dir, "provenance.csv")
         create_provenance_csv(stats.tiles_metadata, csv_path)
+        print()
         print(f"Wrote provenance to {csv_path}")
 
     # NOTE: We intentionally do NOT clean up lock files here. Deleting them while
