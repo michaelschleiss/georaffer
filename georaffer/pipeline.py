@@ -436,8 +436,6 @@ def process_tiles(
         if convert_stats.laz_duration
         else 0.0
     )
-    split_jp2 = "yes" if convert_stats.jp2_split_performed else "no"
-    split_laz = "yes" if convert_stats.laz_split_performed else "no"
     res_str = ", ".join(str(r) for r in resolutions) if resolutions else "native"
 
     rows = [
@@ -445,7 +443,6 @@ def process_tiles(
             "Imagery (JP2->GeoTIFF)",
             f"{convert_stats.jp2_sources}",
             f"{convert_stats.jp2_converted}",
-            split_jp2,
             res_str,
             f"{convert_stats.jp2_failed}",
             f"{convert_stats.jp2_duration:.1f}s" if convert_stats.jp2_duration else "-",
@@ -455,7 +452,6 @@ def process_tiles(
             "Point Clouds (LAZ->DSM)",
             f"{convert_stats.laz_sources}",
             f"{convert_stats.laz_converted}",
-            split_laz,
             res_str,
             f"{convert_stats.laz_failed}",
             f"{convert_stats.laz_duration:.1f}s" if convert_stats.laz_duration else "-",
@@ -464,7 +460,7 @@ def process_tiles(
     ]
     print_table(
         "Conversion Summary",
-        ["Type", "Sources", "Outputs", "Split", "Resolutions", "Failed", "Duration", "Speed"],
+        ["Type", "Sources", "Outputs", "Resolutions", "Failed", "Duration", "Speed"],
         rows,
     )
     print()
