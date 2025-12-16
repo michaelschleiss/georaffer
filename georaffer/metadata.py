@@ -91,15 +91,18 @@ def get_wms_metadata(
             found_dates = {}
 
             for date_str in dates:
-                if "." in date_str:
-                    dt = datetime.strptime(date_str, "%d.%m.%Y")
-                    acquisition_date = dt.strftime("%Y-%m-%d")
-                else:
-                    acquisition_date = date_str
-                found_year = datetime.strptime(acquisition_date, "%Y-%m-%d").date().year
-                found_dates[found_year] = {
-                    "acquisition_date": acquisition_date, "metadata_source": "WMS GetFeatureInfo"
-                }
+                try:
+                    if "." in date_str:
+                        dt = datetime.strptime(date_str, "%d.%m.%Y")
+                        acquisition_date = dt.strftime("%Y-%m-%d")
+                    else:
+                        acquisition_date = date_str
+                    found_year = datetime.strptime(acquisition_date, "%Y-%m-%d").date().year
+                    found_dates[found_year] = {
+                        "acquisition_date": acquisition_date, "metadata_source": "WMS GetFeatureInfo"
+                    }
+                except ValueError:
+                    pass
 
             if year is None or year not in found_dates:
                 return found_dates[max(found_dates.keys())]
