@@ -26,8 +26,8 @@ from georaffer.metadata import create_provenance_csv
 from georaffer.provenance import compute_split_coordinates, extract_year_from_filename
 from georaffer.runtime import InterruptManager, shutdown_executor
 from georaffer.workers import (
+    convert_dsm_worker,
     convert_jp2_worker,
-    convert_laz_worker,
     detect_region,
     generate_output_name,
     init_worker,
@@ -391,7 +391,7 @@ def convert_tiles(
                         pbar.update(1)
                         _update_files_per_second(pbar)
                         continue
-                    laz_futures.append(executor.submit(convert_laz_worker, args))
+                    laz_futures.append(executor.submit(convert_dsm_worker, args))
 
                 pending = set(laz_futures)
                 while pending and not stop_event.is_set():

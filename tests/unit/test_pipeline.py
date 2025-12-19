@@ -484,8 +484,8 @@ class TestConvertTiles:
         assert stats.converted == 1
         assert stats.failed == 0
 
-    def test_convert_laz_files(self, tmp_path, monkeypatch):
-        """Test LAZ conversion."""
+    def test_convert_dsm_files(self, tmp_path, monkeypatch):
+        """Test DSM conversion."""
         import georaffer.conversion as convert_mod
 
         raw_dir = tmp_path / "raw"
@@ -496,11 +496,11 @@ class TestConvertTiles:
         # Create fake LAZ file
         (raw_dir / "dsm" / "bdom50_32350_5600_1_nw_2025.laz").touch()
 
-        def fake_laz_worker(args):
+        def fake_dsm_worker(args):
             return True, [], args[0], 1  # success, metadata, filename, outputs
 
         monkeypatch.setenv("GEORAFFER_DISABLE_PROCESS_POOL", "1")
-        monkeypatch.setattr(convert_mod, "convert_laz_worker", fake_laz_worker)
+        monkeypatch.setattr(convert_mod, "convert_dsm_worker", fake_dsm_worker)
 
         stats = convert_tiles(str(raw_dir), str(processed_dir), [1000])
 
@@ -525,7 +525,7 @@ class TestConvertTiles:
         monkeypatch.setattr(workers_mod, "convert_laz", lambda *args, **kwargs: True)
 
         # Use grid_size_km=2.0 to match RLP tile size (no split)
-        success, metadata, fname, out_count = workers_mod.convert_laz_worker(
+        success, metadata, fname, out_count = workers_mod.convert_dsm_worker(
             (laz_file.name, str(laz_dir), str(processed_dir), [1000], 1, 2.0, False)
         )
 

@@ -187,7 +187,7 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
         ) from e
 
 
-def convert_laz_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
+def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
     """Worker function to convert a single DSM file (.laz or raster) with resolutions.
 
     Args:
@@ -198,7 +198,7 @@ def convert_laz_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
         Tuple of (success, metadata_rows, filename, outputs_count) where:
         - success: True if conversion succeeded, False otherwise
         - metadata_rows: List of dict with provenance metadata for each output tile
-        - filename: Original LAZ filename (for logging/tracking)
+        - filename: Original DSM filename (for logging/tracking)
         - outputs_count: Number of DSM GeoTIFF files created (accounts for splits and resolutions)
 
     Raises:
