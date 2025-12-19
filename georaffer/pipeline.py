@@ -10,11 +10,13 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from georaffer.config import Region, get_tile_size_km
+import numpy as np
+
+from georaffer.config import Region, get_tile_size_km, UTM_ZONE_BY_REGION
 from georaffer.conversion import convert_tiles
 from georaffer.downloaders import BrandenburgDownloader, NRWDownloader, RLPDownloader
 from georaffer.downloading import DownloadTask, download_parallel_streams
-from georaffer.grids import compute_split_factor, generate_user_grid_tiles
+from georaffer.grids import compute_split_factor, generate_tiles_by_zone
 from georaffer.reporting import (
     print_catalog_summary,
     print_config,
@@ -117,11 +119,12 @@ def process_tiles(
     process_images: bool = True,
     process_pointclouds: bool = True,
     reprocess: bool = False,
+    source_zone: int = 32,
 ) -> ProcessingStats:
     """Main entry point: download and process tiles for given coordinates.
 
     Args:
-        coords: List of (utm_x, utm_y) coordinates
+        coords: List of (utm_x, utm_y) coordinates in source_zone UTM
         output_dir: Base output directory
         resolutions: Target resolutions in pixels (default: [1000])
         grid_size_km: User's working grid resolution in km
@@ -135,6 +138,7 @@ def process_tiles(
         process_pointclouds: Download and convert DSM sources (LAZ/TIF → GeoTIFF)
         reprocess: If True, re-download and re-convert existing files.
             By default (False), skip files where outputs already exist.
+        source_zone: UTM zone of input coordinates (default: 32 for NRW/RLP)
 
     Returns:
         ProcessingStats with processing results
@@ -171,14 +175,18 @@ def process_tiles(
         f"Generating {grid_size_km:.2f}km grid with {margin_km:.2f}km margin around flight path..."
     )
     grid_start = time.perf_counter()
-    user_tiles = generate_user_grid_tiles(coords, grid_size_km, margin_km)
+    tiles_by_zone = generate_tiles_by_zone(coords, source_zone, grid_size_km, margin_km)
+    # User tiles = unique grid cells from original coords (source zone only)
+    total_user_tiles = len(tiles_by_zone.get(source_zone, set()))
     grid_duration = time.perf_counter() - grid_start
-    print(f"  Generated {len(user_tiles)} user tiles in {grid_duration:.1f}s")
+    print(f"  Generated {total_user_tiles} user tiles in {grid_duration:.1f}s")
 
     # Convert user tiles to RLP native grid coords for WMS queries
     # User tiles are in user grid coords; we need RLP 2km grid coords
     rlp_native_coords: set[tuple[int, int]] = set()
-    for x, y in user_tiles:
+    rlp_zone = UTM_ZONE_BY_REGION[Region.RLP]
+    rlp_user_tiles = tiles_by_zone.get(rlp_zone, set())
+    for x, y in rlp_user_tiles:
         # Convert user grid to UTM (center of tile)
         utm_x = (x + 0.5) * grid_size_km * 1000
         utm_y = (y + 0.5) * grid_size_km * 1000
@@ -211,14 +219,19 @@ def process_tiles(
         RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz),
         RegionCatalog("bb", bb_downloader, bb_jp2, bb_laz),
     ]
-    tile_set, downloads_by_source = calculate_required_tiles(user_tiles, grid_size_km, regions)
+    zone_by_region = {region.value.lower(): zone for region, zone in UTM_ZONE_BY_REGION.items()}
+    original_coords = np.array(coords) if coords else None
+    tile_set, downloads_by_source = calculate_required_tiles(
+        tiles_by_zone, grid_size_km, regions, zone_by_region,
+        original_coords=original_coords, source_zone=source_zone
+    )
     calc_duration = time.perf_counter() - phase_start
 
     # Print coverage analysis
-    covered_jp2 = len(user_tiles) - len(tile_set.missing_jp2)
-    covered_laz = len(user_tiles) - len(tile_set.missing_laz)
-    coverage_jp2_pct = (covered_jp2 / len(user_tiles) * 100) if user_tiles else 0
-    coverage_laz_pct = (covered_laz / len(user_tiles) * 100) if user_tiles else 0
+    covered_jp2 = total_user_tiles - len(tile_set.missing_jp2)
+    covered_laz = total_user_tiles - len(tile_set.missing_laz)
+    coverage_jp2_pct = (covered_jp2 / total_user_tiles * 100) if total_user_tiles else 0
+    coverage_laz_pct = (covered_laz / total_user_tiles * 100) if total_user_tiles else 0
 
     print()
     print_table(
@@ -233,7 +246,7 @@ def process_tiles(
         ],
         [
             (
-                f"{len(user_tiles)}",
+                f"{total_user_tiles}",
                 f"{covered_jp2} ({coverage_jp2_pct:.0f}%)",
                 f"{len(tile_set.missing_jp2)} ({100 - coverage_jp2_pct:.0f}%)",
                 f"{covered_laz} ({coverage_laz_pct:.0f}%)",
@@ -315,11 +328,11 @@ def process_tiles(
         if tile_set.missing_jp2:
             sample = list(tile_set.missing_jp2)[:5]
             print(f"Warning: {len(tile_set.missing_jp2)} imagery tiles not available")
-            print(f"  Sample missing JP2 tiles (user grid coords): {sample}")
+            print(f"  Sample missing JP2 tiles (zone, grid_x, grid_y): {sample}")
         if tile_set.missing_laz:
             sample = list(tile_set.missing_laz)[:5]
             print(f"Warning: {len(tile_set.missing_laz)} DSM tiles not available")
-            print(f"  Sample missing DSM tiles (user grid coords): {sample}")
+            print(f"  Sample missing DSM tiles (zone, grid_x, grid_y): {sample}")
         print("  Note: Tiles may be outside coverage area or not yet published")
     print()
 
@@ -327,7 +340,7 @@ def process_tiles(
     total_stats = ProcessingStats()
     download_tasks = []
 
-    # Filter downloads based on --only flag
+    # Filter downloads based on --type flag
     if process_images:
         if downloads_by_source["nrw_jp2"]:
             download_tasks.append(

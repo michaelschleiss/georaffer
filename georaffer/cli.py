@@ -46,18 +46,46 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 
-def load_coordinates(args) -> list[tuple[float, float]]:
-    """Load coordinates based on CLI arguments."""
-    from georaffer.config import METERS_PER_KM, OUTPUT_TILE_SIZE_KM
-    from georaffer.inputs import load_from_bbox, load_from_csv
+def load_coordinates(args, *, return_zone: bool = False):
+    """Load coordinates based on CLI arguments.
+
+    If return_zone is True, also return the detected/source UTM zone.
+    """
+    from georaffer.config import METERS_PER_KM, OUTPUT_TILE_SIZE_KM, UTM_ZONE
+    from georaffer.inputs import load_from_bbox, load_from_csv, load_from_geotiff
 
     # Use output tile size consistently for all coordinate loading
     tile_size_m = int(OUTPUT_TILE_SIZE_KM * METERS_PER_KM)
 
     coords = []
+    utm_zone = getattr(args, "utm_zone", None)
+    source_zone = utm_zone or UTM_ZONE
+
+    def _require_utm_zone() -> int:
+        if utm_zone is None:
+            raise ValueError("UTM inputs require --utm-zone (32 or 33).")
+        return utm_zone
+
+    def _latlon_bbox_to_utm(
+        min_lon: float,
+        min_lat: float,
+        max_lon: float,
+        max_lat: float,
+        *,
+        context: str,
+    ) -> tuple[float, float, float, float, int]:
+        import utm
+
+        min_x, min_y, min_zone, _ = utm.from_latlon(min_lat, min_lon)
+        max_x, max_y, max_zone, _ = utm.from_latlon(max_lat, max_lon)
+        if utm_zone is not None:
+            raise ValueError(f"{context} lat/lon inputs do not accept --utm-zone.")
+        if min_zone != max_zone:
+            raise ValueError(f"{context} spans multiple UTM zones; split input by zone.")
+        return min_x, min_y, max_x, max_y, min_zone
 
     if args.command == "csv":
-        from georaffer.grids import latlon_to_utm
+        import utm
 
         # Validate --cols format: must be exactly two comma-separated names
         parts = [p.strip() for p in args.cols.split(",")]
@@ -71,15 +99,23 @@ def load_coordinates(args) -> list[tuple[float, float]]:
         sample = raw_coords[:100] if len(raw_coords) > 100 else raw_coords
         is_latlon = all(abs(c[0]) < 180 and abs(c[1]) < 90 for c in sample)
         if is_latlon:
-            coords = [
-                latlon_to_utm(c[1], c[0], force_zone_number=None) for c in raw_coords
-            ]  # lat, lon order
+            if utm_zone is not None:
+                raise ValueError("CSV lat/lon inputs do not accept --utm-zone.")
+            coords = []
+            zones: set[int] = set()
+            for lon, lat in raw_coords:
+                easting, northing, zone, _ = utm.from_latlon(lat, lon)
+                coords.append((easting, northing))
+                zones.add(zone)
+            if len(zones) > 1:
+                raise ValueError("CSV coordinates span multiple UTM zones; split input by zone.")
+            if zones:
+                source_zone = zones.pop()
         else:
+            source_zone = _require_utm_zone()
             coords = [(c[0], c[1]) for c in raw_coords]
 
     elif args.command == "bbox":
-        from georaffer.grids import latlon_to_utm
-
         # bbox format: WEST,SOUTH,EAST,NORTH (min_x, min_y, max_x, max_y)
         min_x, min_y, max_x, max_y = map(float, args.bbox.split(","))
 
@@ -91,8 +127,47 @@ def load_coordinates(args) -> list[tuple[float, float]]:
         if is_latlon:
             # Convert lat/lon bbox corners to UTM
             # min_x=west_lon, min_y=south_lat, max_x=east_lon, max_y=north_lat
-            min_x, min_y = latlon_to_utm(min_y, min_x, force_zone_number=None)  # lat, lon
-            max_x, max_y = latlon_to_utm(max_y, max_x, force_zone_number=None)
+            min_x, min_y, max_x, max_y, source_zone = _latlon_bbox_to_utm(
+                min_x, min_y, max_x, max_y, context="BBox"
+            )
+        else:
+            source_zone = _require_utm_zone()
+
+        # load_from_bbox returns UTM tile centers directly
+        coords = load_from_bbox(min_x, min_y, max_x, max_y, tile_size_m)
+
+    elif args.command == "tif":
+        from rasterio.warp import transform_bounds
+
+        bounds, crs = load_from_geotiff(args.tif)
+        min_x, min_y, max_x, max_y = bounds
+
+        epsg = crs.to_epsg()
+        if crs.is_geographic:
+            min_x, min_y, max_x, max_y, source_zone = _latlon_bbox_to_utm(
+                min_x, min_y, max_x, max_y, context="GeoTIFF"
+            )
+        elif epsg in (25832, 25833, 32632, 32633):
+            detected_zone = 32 if epsg in (25832, 32632) else 33
+            if utm_zone is not None and utm_zone != detected_zone:
+                raise ValueError(
+                    f"GeoTIFF is in UTM zone {detected_zone}; "
+                    f"pass --utm-zone {detected_zone} or omit --utm-zone."
+                )
+            source_zone = detected_zone
+        else:
+            min_lon, min_lat, max_lon, max_lat = transform_bounds(
+                crs, "EPSG:4326", min_x, min_y, max_x, max_y, densify_pts=21
+            )
+            min_x, min_y, max_x, max_y, source_zone = _latlon_bbox_to_utm(
+                min_lon, min_lat, max_lon, max_lat, context="GeoTIFF"
+            )
+
+        if source_zone not in (32, 33):
+            raise ValueError(
+                f"GeoTIFF resolves to UTM zone {source_zone}; "
+                "only zones 32 and 33 are supported."
+            )
 
         # load_from_bbox returns UTM tile centers directly
         coords = load_from_bbox(min_x, min_y, max_x, max_y, tile_size_m)
@@ -104,19 +179,35 @@ def load_coordinates(args) -> list[tuple[float, float]]:
         raw_coords = load_from_pygeon(args.dataset_path)
         # pygeon returns (lat, lon, alt) - vectorized UTM conversion
         coords_array = np.array(raw_coords)
-        utm_x, utm_y = latlon_array_to_utm(
-            coords_array[:, 0], coords_array[:, 1], force_zone_number=None
-        )
-        coords = list(zip(utm_x, utm_y))
+        if coords_array.size == 0:
+            coords = []
+        else:
+            if utm_zone is not None:
+                raise ValueError("Pygeon inputs do not accept --utm-zone.")
+            lons = coords_array[:, 1]
+            zone_candidates = np.floor((lons + 180) / 6).astype(int) + 1
+            unique_zones = set(zone_candidates.tolist())
+            if len(unique_zones) > 1:
+                raise ValueError(
+                    "Pygeon dataset spans multiple UTM zones; split input by zone."
+                )
+            source_zone = unique_zones.pop()
+            utm_x, utm_y = latlon_array_to_utm(
+                coords_array[:, 0], coords_array[:, 1], force_zone_number=source_zone
+            )
+            coords = list(zip(utm_x, utm_y))
 
     elif args.command == "tiles":
         from georaffer.grids import tile_to_utm_center
 
+        source_zone = _require_utm_zone()
         # Parse tile coordinates: "350,5600 351,5601" (km indices)
         for tile_str in args.tiles:
             x, y = map(int, tile_str.split(","))
             coords.append(tile_to_utm_center(x, y, tile_size_m))
 
+    if return_zone:
+        return coords, source_zone
     return coords
 
 
@@ -219,7 +310,7 @@ Details:
   --pixel-size: Output resolution in meters. Multiple values create multiple outputs.
                 Examples: --pixel-size 0.5 (50cm), --pixel-size 1 2 5 (three resolutions)
 
-  --only:       Download only image or dsm (default: both).
+  --type:       Download only image or dsm (default: both).
                 DSM: Photogrammetric surface model (bDOM) from aerial imagery.
 
   --from/--to:  Include historic orthophotos (NRW only, availability varies).
@@ -228,6 +319,10 @@ Details:
 
     # bbox-specific epilog
     bbox_epilog = f"""\
+{shared_epilog}"""
+
+    # tif-specific epilog
+    tif_epilog = f"""\
 {shared_epilog}"""
 
     # tiles-specific epilog
@@ -295,12 +390,28 @@ Details:
         help="End year for historic orthophotos (default: present)",
     )
     shared.add_argument(
-        "--only",
+        "--type",
+        dest="data_types",
         nargs="+",
         metavar="TYPE",
         choices=["image", "dsm"],
         help="Download only specific data types (default: all). "
         "Options: image (orthophotos), dsm (surface elevation)",
+    )
+    shared.add_argument(
+        "--only",
+        dest="data_types",
+        nargs="+",
+        metavar="TYPE",
+        choices=["image", "dsm"],
+        help=argparse.SUPPRESS,
+    )
+    shared.add_argument(
+        "--utm-zone",
+        type=int,
+        choices=[32, 33],
+        metavar="ZONE",
+        help="UTM zone for UTM inputs (required for UTM inputs; invalid for lat/lon)",
     )
 
     # bbox subcommand
@@ -315,6 +426,19 @@ Details:
     )
     bbox_parser.add_argument(
         "bbox", metavar="BBOX", help="Bounding box: XMIN,YMIN,XMAX,YMAX (UTM meters or lon/lat)"
+    )
+
+    # tif subcommand
+    tif_parser = subparsers.add_parser(
+        "tif",
+        parents=[shared],
+        help="Download tiles covering a GeoTIFF footprint",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        usage="georaffer tif PATH --output DIR [options]\n\n   ex: georaffer tif ./area.tif --output ./tiles",
+        epilog=tif_epilog,
+    )
+    tif_parser.add_argument(
+        "tif", metavar="PATH", help="GeoTIFF path used to derive bounds (CRS required)"
     )
 
     # tiles subcommand
@@ -389,7 +513,7 @@ Details:
     try:
         # Load coordinates
         print(f"Loading coordinates from {args.command}...", flush=True)
-        coords = load_coordinates(args)
+        coords, source_zone = load_coordinates(args, return_zone=True)
 
         if not coords:
             print("Error: No coordinates found", file=sys.stderr)
@@ -429,9 +553,9 @@ Details:
 
         workers = args.workers if args.workers is not None else DEFAULT_WORKERS
 
-        # Parse --only into booleans for pipeline
-        process_images = args.only is None or "image" in args.only
-        process_pointclouds = args.only is None or "dsm" in args.only
+        # Parse --type into booleans for pipeline
+        process_images = args.data_types is None or "image" in args.data_types
+        process_pointclouds = args.data_types is None or "dsm" in args.data_types
 
         stats = process_tiles(
             coords=unique_coords,
@@ -446,6 +570,7 @@ Details:
             process_images=process_images,
             process_pointclouds=process_pointclouds,
             reprocess=args.reprocess,
+            source_zone=source_zone,
         )
 
         # Exit with error if there were failures
