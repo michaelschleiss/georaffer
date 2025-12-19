@@ -560,6 +560,14 @@ class TestConvertTiles:
         region = workers_mod.detect_region("dop20rgb_32_362_5604_2_rp_2023.jp2")
         assert region == Region.RLP
 
+    def test_detects_bb_region(self):
+        """Test BB region detection from filename."""
+        import georaffer.workers as workers_mod
+        from georaffer.config import Region
+
+        region = workers_mod.detect_region("bdom_33250-5888.tif")
+        assert region == Region.BB
+
     def test_empty_directories(self, tmp_path):
         """Test handling of empty directories."""
         raw_dir = tmp_path / "raw"

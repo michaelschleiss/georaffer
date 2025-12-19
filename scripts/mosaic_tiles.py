@@ -149,6 +149,12 @@ def _load_provenance(path: str):
 
 def _parse_coords(row):
     """Return grid coords, trying provenance fields then filenames as fallback."""
+    def _normalize_coords(coords):
+        gx, gy = coords
+        if gx >= 10000 and gy >= 100000:
+            return gx // 1000, gy // 1000
+        return gx, gy
+
     try:
         gx = int(row.get("grid_x")) if row.get("grid_x") not in (None, "", "None") else None
         gy = int(row.get("grid_y")) if row.get("grid_y") not in (None, "", "None") else None
@@ -160,7 +166,7 @@ def _parse_coords(row):
             if name:
                 parsed = parse_tile_coords(os.path.basename(name))
                 if parsed:
-                    return parsed
+                    return _normalize_coords(parsed)
         return None, None
     except Exception:
         return None, None

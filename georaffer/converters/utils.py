@@ -12,11 +12,19 @@ import rasterio.warp
 from rasterio.enums import Resampling
 from rasterio.transform import Affine
 
-from georaffer.config import NRW_JP2_PATTERN, NRW_LAZ_PATTERN, RLP_JP2_PATTERN, RLP_LAZ_PATTERN
+from georaffer.config import (
+    BB_BDOM_PATTERN,
+    NRW_JP2_PATTERN,
+    NRW_LAZ_PATTERN,
+    RLP_JP2_PATTERN,
+    RLP_LAZ_PATTERN,
+)
 
-# Pattern for processed output files: {region}_32_{x}_{y}_{year}.tif
-# x can be 3-6 digits (grid: 350, UTM: 350500), y can be 4-7 digits (grid: 5600, UTM: 5600000)
-OUTPUT_FILE_PATTERN = re.compile(r"(?:nrw|rlp)_32_(\d{3,6})_(\d{4,7})_\d{4}(?:_\d+)?\.tif$")
+# Pattern for processed output files: {region}_{zone}_{easting}_{northing}_{year}.tif
+# Easting is 6 digits, northing is 7 digits.
+OUTPUT_FILE_PATTERN = re.compile(
+    r"(?:nrw|rlp|bb)_(?:32|33)_(\d{6})_(\d{7})_\d{4}(?:_\d+)?\.tif$"
+)
 
 
 @contextmanager
@@ -77,12 +85,13 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
     - NRW LAZ: bdom50_32350_5600_1_nw_2025.laz → (350, 5600) [raw input tile coords]
     - RLP JP2: dop20rgb_32_362_5604_2_rp_2023.jp2 → (362, 5604) [raw input tile coords]
     - RLP LAZ: bdom20rgbi_32_364_5582_2_rp.laz → (364, 5582) [raw input tile coords]
+    - BB bDOM: bdom_33250-5888.tif → (250, 5888) [raw input tile coords]
     - Output files: nrw_32_350500_5600000_2021.tif → (350500, 5600000) [UTM coordinates]
 
     Pattern matching strategy:
       1. Try NRW patterns first (strict validation catches format errors early)
       2. Fall back to RLP patterns (different naming conventions)
-      3. Finally check processed output files (accepts both grid and UTM coords)
+      3. Finally check processed output files (UTM coordinates in meters)
       4. Return None if no match (signals invalid/unexpected filename)
 
     Returns None for:
@@ -104,9 +113,16 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
     if rlp_result:
         return rlp_result
 
-    # Processed output files: {region}_32_{x}_{y}_{year}.tif
+    # Try BB bDOM pattern (zone prefix + km coords)
+    match = BB_BDOM_PATTERN.match(filename)
+    if match:
+        east_code = match.group(1)
+        grid_x = int(east_code[2:])
+        grid_y = int(match.group(2))
+        return grid_x, grid_y
+
+    # Processed output files: {region}_{zone}_{easting}_{northing}_{year}.tif
     # Uses UTM coordinates in meters (e.g., 350500, 5600000)
-    # Pattern also accepts legacy grid km values for backwards compatibility
     match = OUTPUT_FILE_PATTERN.search(filename)
     if match:
         return int(match.group(1)), int(match.group(2))
@@ -149,35 +165,26 @@ def generate_split_output_path(
     """Generate output path for a split tile.
 
     Args:
-        base_output_path: Original output path (e.g., /path/rlp_364_5582_2023.tif)
+        base_output_path: Original output path (e.g., /path/rlp_32_362000_5604000_2023.tif)
         grid_x, grid_y: Grid coordinates for the split tile (km indices)
-        easting, northing: Optional UTM coordinates (meters) for sub-km splits.
+        easting, northing: UTM coordinates (meters) for sub-km splits.
 
     Returns:
-        Modified output path with new coordinates.
-        - If easting/northing provided, embeds them as UTM to avoid collisions.
-        - Otherwise falls back to replacing grid_x/grid_y in the filename.
+        Modified output path with new UTM coordinates to avoid collisions.
     """
     path = Path(base_output_path)
     parts = path.stem.split("_")
 
-    # Prefer UTM naming when provided (used for all sub-tile splits)
-    # Expected format: {region}_{zone}_{easting}_{northing}_{year}.tif (5 parts)
-    if easting is not None and northing is not None and len(parts) >= 5:
-        region = parts[0]
-        year = parts[4]
-        new_name = f"{region}_{utm_zone}_{int(easting)}_{int(northing)}_{year}{path.suffix}"
-        return path.parent / new_name
-
-    # Default: swap grid coordinates
-    if len(parts) >= 4:
-        parts = parts[:4]  # drop any resolution suffix
-        parts[1] = str(grid_x)
-        parts[2] = str(grid_y)
-        new_name = "_".join(parts) + path.suffix
-        return path.parent / new_name
-
-    return path
+    if easting is None or northing is None:
+        raise ValueError("Split output naming requires easting/northing UTM coordinates.")
+    if len(parts) < 5:
+        raise ValueError(
+            "Output path must be {region}_{zone}_{easting}_{northing}_{year}.tif to build split outputs."
+        )
+    region = parts[0]
+    year = parts[4]
+    new_name = f"{region}_{utm_zone}_{int(easting)}_{int(northing)}_{year}{path.suffix}"
+    return path.parent / new_name
 
 
 def compute_split_bounds(idx: int, total: int, ratio: int) -> tuple[int, int]:

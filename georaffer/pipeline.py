@@ -12,7 +12,7 @@ from pathlib import Path
 
 from georaffer.config import Region, get_tile_size_km
 from georaffer.conversion import convert_tiles
-from georaffer.downloaders import NRWDownloader, RLPDownloader
+from georaffer.downloaders import BrandenburgDownloader, NRWDownloader, RLPDownloader
 from georaffer.downloading import DownloadTask, download_parallel_streams
 from georaffer.grids import compute_split_factor, generate_user_grid_tiles
 from georaffer.reporting import (
@@ -88,6 +88,7 @@ def _estimate_outputs(
     region_tile_km = {
         "nrw": get_tile_size_km(Region.NRW),
         "rlp": get_tile_size_km(Region.RLP),
+        "bb": get_tile_size_km(Region.BB),
     }
 
     def _count(tiles_by_region: dict, tile_type: str) -> int:
@@ -131,7 +132,7 @@ def process_tiles(
         max_workers: Number of parallel workers for conversion
         profiling: Enable profiling output for conversion timing
         process_images: Download and convert orthophoto imagery (JP2)
-        process_pointclouds: Download and convert point clouds to DSM (LAZ → GeoTIFF)
+        process_pointclouds: Download and convert DSM sources (LAZ/TIF → GeoTIFF)
         reprocess: If True, re-download and re-convert existing files.
             By default (False), skip files where outputs already exist.
 
@@ -158,6 +159,7 @@ def process_tiles(
     # imagery_from is (from_year, to_year) or None; both NRW and RLP take year range
     nrw_downloader = NRWDownloader(output_dir, imagery_from=imagery_from)
     rlp_downloader = RLPDownloader(output_dir, imagery_from=imagery_from)
+    bb_downloader = BrandenburgDownloader(output_dir)
 
     # Create output directories
     for subdir in ["raw/image", "raw/dsm", "processed/image", "processed/dsm"]:
@@ -186,18 +188,20 @@ def process_tiles(
 
     # STEP 2: Load tile catalogs
     print_step_header(2, "Loading Available Tiles from Remote Servers")
-    print("Querying tile catalogs from NRW and RLP servers...")
+    print("Querying tile catalogs from NRW, RLP, and BB servers...")
     phase_start = time.perf_counter()
     nrw_jp2, nrw_laz = nrw_downloader.get_available_tiles()
     rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(requested_coords=rlp_native_coords)
+    bb_jp2, bb_laz = bb_downloader.get_available_tiles()
     catalogs_duration = time.perf_counter() - phase_start
 
     # Use total counts (includes historical) for JP2, unique locations for LAZ
     print_catalog_summary(
-        nrw_downloader.total_jp2_count or len(nrw_jp2),
-        len(nrw_laz),
-        rlp_downloader.total_jp2_count or len(rlp_jp2),
-        len(rlp_laz),
+        [
+            ("NRW", nrw_downloader.total_jp2_count or len(nrw_jp2), len(nrw_laz)),
+            ("RLP", rlp_downloader.total_jp2_count or len(rlp_jp2), len(rlp_laz)),
+            ("BB", len(bb_jp2), len(bb_laz)),
+        ],
         catalogs_duration,
     )
 
@@ -205,6 +209,7 @@ def process_tiles(
     regions = [
         RegionCatalog("nrw", nrw_downloader, nrw_jp2, nrw_laz),
         RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz),
+        RegionCatalog("bb", bb_downloader, bb_jp2, bb_laz),
     ]
     tile_set, downloads_by_source = calculate_required_tiles(user_tiles, grid_size_km, regions)
     calc_duration = time.perf_counter() - phase_start
@@ -222,8 +227,8 @@ def process_tiles(
             "User Tiles",
             "JP2 Available",
             "JP2 Missing",
-            "LAZ Available",
-            "LAZ Missing",
+            "DSM Available",
+            "DSM Missing",
             "Compute Time",
         ],
         [
@@ -243,24 +248,32 @@ def process_tiles(
     nrw_laz_count = len(downloads_by_source.get("nrw_laz", []))
     rlp_jp2_count = len(downloads_by_source.get("rlp_jp2", []))
     rlp_laz_count = len(downloads_by_source.get("rlp_laz", []))
+    bb_jp2_count = len(downloads_by_source.get("bb_jp2", []))
+    bb_laz_count = len(downloads_by_source.get("bb_laz", []))
 
     # Calculate split factors per region (only for regions with tiles)
     nrw_tile_km = get_tile_size_km(Region.NRW)
     rlp_tile_km = get_tile_size_km(Region.RLP)
+    bb_tile_km = get_tile_size_km(Region.BB)
     nrw_has_tiles = nrw_jp2_count > 0 or nrw_laz_count > 0
     rlp_has_tiles = rlp_jp2_count > 0 or rlp_laz_count > 0
+    bb_has_tiles = bb_jp2_count > 0 or bb_laz_count > 0
     nrw_split = compute_split_factor(nrw_tile_km, grid_size_km) if nrw_has_tiles else 1
     rlp_split = compute_split_factor(rlp_tile_km, grid_size_km) if rlp_has_tiles else 1
+    bb_split = compute_split_factor(bb_tile_km, grid_size_km) if bb_has_tiles else 1
     nrw_split_side = int(nrw_split**0.5)  # e.g., 4 -> 2×2
     rlp_split_side = int(rlp_split**0.5)
+    bb_split_side = int(bb_split**0.5)
 
     # Calculate outputs per region
     nrw_jp2_out = nrw_jp2_count * nrw_split
     nrw_laz_out = nrw_laz_count * nrw_split
     rlp_jp2_out = rlp_jp2_count * rlp_split
     rlp_laz_out = rlp_laz_count * rlp_split
-    total_jp2_out = nrw_jp2_out + rlp_jp2_out
-    total_laz_out = nrw_laz_out + rlp_laz_out
+    bb_jp2_out = bb_jp2_count * bb_split
+    bb_laz_out = bb_laz_count * bb_split
+    total_jp2_out = nrw_jp2_out + rlp_jp2_out + bb_jp2_out
+    total_laz_out = nrw_laz_out + rlp_laz_out + bb_laz_out
 
     print()
     print(f"Conversion Plan (target: {grid_size_km}km grid)")
@@ -283,6 +296,14 @@ def process_tiles(
                 f"{rlp_jp2_count} → {rlp_jp2_out}",
                 f"{rlp_laz_count} → {rlp_laz_out}",
             ),
+            (
+                "BB",
+                f"{bb_tile_km:.0f}km",
+                f"{grid_size_km}km",
+                f"{bb_split_side}×{bb_split_side}",
+                f"{bb_jp2_count} → {bb_jp2_out}",
+                f"{bb_laz_count} → {bb_laz_out}",
+            ),
             ("", "", "", "Total", str(total_jp2_out), str(total_laz_out)),
         ],
     )
@@ -297,8 +318,8 @@ def process_tiles(
             print(f"  Sample missing JP2 tiles (user grid coords): {sample}")
         if tile_set.missing_laz:
             sample = list(tile_set.missing_laz)[:5]
-            print(f"Warning: {len(tile_set.missing_laz)} point cloud tiles not available")
-            print(f"  Sample missing LAZ tiles (user grid coords): {sample}")
+            print(f"Warning: {len(tile_set.missing_laz)} DSM tiles not available")
+            print(f"  Sample missing DSM tiles (user grid coords): {sample}")
         print("  Note: Tiles may be outside coverage area or not yet published")
     print()
 
@@ -316,14 +337,22 @@ def process_tiles(
             download_tasks.append(
                 DownloadTask("RLP Imagery", downloads_by_source["rlp_jp2"], rlp_downloader)
             )
+        if downloads_by_source["bb_jp2"]:
+            download_tasks.append(
+                DownloadTask("BB Imagery", downloads_by_source["bb_jp2"], bb_downloader)
+            )
     if process_pointclouds:
         if downloads_by_source["nrw_laz"]:
             download_tasks.append(
-                DownloadTask("NRW Point Clouds", downloads_by_source["nrw_laz"], nrw_downloader)
+                DownloadTask("NRW DSM", downloads_by_source["nrw_laz"], nrw_downloader)
             )
         if downloads_by_source["rlp_laz"]:
             download_tasks.append(
-                DownloadTask("RLP Point Clouds", downloads_by_source["rlp_laz"], rlp_downloader)
+                DownloadTask("RLP DSM", downloads_by_source["rlp_laz"], rlp_downloader)
+            )
+        if downloads_by_source["bb_laz"]:
+            download_tasks.append(
+                DownloadTask("BB DSM", downloads_by_source["bb_laz"], bb_downloader)
             )
 
     print_step_header(3, "Downloading Raw Tiles")
@@ -392,7 +421,7 @@ def process_tiles(
     if process_images:
         data_types.append("imagery (JP2)")
     if process_pointclouds:
-        data_types.append("point clouds (LAZ)")
+        data_types.append("DSM (LAZ/TIF)")
     print(f"Converting {' and '.join(data_types)} to GeoTIFF format...")
     print(f"Target resolutions: {', '.join(f'{r}px' for r in resolutions)}")
     print()
@@ -449,7 +478,7 @@ def process_tiles(
             f"{jp2_rate:.1f} out/s" if convert_stats.jp2_duration else "-",
         ),
         (
-            "Point Clouds (LAZ->DSM)",
+            "DSM (LAZ/TIF)",
             f"{convert_stats.laz_sources}",
             f"{convert_stats.laz_converted}",
             res_str,
@@ -477,7 +506,7 @@ def process_tiles(
     print("Results:")
     print(f"  Files downloaded: {total_stats.downloaded} new, {total_stats.skipped} cached")
     print(f"  JP2 outputs: {convert_stats.jp2_converted} from {convert_stats.jp2_sources} sources")
-    print(f"  LAZ outputs: {convert_stats.laz_converted} from {convert_stats.laz_sources} sources")
+    print(f"  DSM outputs: {convert_stats.laz_converted} from {convert_stats.laz_sources} sources")
     print(f"  Total outputs: {total_stats.converted} successful")
     if total_stats.failed_download > 0:
         print(f"  Warning: Download failures: {total_stats.failed_download}")

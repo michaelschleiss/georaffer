@@ -6,22 +6,27 @@ import utm
 from georaffer.config import METERS_PER_KM, UTM_ZONE
 
 
-def latlon_to_utm(lat: float, lon: float) -> tuple[float, float]:
-    """Convert lat/lon (WGS84) to UTM coordinates in Zone 32N.
+def latlon_to_utm(
+    lat: float, lon: float, *, force_zone_number: int | None = UTM_ZONE
+) -> tuple[float, float]:
+    """Convert lat/lon (WGS84) to UTM coordinates.
 
     Args:
         lat: Latitude in decimal degrees
         lon: Longitude in decimal degrees
+        force_zone_number: Optional UTM zone number override. None = auto-detect.
 
     Returns:
         (easting, northing) tuple in meters
     """
-    easting, northing, _, _ = utm.from_latlon(lat, lon, force_zone_number=UTM_ZONE)
+    easting, northing, _, _ = utm.from_latlon(lat, lon, force_zone_number=force_zone_number)
     return easting, northing
 
 
-def latlon_array_to_utm(lats: np.ndarray, lons: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Convert arrays of lat/lon (WGS84) to UTM coordinates in Zone 32N.
+def latlon_array_to_utm(
+    lats: np.ndarray, lons: np.ndarray, *, force_zone_number: int | None = UTM_ZONE
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert arrays of lat/lon (WGS84) to UTM coordinates.
 
     Vectorized version for efficient bulk conversion.
 
@@ -32,7 +37,7 @@ def latlon_array_to_utm(lats: np.ndarray, lons: np.ndarray) -> tuple[np.ndarray,
     Returns:
         (eastings, northings) arrays in meters
     """
-    eastings, northings, _, _ = utm.from_latlon(lats, lons, force_zone_number=UTM_ZONE)
+    eastings, northings, _, _ = utm.from_latlon(lats, lons, force_zone_number=force_zone_number)
     return eastings, northings
 
 

@@ -74,8 +74,12 @@ class TestParseCoords:
         assert _parse_coords(row) == (350, 5600)
 
     def test_fallback_to_processed_file(self):
-        # processed_file with grid coords pattern (3-5 digit x, 4 digit y)
-        row = {"grid_x": None, "grid_y": None, "processed_file": "nrw_32_350_5600_2021.tif"}
+        # processed_file with UTM coords (6/7 digits) should normalize to grid coords
+        row = {
+            "grid_x": None,
+            "grid_y": None,
+            "processed_file": "nrw_32_350000_5600000_2021.tif",
+        }
         gx, gy = _parse_coords(row)
         assert (gx, gy) == (350, 5600)
 

@@ -40,6 +40,7 @@ from georaffer.config import (
     Region,
     get_tile_size_km,
     laz_spacing_for_region,
+    utm_zone_str_for_region,
 )
 from georaffer.converters.utils import (
     compute_split_bounds,
@@ -434,6 +435,7 @@ def _convert_split_laz(
     rows, cols = raster.shape
     tile_size_m = METERS_PER_KM  # grid indices are kilometer-based
     grid_size_m = round(grid_size_km * METERS_PER_KM)
+    utm_zone = utm_zone_str_for_region(region)
 
     total_resample = 0.0
     total_write = 0.0
@@ -476,7 +478,12 @@ def _convert_split_laz(
                 northing = int(base_y * tile_size_m + (ratio - 1 - r_idx) * grid_size_m)
 
                 output_path = generate_split_output_path(
-                    base_path, new_x, new_y, easting=easting, northing=northing
+                    base_path,
+                    new_x,
+                    new_y,
+                    easting=easting,
+                    northing=northing,
+                    utm_zone=utm_zone,
                 )
 
                 t_res_start = time.perf_counter()

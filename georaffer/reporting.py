@@ -119,26 +119,18 @@ def print_config(
     print()
 
 
-def print_catalog_summary(
-    nrw_jp2_count: int, nrw_laz_count: int, rlp_jp2_count: int, rlp_laz_count: int, duration: float
-) -> None:
+def print_catalog_summary(rows: Sequence[tuple[str, int, int]], duration: float) -> None:
     """Print tile catalog summary table.
 
     Args:
-        nrw_jp2_count: Number of NRW JP2 tiles
-        nrw_laz_count: Number of NRW LAZ tiles
-        rlp_jp2_count: Number of RLP JP2 tiles
-        rlp_laz_count: Number of RLP LAZ tiles
+        rows: List of (region_label, imagery_count, dsm_count)
         duration: Query duration in seconds (shown in footer)
     """
     print()
     print_table(
         "Available Tiles by Region",
-        ["Region", "Imagery (JP2)", "Point Clouds (LAZ)"],
-        [
-            ("NRW", f"{nrw_jp2_count:,}", f"{nrw_laz_count:,}"),
-            ("RLP", f"{rlp_jp2_count:,}", f"{rlp_laz_count:,}"),
-        ],
+        ["Region", "Imagery (JP2)", "DSM (LAZ/TIF)"],
+        [(region, f"{jp2:,}", f"{dsm:,}") for region, jp2, dsm in rows],
     )
     print(f"  Query time: {duration:.1f}s")
     print()

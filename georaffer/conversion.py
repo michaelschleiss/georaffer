@@ -5,6 +5,7 @@ format using ProcessPoolExecutor for CPU-bound operations.
 """
 
 import multiprocessing
+import re
 import os
 import signal
 import sys
@@ -82,12 +83,26 @@ def _outputs_exist(
     year_require = data_type == "image"
     year = extract_year_from_filename(filename, require=year_require) or "latest"
     if data_type == "dsm" and year == "latest" and source_dir is not None:
-        try:
-            header_year = get_laz_year(str(Path(source_dir) / filename))
-            if header_year:
-                year = header_year
-        except Exception:
-            pass
+        if filename.lower().endswith(".laz"):
+            try:
+                header_year = get_laz_year(str(Path(source_dir) / filename))
+                if header_year:
+                    year = header_year
+            except Exception:
+                pass
+        elif filename.lower().endswith(".tif"):
+            meta_path = Path(source_dir) / f"{Path(filename).stem}_meta.xml"
+            if meta_path.exists():
+                try:
+                    text = meta_path.read_text(encoding="utf-8", errors="ignore")
+                    match = re.search(
+                        r"<file_creation_day_year>\d{1,3}/(\d{4})</file_creation_day_year>",
+                        text,
+                    )
+                    if match:
+                        year = match.group(1)
+                except Exception:
+                    pass
 
     # Get base coordinates from filename
     coords = parse_tile_coords(filename)
@@ -105,11 +120,12 @@ def _outputs_exist(
         # output paths here, so don't skip.
         return False
 
-    from georaffer.config import METERS_PER_KM, UTM_ZONE_STR
+    from georaffer.config import METERS_PER_KM, utm_zone_str_for_region
     from georaffer.converters.utils import generate_split_output_path
 
     ratio = int(round(tile_km / grid_size_km)) if split_factor > 1 else 1
     grid_size_m = round(grid_size_km * METERS_PER_KM)
+    utm_zone = utm_zone_str_for_region(region)
 
     for res in resolutions:
         # Keep directory conventions aligned with workers.py
@@ -139,7 +155,7 @@ def _outputs_exist(
                     new_y,
                     easting=easting,
                     northing=northing,
-                    utm_zone=UTM_ZONE_STR,
+                    utm_zone=utm_zone,
                 )
                 if not output_path.exists():
                     return False
@@ -165,7 +181,7 @@ def convert_tiles(
         resolutions: Target resolutions in pixels
         max_workers: Number of parallel conversion workers
         process_images: Convert JP2 imagery
-        process_pointclouds: Convert LAZ point clouds
+        process_pointclouds: Convert DSM sources (LAZ/TIF)
         grid_size_km: User's grid size for splitting
         profiling: Enable profiling output
         reprocess: If False (default), skip files where outputs already exist.
@@ -193,7 +209,7 @@ def convert_tiles(
 
     laz_dir = os.path.join(raw_dir, "dsm")
     if process_pointclouds and os.path.exists(laz_dir):
-        laz_files = sorted(f for f in os.listdir(laz_dir) if f.endswith(".laz"))
+        laz_files = sorted(f for f in os.listdir(laz_dir) if f.lower().endswith((".laz", ".tif")))
 
     total_files = len(jp2_files) + len(laz_files)
     if total_files == 0:

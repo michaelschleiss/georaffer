@@ -262,7 +262,11 @@ def calculate_required_tiles(
         for native in laz_natives[name]:
             tile_key, url = laz_indexes[name][native]
             tile_set.laz[name].add(tile_key)
-            path = os.path.join(region.downloader.raw_dir, "dsm", os.path.basename(url))
+            if hasattr(region.downloader, "dsm_filename_from_url"):
+                filename = region.downloader.dsm_filename_from_url(url)
+            else:
+                filename = os.path.basename(url)
+            path = os.path.join(region.downloader.raw_dir, "dsm", filename)
             downloads[f"{name}_laz"].append((url, path))
 
     # ========== Phase 4: Calculate missing tiles ==========

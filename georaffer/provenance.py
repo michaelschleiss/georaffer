@@ -130,7 +130,7 @@ def build_metadata_rows(
     if coords is None:
         raise ValueError(
             f"Cannot parse grid coordinates from filename: {filename}. "
-            "Source files must have parseable NRW/RLP naming patterns."
+            "Source files must have parseable NRW/RLP/BB naming patterns."
         )
     base_x, base_y = coords
 

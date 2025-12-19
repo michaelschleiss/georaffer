@@ -10,7 +10,13 @@ import rasterio.warp
 from rasterio.enums import Resampling
 from rasterio.transform import Affine
 
-from georaffer.config import METERS_PER_KM, REPROJECT_THREADS, Region, get_tile_size_km
+from georaffer.config import (
+    METERS_PER_KM,
+    REPROJECT_THREADS,
+    Region,
+    get_tile_size_km,
+    utm_zone_str_for_region,
+)
 from georaffer.converters.utils import (
     compute_split_bounds,
     generate_split_output_path,
@@ -290,6 +296,7 @@ def _convert_split_jp2(
 
     total_resample = 0.0
     total_write = 0.0
+    utm_zone = utm_zone_str_for_region(region)
 
     # Split the source tile into ratio × ratio sub-tiles
     # Iterate in row-major order (top-to-bottom, left-to-right in image space)
@@ -342,7 +349,12 @@ def _convert_split_jp2(
                 northing = int(base_y * tile_size_m + (ratio - 1 - r_idx) * grid_size_m)
 
                 output_path = generate_split_output_path(
-                    base_path, new_x, new_y, easting=easting, northing=northing
+                    base_path,
+                    new_x,
+                    new_y,
+                    easting=easting,
+                    northing=northing,
+                    utm_zone=utm_zone,
                 )
 
                 t_res_start = time.perf_counter()

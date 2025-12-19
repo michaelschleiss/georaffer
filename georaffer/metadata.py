@@ -224,7 +224,7 @@ def get_wms_metadata_for_region(
     Args:
         utm_x: UTM easting coordinate in meters
         utm_y: UTM northing coordinate in meters
-        region: Region enum (NRW or RLP)
+        region: Region enum (NRW, RLP, or BB)
         year: Optional year for historic layer selection
         session: Optional requests.Session for dependency injection
 
@@ -233,8 +233,9 @@ def get_wms_metadata_for_region(
     """
     if region == Region.NRW:
         return get_wms_metadata(utm_x, utm_y, "NRW", year, session)
-    elif region == Region.RLP:
+    if region == Region.RLP:
         return get_wms_metadata_rlp(utm_x, utm_y, session, year)
+    return None
 
 
 def add_provenance_to_geotiff(

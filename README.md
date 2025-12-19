@@ -1,6 +1,6 @@
 # georaffer
 
-Download German orthophotos and DSM tiles (NRW, RLP) as GeoTIFF.
+Download German orthophotos and DSM tiles (NRW, RLP, BB) as GeoTIFF.
 
 ## Installation
 
@@ -54,15 +54,17 @@ Raw downloads keep the provider filenames:
 - NRW DSM (LAZ): `bdom50_32_<grid_x>_<grid_y>_<n>_nw_<year>.laz`
 - RLP orthophotos (JP2): `dop20rgb_32_<grid_x>_<grid_y>_2_rp_<year>.jp2`
 - RLP DSM (LAZ): `bdom20rgbi_32_<grid_x>_<grid_y>_2_rp.laz`
+- BB DSM (ZIP → TIF): `bdom_<zone><grid_x>-<grid_y>.zip` (extracts to `.tif`)
 
 Processed GeoTIFFs use a unified UTM-based pattern:
 
-- `<region>_32_<easting>_<northing>_<year>.tif`
+- `<region>_<zone>_<easting>_<northing>_<year>.tif`
 
 where:
 
-- `<region>` is `nrw` or `rlp`
-- `<easting>` and `<northing>` are UTM coordinates (EPSG:25832) of the tile’s south‑west corner in meters (for example `350000,5600000`)
+- `<region>` is `nrw`, `rlp`, or `bb`
+- `<zone>` is the UTM zone (`32` for NRW/RLP, `33` for BB)
+- `<easting>` and `<northing>` are UTM coordinates of the tile’s south‑west corner in meters (for example `350000,5600000`)
 - `<year>` is the acquisition year inferred from the source filename or LAZ header (falls back to `latest` when no year is available)
 
 When large source tiles are split into smaller output tiles (for example RLP 2km → 1km grid), filenames still follow this pattern and the easting/northing encode the sub‑tile coordinates, e.g. `rlp_32_362500_5604500_2023.tif`.
@@ -75,7 +77,7 @@ With `--output ./tiles` the pipeline creates:
 ./tiles
 ├── raw
 │   ├── image        # Provider JP2 orthophotos (NRW, RLP)
-│   └── dsm          # Provider LAZ DSM tiles
+│   └── dsm          # Provider DSM tiles (LAZ for NRW/RLP, TIF for BB)
 └── processed
     ├── image
     │   └── <pixels>/      # Orthophoto GeoTIFFs (tile size in pixels, e.g. 2000 for 0.5 m/px on 1 km tiles)

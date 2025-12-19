@@ -6,6 +6,7 @@ file with all its target resolutions.
 """
 
 import os
+import re
 from pathlib import Path
 
 
@@ -31,8 +32,8 @@ def init_worker(threads_per_worker: int) -> None:
     os.environ["KMP_WARNINGS"] = "0"
 
 
-from georaffer.config import METERS_PER_KM, UTM_ZONE_STR, Region, get_tile_size_km
-from georaffer.converters import convert_jp2, convert_laz, get_laz_year
+from georaffer.config import METERS_PER_KM, Region, get_tile_size_km, utm_zone_str_for_region
+from georaffer.converters import convert_dsm_raster, convert_jp2, convert_laz, get_laz_year
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
 from georaffer.metadata import get_wms_metadata_for_region
@@ -50,11 +51,16 @@ def detect_region(filename: str) -> Region:
         filename: Source filename
 
     Returns:
-        Region enum (NRW or RLP)
+        Region enum (NRW, RLP, or BB)
     """
+    filename_lower = filename.lower()
+
     # RLP files contain "_rp" or "_rp_" in the name
-    if "_rp" in filename.lower():
+    if "_rp" in filename_lower:
         return Region.RLP
+    # BB bDOM raster naming: bdom_33xxx-xxxx.tif
+    if re.match(r"bdom_\d{5}-\d{4}\.tif$", filename_lower):
+        return Region.BB
     return Region.NRW
 
 
@@ -89,7 +95,8 @@ def generate_output_name(
     easting = grid_x * METERS_PER_KM
     northing = grid_y * METERS_PER_KM
 
-    return f"{region.value.lower()}_{UTM_ZONE_STR}_{easting}_{northing}_{year_str}.tif"
+    utm_zone = utm_zone_str_for_region(region)
+    return f"{region.value.lower()}_{utm_zone}_{int(easting)}_{int(northing)}_{year_str}.tif"
 
 
 def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
@@ -181,7 +188,7 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
 
 
 def convert_laz_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
-    """Worker function to convert a single LAZ file with all its resolutions.
+    """Worker function to convert a single DSM file (.laz or raster) with resolutions.
 
     Args:
         args: Tuple of (filename, laz_dir, processed_dir, resolutions,
@@ -202,6 +209,50 @@ def convert_laz_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
     input_path = Path(laz_dir) / filename
     region = detect_region(filename)
     year = extract_year_from_filename(filename, require=False)
+
+    if filename.lower().endswith(".tif"):
+        meta_year = _extract_bb_bdom_year(input_path)
+        if meta_year:
+            year = meta_year
+
+        output_paths: dict[int | None, str] = {}
+        for res in resolutions:
+            output_name = generate_output_name(filename, region, year, "dsm")
+            res_dir = Path(processed_dir) / "dsm" / str(res)
+            res_dir.mkdir(parents=True, exist_ok=True)
+            output_paths[res] = str(res_dir / output_name)
+
+        try:
+            convert_dsm_raster(
+                str(input_path),
+                output_paths,
+                region,
+                year,
+                target_sizes=resolutions,
+                num_threads=num_threads,
+                grid_size_km=grid_size_km,
+                profiling=profiling,
+            )
+
+            metadata = build_metadata_rows(
+                filename=filename,
+                output_path=next(iter(output_paths.values())),
+                region=region,
+                year=year,
+                file_type="dsm",
+                grid_size_km=grid_size_km,
+            )
+
+            tile_km = get_tile_size_km(region)
+            split_factor = compute_split_factor(tile_km, grid_size_km)
+            outputs_count = len(resolutions) * split_factor
+
+            return (True, metadata, filename, outputs_count)
+        except Exception as e:
+            raise RuntimeError(
+                f"DSM conversion failed for {filename} "
+                f"(region={region}, year={year}, resolutions={resolutions})"
+            ) from e
 
     # Fallback to LAZ header if year not in filename
     if year == "latest":
@@ -274,3 +325,17 @@ def convert_laz_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
             f"LAZ conversion failed for {filename} "
             f"(region={region}, year={year}, resolutions={resolutions}): {e}"
         ) from e
+
+
+def _extract_bb_bdom_year(input_path: Path) -> str | None:
+    meta_path = input_path.with_name(f"{input_path.stem}_meta.xml")
+    if not meta_path.exists():
+        return None
+    try:
+        text = meta_path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return None
+    match = re.search(r"<file_creation_day_year>\d{1,3}/(\d{4})</file_creation_day_year>", text)
+    if match:
+        return match.group(1)
+    return None

@@ -14,16 +14,17 @@ class Region(str, Enum):
 
     Each region has different tile sizes and resolutions:
 
-                    NRW                 RLP
-    Tile size       1km × 1km           2km × 2km
-    Orthophoto      0.1 m/px            0.2 m/px
-    DSM spacing     0.5 m               0.2 m
+                    NRW                 RLP                 BB
+    Tile size       1km x 1km           2km x 2km           1km x 1km
+    Orthophoto      0.1 m/px            0.2 m/px            (not available)
+    DSM spacing     0.5 m               0.2 m               0.2 m (raster)
 
-    All data uses EPSG:25832 (UTM Zone 32N).
+    NRW/RLP use EPSG:25832 (UTM Zone 32N). BB uses EPSG:25833 (UTM Zone 33N).
     """
 
     NRW = "NRW"
     RLP = "RLP"
+    BB = "BB"
 
 
 # =============================================================================
@@ -37,6 +38,7 @@ METERS_PER_KM = 1000
 # Native tile sizes from data providers (meters)
 NRW_GRID_SIZE = 1000  # 1km
 RLP_GRID_SIZE = 2000  # 2km
+BB_GRID_SIZE = 1000  # 1km
 
 # Output tile size (km). Must evenly divide native sizes for splitting to work.
 OUTPUT_TILE_SIZE_KM = 1.0
@@ -93,6 +95,7 @@ GDAL_CACHEMAX_MB = 512
 LAZ_SPACING_BY_REGION = {
     Region.NRW: 0.5,
     Region.RLP: 0.2,
+    Region.BB: 0.2,
 }
 
 LAZ_SAMPLE_SIZE = 10000  # Points to sample for verification
@@ -110,6 +113,7 @@ NRW_LAZ_PATTERN = re.compile(
 # Matches both .jp2 (ATOM feed) and .tif (WMS downloads)
 RLP_JP2_PATTERN = re.compile(r"dop20rgb_32_(\d{3})_(\d{4})_2_rp_(\d{4})\.(jp2|tif)$")
 RLP_LAZ_PATTERN = re.compile(r"bdom20rgbi_32_(\d{3})_(\d{4})_2_rp\.laz$")
+BB_BDOM_PATTERN = re.compile(r"bdom_(\d{5})-(\d{4})\.(zip|tif)$", re.IGNORECASE)
 
 
 # =============================================================================
@@ -119,12 +123,41 @@ RLP_LAZ_PATTERN = re.compile(r"bdom20rgbi_32_(\d{3})_(\d{4})_2_rp\.laz$")
 
 def get_tile_size_km(region: Region) -> float:
     """Native tile size in kilometers."""
-    return (RLP_GRID_SIZE if region == Region.RLP else NRW_GRID_SIZE) / METERS_PER_KM
+    if region == Region.RLP:
+        tile_size_m = RLP_GRID_SIZE
+    elif region == Region.BB:
+        tile_size_m = BB_GRID_SIZE
+    else:
+        tile_size_m = NRW_GRID_SIZE
+    return tile_size_m / METERS_PER_KM
 
 
 def get_tile_size_m(region: Region) -> int:
     """Native tile size in meters."""
-    return RLP_GRID_SIZE if region == Region.RLP else NRW_GRID_SIZE
+    if region == Region.RLP:
+        return RLP_GRID_SIZE
+    if region == Region.BB:
+        return BB_GRID_SIZE
+    return NRW_GRID_SIZE
+
+
+UTM_ZONE_BY_REGION = {
+    Region.NRW: 32,
+    Region.RLP: 32,
+    Region.BB: 33,
+}
+
+
+def utm_zone_for_region(region: Region) -> int:
+    """UTM zone number for a region."""
+    if region not in UTM_ZONE_BY_REGION:
+        raise ValueError(f"No UTM zone configured for region {region}")
+    return UTM_ZONE_BY_REGION[region]
+
+
+def utm_zone_str_for_region(region: Region) -> str:
+    """UTM zone number as string for a region."""
+    return str(utm_zone_for_region(region))
 
 
 def laz_spacing_for_region(region: Region) -> float:

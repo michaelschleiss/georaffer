@@ -42,18 +42,27 @@ class TestParseTileCoords:
         coords = parse_tile_coords("bdom20rgbi_32_364_5582_2_rp.laz")
         assert coords == (364, 5582)
 
+    def test_bb_bdom_tif(self):
+        """BB bDOM raster files."""
+        coords = parse_tile_coords("bdom_33250-5888.tif")
+        assert coords == (250, 5888)
+
     def test_output_file_nrw(self):
         """Processed NRW output files."""
-        assert parse_tile_coords("nrw_32_350_5600_2021.tif") == (350, 5600)
-        assert parse_tile_coords("nrw_32_350_5600_2021_1000.tif") == (350, 5600)
+        assert parse_tile_coords("nrw_32_350000_5600000_2021.tif") == (350000, 5600000)
+        assert parse_tile_coords("nrw_32_350000_5600000_2021_1000.tif") == (350000, 5600000)
 
     def test_output_file_rlp(self):
         """Processed RLP output files."""
-        assert parse_tile_coords("rlp_32_362_5604_2023.tif") == (362, 5604)
+        assert parse_tile_coords("rlp_32_362000_5604000_2023.tif") == (362000, 5604000)
 
     def test_output_file_utm_coords(self):
         """Output files with full UTM coordinates (from splits)."""
         assert parse_tile_coords("nrw_32_350500_5600000_2021.tif") == (350500, 5600000)
+
+    def test_output_file_legacy_rejected(self):
+        """Legacy grid-based output names are not accepted."""
+        assert parse_tile_coords("nrw_32_350_5600_2021.tif") is None
 
     def test_invalid_returns_none(self):
         """Non-matching filenames return None."""
@@ -77,17 +86,29 @@ class TestParseRLPCoords:
 
 class TestGenerateSplitPath:
     def test_standard(self):
-        path = generate_split_output_path("/output/rlp_362_5604_2023.tif", 363, 5605)
-        assert path == Path("/output/rlp_363_5605_2023.tif")
+        path = generate_split_output_path(
+            "/output/rlp_32_362000_5604000_2023.tif",
+            363,
+            5605,
+            easting=363000,
+            northing=5605000,
+        )
+        assert path == Path("/output/rlp_32_363000_5605000_2023.tif")
 
     def test_with_resolution(self):
-        path = generate_split_output_path("/output/rlp_362_5604_2023_1000.tif", 363, 5605)
-        assert path == Path("/output/rlp_363_5605_2023.tif")
+        path = generate_split_output_path(
+            "/output/rlp_32_362000_5604000_2023_1000.tif",
+            363,
+            5605,
+            easting=363000,
+            northing=5605000,
+        )
+        assert path == Path("/output/rlp_32_363000_5605000_2023.tif")
 
-    def test_short_path_returns_original(self):
-        """Test paths with fewer than 4 parts return unchanged."""
-        path = generate_split_output_path("/output/file.tif", 363, 5605)
-        assert path == Path("/output/file.tif")
+    def test_missing_utm_coords_raises(self):
+        """Split outputs require explicit UTM coords."""
+        with pytest.raises(ValueError):
+            generate_split_output_path("/output/rlp_32_362000_5604000_2023.tif", 363, 5605)
 
     def test_uses_utm_when_provided(self):
         """Splits embed UTM coordinates (zone 32) to avoid collisions."""
@@ -137,18 +158,16 @@ class TestGenerateSplitPath:
         )
         assert path_rlp == Path("/output/rlp_32_377500_5595500_2022.tif")
 
-    def test_4_part_format_falls_back_to_grid_swap(self):
-        """4-part format (no zone) uses grid coordinate replacement."""
-        # When easting/northing provided but only 4 parts, should return original
-        path = generate_split_output_path(
-            "/output/rlp_362_5604_2023.tif",
-            363,
-            5605,
-            easting=362500,
-            northing=5604500,
-        )
-        # Falls back because len(parts) < 5
-        assert path == Path("/output/rlp_363_5605_2023.tif")
+    def test_legacy_format_raises(self):
+        """Legacy 4-part format is rejected."""
+        with pytest.raises(ValueError):
+            generate_split_output_path(
+                "/output/rlp_362_5604_2023.tif",
+                363,
+                5605,
+                easting=362500,
+                northing=5604500,
+            )
 
     def test_utm_format_preserves_year_with_different_values(self):
         """Ensure various year values are preserved correctly."""

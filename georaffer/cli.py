@@ -71,7 +71,9 @@ def load_coordinates(args) -> list[tuple[float, float]]:
         sample = raw_coords[:100] if len(raw_coords) > 100 else raw_coords
         is_latlon = all(abs(c[0]) < 180 and abs(c[1]) < 90 for c in sample)
         if is_latlon:
-            coords = [latlon_to_utm(c[1], c[0]) for c in raw_coords]  # lat, lon order
+            coords = [
+                latlon_to_utm(c[1], c[0], force_zone_number=None) for c in raw_coords
+            ]  # lat, lon order
         else:
             coords = [(c[0], c[1]) for c in raw_coords]
 
@@ -89,8 +91,8 @@ def load_coordinates(args) -> list[tuple[float, float]]:
         if is_latlon:
             # Convert lat/lon bbox corners to UTM
             # min_x=west_lon, min_y=south_lat, max_x=east_lon, max_y=north_lat
-            min_x, min_y = latlon_to_utm(min_y, min_x)  # lat, lon order
-            max_x, max_y = latlon_to_utm(max_y, max_x)
+            min_x, min_y = latlon_to_utm(min_y, min_x, force_zone_number=None)  # lat, lon
+            max_x, max_y = latlon_to_utm(max_y, max_x, force_zone_number=None)
 
         # load_from_bbox returns UTM tile centers directly
         coords = load_from_bbox(min_x, min_y, max_x, max_y, tile_size_m)
@@ -102,7 +104,9 @@ def load_coordinates(args) -> list[tuple[float, float]]:
         raw_coords = load_from_pygeon(args.dataset_path)
         # pygeon returns (lat, lon, alt) - vectorized UTM conversion
         coords_array = np.array(raw_coords)
-        utm_x, utm_y = latlon_array_to_utm(coords_array[:, 0], coords_array[:, 1])
+        utm_x, utm_y = latlon_array_to_utm(
+            coords_array[:, 0], coords_array[:, 1], force_zone_number=None
+        )
         coords = list(zip(utm_x, utm_y))
 
     elif args.command == "tiles":

@@ -1,6 +1,6 @@
 """Download orchestration for tile fetching.
 
-This module handles downloading raw tiles from NRW and RLP servers,
+This module handles downloading raw tiles from NRW, RLP, and BB servers,
 with support for parallel downloads across different endpoints.
 """
 
