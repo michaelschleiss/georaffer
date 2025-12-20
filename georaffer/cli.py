@@ -7,8 +7,13 @@ import warnings
 
 import numpy as np
 from PIL import Image
+import utm
+from rasterio.warp import transform_bounds
 
 from georaffer import __version__
+
+# Suppress PIL decompression bomb warnings for large aerial orthophotos
+warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
 
 
 class QuietArgumentParser(argparse.ArgumentParser):
@@ -74,8 +79,6 @@ def load_coordinates(args, *, return_zone: bool = False):
         *,
         context: str,
     ) -> tuple[float, float, float, float, int]:
-        import utm
-
         min_x, min_y, min_zone, _ = utm.from_latlon(min_lat, min_lon)
         max_x, max_y, max_zone, _ = utm.from_latlon(max_lat, max_lon)
         if utm_zone is not None:
@@ -85,8 +88,6 @@ def load_coordinates(args, *, return_zone: bool = False):
         return min_x, min_y, max_x, max_y, min_zone
 
     if args.command == "csv":
-        import utm
-
         # Validate --cols format: must be exactly two comma-separated names
         parts = [p.strip() for p in args.cols.split(",")]
         if len(parts) != 2 or not all(parts):
@@ -137,8 +138,6 @@ def load_coordinates(args, *, return_zone: bool = False):
         coords = load_from_bbox(min_x, min_y, max_x, max_y, tile_size_m)
 
     elif args.command == "tif":
-        from rasterio.warp import transform_bounds
-
         bounds, crs = load_from_geotiff(args.tif)
         min_x, min_y, max_x, max_y = bounds
 
@@ -148,7 +147,7 @@ def load_coordinates(args, *, return_zone: bool = False):
                 min_x, min_y, max_x, max_y, context="GeoTIFF"
             )
         elif epsg in (25832, 25833, 32632, 32633):
-            detected_zone = 32 if epsg in (25832, 32632) else 33
+            detected_zone = epsg % 100  # extract utm zone from epsg code
             if utm_zone is not None and utm_zone != detected_zone:
                 raise ValueError(
                     f"GeoTIFF is in UTM zone {detected_zone}; "
@@ -165,8 +164,7 @@ def load_coordinates(args, *, return_zone: bool = False):
 
         if source_zone not in (32, 33):
             raise ValueError(
-                f"GeoTIFF resolves to UTM zone {source_zone}; "
-                "only zones 32 and 33 are supported."
+                f"GeoTIFF resolves to UTM zone {source_zone}; only zones 32 and 33 are supported."
             )
 
         # load_from_bbox returns UTM tile centers directly
@@ -188,9 +186,7 @@ def load_coordinates(args, *, return_zone: bool = False):
             zone_candidates = np.floor((lons + 180) / 6).astype(int) + 1
             unique_zones = set(zone_candidates.tolist())
             if len(unique_zones) > 1:
-                raise ValueError(
-                    "Pygeon dataset spans multiple UTM zones; split input by zone."
-                )
+                raise ValueError("Pygeon dataset spans multiple UTM zones; split input by zone.")
             source_zone = unique_zones.pop()
             utm_x, utm_y = latlon_array_to_utm(
                 coords_array[:, 0], coords_array[:, 1], force_zone_number=source_zone
@@ -506,8 +502,6 @@ Details:
             print(f"  - {err}", file=sys.stderr)
         sys.exit(1)
 
-    # Suppress PIL decompression bomb warnings for large aerial orthophotos
-    warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
     Image.MAX_IMAGE_PIXELS = None
 
     try:
