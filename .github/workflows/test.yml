@@ -33,4 +33,4 @@ jobs:
           cache: true
 
       - name: Run tests
-        run: pixi run test
+        run: pixi run test -- -m "not network"
