@@ -51,6 +51,9 @@ See `georaffer --help` for all options.
 
 When using the `tif` command, aligned outputs are written to `./tiles/aligned/` and
 match the reference GeoTIFF grid (CRS, pixel size, width/height, and bounds).
+Alignment currently requires all processed tiles to share the same CRS; mixed-zone
+runs (for example NRW/RLP zone 32 plus BB zone 33) will fail and should be split
+by zone.
 
 ## File name scheme
 
