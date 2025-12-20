@@ -59,6 +59,69 @@ class TestRLPUtmToGridCoords:
         assert jp2_coords == laz_coords
 
 
+class TestRLPDownloaderDownloadFile:
+    """Tests for RLP download_file handling."""
+
+    def test_wms_getmap_uses_wms_downloader(self, tmp_path, monkeypatch):
+        """WMS GetMap URLs should use WMS download handling."""
+        from georaffer.downloaders.base import RegionDownloader
+
+        downloader = RLPDownloader(str(tmp_path), imagery_from=(2020, 2021))
+
+        called = {"count": 0}
+
+        def fake_base(self, url, output_path, on_progress=None):
+            called["count"] += 1
+            return True
+
+        monkeypatch.setattr(RegionDownloader, "download_file", fake_base)
+
+        wms = Mock()
+        wms.download_tile.return_value = True
+        downloader._wms = wms
+
+        url = "https://example.com/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=x&FORMAT=image/tiff"
+        out_path = str(tmp_path / "tile.tif")
+
+        assert downloader.download_file(url, out_path) is True
+        assert called["count"] == 0
+        wms.download_tile.assert_called_once_with(url, out_path, on_progress=None)
+
+    def test_non_wms_uses_base_downloader(self, tmp_path, monkeypatch):
+        """Non-WMS URLs should use the base downloader."""
+        from georaffer.downloaders.base import RegionDownloader
+
+        downloader = RLPDownloader(str(tmp_path))
+
+        called = {"count": 0}
+
+        def fake_base(self, url, output_path, on_progress=None):
+            called["count"] += 1
+            return True
+
+        monkeypatch.setattr(RegionDownloader, "download_file", fake_base)
+
+        url = "https://example.com/dop20rgb_32_362_5604_2_rp_2023.jp2"
+        out_path = str(tmp_path / "tile.jp2")
+
+        assert downloader.download_file(url, out_path) is True
+        assert called["count"] == 1
+
+    def test_wms_getmap_failure_raises(self, tmp_path):
+        """WMS download failures should surface as RuntimeError."""
+        downloader = RLPDownloader(str(tmp_path), imagery_from=(2020, 2021))
+
+        wms = Mock()
+        wms.download_tile.return_value = False
+        downloader._wms = wms
+
+        url = "https://example.com/wms?SERVICE=WMS&REQUEST=GetMap&LAYERS=x&FORMAT=image/tiff"
+        out_path = str(tmp_path / "tile.tif")
+
+        with pytest.raises(RuntimeError, match="WMS download failed"):
+            downloader.download_file(url, out_path)
+
+
 class TestRLPFilenamePatterns:
     """Tests for RLP filename regex patterns."""
 
@@ -266,6 +329,35 @@ class TestRLPHistoricalImagery:
         wms = downloader.wms
         assert wms is not None
         assert downloader._wms is wms
+
+    def test_filters_current_feed_by_year_range(self, tmp_path, monkeypatch):
+        """Current feed tiles outside the requested range should be skipped."""
+        downloader = RLPDownloader(str(tmp_path), imagery_from=(2020, 2021))
+
+        current_tiles = {
+            (362, 5604): "https://example.com/dop20rgb_32_362_5604_2_rp_2021.jp2",
+            (363, 5604): "https://example.com/dop20rgb_32_363_5604_2_rp_2023.jp2",
+        }
+        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: current_tiles)
+
+        class FakeWMS:
+            def check_coverage(self, _year, _grid_x, _grid_y):
+                return None
+
+            def get_tile_url(self, _year, _grid_x, _grid_y):
+                return ""
+
+        downloader._wms = FakeWMS()
+
+        tiles = downloader._get_wms_tiles({(362, 5604), (363, 5604)})
+
+        assert tiles == {
+            (362, 5604): "https://example.com/dop20rgb_32_362_5604_2_rp_2021.jp2"
+        }
+        assert downloader.get_all_urls_for_coord((362, 5604)) == [
+            "https://example.com/dop20rgb_32_362_5604_2_rp_2021.jp2"
+        ]
+        assert downloader.get_all_urls_for_coord((363, 5604)) == []
 
     def test_get_all_urls_for_coord_empty_without_wms(self, tmp_path):
         """Test get_all_urls_for_coord returns empty list without WMS mode."""

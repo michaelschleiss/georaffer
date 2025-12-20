@@ -254,23 +254,37 @@ def resample_raster(
         scale_y = data.shape[1] / target_size
 
     output_transform = src_transform * Affine.scale(scale_x, scale_y)
-    output_data = np.empty(output_shape, dtype=dtype)
+    if nodata is None:
+        output_data = np.zeros(output_shape, dtype=dtype)
+    else:
+        output_data = np.full(output_shape, nodata, dtype=dtype)
 
     reproject_kwargs = {
-        "source": data,
-        "destination": output_data,
         "src_transform": src_transform,
         "src_crs": src_crs,
         "dst_transform": output_transform,
         "dst_crs": src_crs,
         "resampling": resampling,
         "num_threads": num_threads,
+        "init_dest_nodata": False,
     }
     if nodata is not None:
         reproject_kwargs["src_nodata"] = nodata
         reproject_kwargs["dst_nodata"] = nodata
 
-    rasterio.warp.reproject(**reproject_kwargs)
+    if data.ndim == 2:
+        rasterio.warp.reproject(
+            source=data,
+            destination=output_data,
+            **reproject_kwargs,
+        )
+    else:
+        for band_index in range(data.shape[0]):
+            rasterio.warp.reproject(
+                source=data[band_index],
+                destination=output_data[band_index],
+                **reproject_kwargs,
+            )
     return output_data, output_transform
 
 

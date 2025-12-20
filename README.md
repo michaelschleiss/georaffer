@@ -40,11 +40,17 @@ georaffer csv coords.csv --cols lon,lat --output ./tiles
 # From bounding box
 georaffer bbox 6.9,50.9,7.1,51.1 --output ./tiles
 
+# From existing GeoTIFF footprint
+georaffer tif ./area.tif --output ./tiles
+
 # From specific tile indices
 georaffer tiles 362,5604 --output ./tiles
 ```
 
 See `georaffer --help` for all options.
+
+When using the `tif` command, aligned outputs are written to `./tiles/aligned/` and
+match the reference GeoTIFF grid (CRS, pixel size, width/height, and bounds).
 
 ## File name scheme
 

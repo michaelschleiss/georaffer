@@ -123,6 +123,18 @@ class TestGetWmsMetadata:
 
         assert result["acquisition_date"] == "2021-06-15"
 
+    def test_returns_none_when_all_dates_invalid(self):
+        """Test invalid dates are ignored and return None when no valid dates remain."""
+        mock_session = Mock()
+        mock_response = Mock()
+        mock_response.text = "Bildflugdatum = '1983-00-00'\nBildflugdatum = 'not-a-date'"
+        mock_response.raise_for_status = Mock()
+        mock_session.get.return_value = mock_response
+
+        result = get_wms_metadata(350000, 5600000, region="NRW", session=mock_session)
+
+        assert result is None
+
 
 class TestAddProvenanceToGeotiff:
     """Tests for add_provenance_to_geotiff function."""

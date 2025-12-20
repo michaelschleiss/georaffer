@@ -276,7 +276,7 @@ class TestConvertSplitRlpJP2:
         data = np.zeros((3, 10000, 10000), dtype=np.uint8)
         transform = Affine(0.2, 0, 362000, 0, -0.2, 5606000)
         coords = (362, 5604)
-        output_paths = {None: "/output/rlp_362_5604_2023.tif"}
+        output_paths = {None: "/output/rlp_32_362000_5604000_2023.tif"}
         resolutions = [None]
 
         with patch("georaffer.converters.jp2.write_geotiff") as mock_write:
@@ -301,7 +301,7 @@ class TestConvertSplitRlpJP2:
         data = np.zeros((3, 10000, 10000), dtype=np.uint8)
         transform = Affine(0.2, 0, 362000, 0, -0.2, 5606000)
         coords = (362, 5604)
-        output_paths = {None: "/output/rlp_362_5604_2023.tif"}
+        output_paths = {None: "/output/rlp_32_362000_5604000_2023.tif"}
         resolutions = [None]
 
         written_paths = []
@@ -309,7 +309,9 @@ class TestConvertSplitRlpJP2:
 
         def fake_generate(p, x, y, **kwargs):
             captured_kwargs.append(kwargs)
-            return f"/output/rlp_{x}_{y}_2023.tif"
+            return (
+                f"/output/rlp_{kwargs['utm_zone']}_{kwargs['easting']}_{kwargs['northing']}_2023.tif"
+            )
 
         with patch("georaffer.converters.jp2.write_geotiff") as mock_write:
             with patch("georaffer.converters.jp2.generate_split_output_path") as mock_path:
@@ -330,10 +332,10 @@ class TestConvertSplitRlpJP2:
 
         # Should create tiles at (362,5604), (363,5604), (362,5605), (363,5605)
         expected_paths = [
-            "/output/rlp_362_5604_2023.tif",  # SW
-            "/output/rlp_363_5604_2023.tif",  # SE
-            "/output/rlp_362_5605_2023.tif",  # NW
-            "/output/rlp_363_5605_2023.tif",  # NE
+            "/output/rlp_32_362000_5604000_2023.tif",  # SW
+            "/output/rlp_32_363000_5604000_2023.tif",  # SE
+            "/output/rlp_32_362000_5605000_2023.tif",  # NW
+            "/output/rlp_32_363000_5605000_2023.tif",  # NE
         ]
         assert sorted(written_paths) == sorted(expected_paths)
         # UTM coordinates should be provided for all split tiles
@@ -346,7 +348,7 @@ class TestConvertSplitRlpJP2:
         data = np.zeros((3, 10000, 10000), dtype=np.uint8)
         transform = Affine(0.2, 0, 362000, 0, -0.2, 5606000)
         coords = (362, 5604)
-        output_paths = {None: "/output/rlp_362_5604_2023.tif"}
+        output_paths = {None: "/output/rlp_32_362000_5604000_2023.tif"}
         resolutions = [None]
 
         tile_shapes = []
@@ -377,7 +379,7 @@ class TestConvertSplitRlpJP2:
         data = np.zeros((3, 312, 312), dtype=np.uint8)  # corresponds to an overview read
         transform = Affine(6.4, 0, 362000, 0, -6.4, 5606000)
         coords = (362, 5604)
-        output_paths = {None: "/output/rlp_362_5604_2023.tif"}
+        output_paths = {None: "/output/rlp_32_362000_5604000_2023.tif"}
         resolutions = [None]
 
         tile_shapes = []

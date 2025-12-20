@@ -6,7 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 from urllib.parse import parse_qs, urlparse
 
-from georaffer.grids import user_tile_to_utm_center
+import numpy as np
+
+from georaffer.config import METERS_PER_KM
+from georaffer.grids import reproject_utm_coords_vectorized, user_tile_to_utm_center
 
 
 def _filename_from_url(url: str) -> str:
@@ -72,13 +75,14 @@ class TileSet:
 
     Coordinates are stored as (grid_x, grid_y) tuples representing
     kilometer indices in the respective grid system.
+    Missing sets store (zone, grid_x, grid_y) to disambiguate zones.
     """
 
     # Tiles per region: {region_name: {coords}}
     jp2: dict[str, set[tuple[int, int]]] = field(default_factory=dict)
     laz: dict[str, set[tuple[int, int]]] = field(default_factory=dict)
-    missing_jp2: set[tuple[int, int]] = field(default_factory=set)
-    missing_laz: set[tuple[int, int]] = field(default_factory=set)
+    missing_jp2: set[tuple[int, int, int]] = field(default_factory=set)
+    missing_laz: set[tuple[int, int, int]] = field(default_factory=set)
 
     @property
     def total_jp2(self) -> int:
@@ -129,23 +133,110 @@ def _build_catalog_index(
     return index
 
 
+def check_missing_coords(
+    coords: np.ndarray,
+    source_zone: int,
+    grid_size_km: float,
+    regions: list["RegionCatalog"],
+    zone_by_region: dict[str, int],
+) -> tuple[set[tuple[int, int, int]], set[tuple[int, int, int]]]:
+    """Check which original coords have no coverage from any region.
+
+    Uses vectorized operations for speed. For each original coordinate,
+    checks if ANY region (across all zones) has data for that location.
+
+    Args:
+        coords: Nx2 array of (easting, northing) in source_zone
+        source_zone: UTM zone of input coordinates
+        grid_size_km: User's grid resolution in km
+        regions: List of RegionCatalog objects
+        zone_by_region: Dict mapping region name -> UTM zone
+
+    Returns:
+        (missing_jp2, missing_laz) - sets of (zone, x, y) tiles with no coverage
+    """
+    n = len(coords)
+    if n == 0:
+        return set(), set()
+
+    jp2_covered = np.zeros(n, dtype=bool)
+    laz_covered = np.zeros(n, dtype=bool)
+    grid_size_m = grid_size_km * METERS_PER_KM
+
+    for region in regions:
+        zone = zone_by_region[region.name]
+
+        # Build catalog tile sets (normalized to 2-tuple keys)
+        jp2_tiles = {k[:2] if len(k) == 3 else k for k in region.jp2_catalog.keys()}
+        laz_tiles = {k[:2] if len(k) == 3 else k for k in region.laz_catalog.keys()}
+
+        # Vectorized reproject to region's zone
+        xs, ys = reproject_utm_coords_vectorized(coords, source_zone, zone)
+
+        # Vectorized snap to native grid
+        # Get native grid size from downloader (1000m for NRW/BB, 2000m for RLP)
+        if hasattr(region.downloader, "GRID_SIZE"):
+            native_size_m = region.downloader.GRID_SIZE
+        else:
+            # Fallback: try to infer from region name
+            native_size_m = 2000 if "rlp" in region.name.lower() else 1000
+
+        tile_xs = (xs // native_size_m).astype(int)
+        tile_ys = (ys // native_size_m).astype(int)
+
+        # RLP special case: tiles are 2km but indexed by km coordinate
+        if native_size_m == 2000:
+            tile_xs *= 2
+            tile_ys *= 2
+
+        # Check each coord's tile against catalogs (set lookup is O(1))
+        tile_tuples = list(zip(tile_xs, tile_ys))
+        jp2_covered |= np.array([t in jp2_tiles for t in tile_tuples])
+        laz_covered |= np.array([t in laz_tiles for t in tile_tuples])
+
+    # Convert uncovered coords to source_zone tiles for reporting
+    source_tile_xs = (coords[:, 0] // grid_size_m).astype(int)
+    source_tile_ys = (coords[:, 1] // grid_size_m).astype(int)
+
+    missing_jp2: set[tuple[int, int, int]] = {
+        (source_zone, int(source_tile_xs[i]), int(source_tile_ys[i]))
+        for i in range(n)
+        if not jp2_covered[i]
+    }
+    missing_laz: set[tuple[int, int, int]] = {
+        (source_zone, int(source_tile_xs[i]), int(source_tile_ys[i]))
+        for i in range(n)
+        if not laz_covered[i]
+    }
+
+    return missing_jp2, missing_laz
+
+
 def calculate_required_tiles(
-    user_tiles: set[tuple[int, int]],
+    tiles_by_zone: dict[int, set[tuple[int, int]]],
     grid_size_km: float,
     regions: list[RegionCatalog],
+    zone_by_region: dict[str, int],
+    original_coords: np.ndarray | None = None,
+    source_zone: int = 32,
 ) -> tuple[TileSet, dict[str, list[tuple[str, str]]]]:
     """Map user-grid tiles to native grids, check availability, build download lists.
 
     Args:
-        user_tiles: Set of (grid_x, grid_y) in user grid coordinates
+        tiles_by_zone: Dict mapping UTM zone -> set of (grid_x, grid_y) user tiles.
+            Each zone's tiles are in that zone's coordinate system.
         grid_size_km: User's grid resolution in km
-        regions: List of RegionCatalog in priority order (first match wins)
+        regions: List of RegionCatalog in priority order (first match wins within zone)
+        zone_by_region: Dict mapping region name -> UTM zone number
+        original_coords: Optional Nx2 array of original (easting, northing) coords
+            in source_zone. If provided, enables precise cross-zone missing tile detection.
+        source_zone: UTM zone of original_coords (default 32)
 
     Returns:
         Tuple of (tile_set, downloads_by_source) where:
         - tile_set: TileSet object with:
           - jp2/laz: Dict[region_name, Set[(grid_x, grid_y)]] of available tiles
-          - missing_jp2/missing_laz: Set[(grid_x, grid_y)] of unavailable tiles
+          - missing_jp2/missing_laz: Set[(zone, grid_x, grid_y)] of unavailable tiles
         - downloads_by_source: Dict[source_key, List[(url, output_path)]] where:
           - source_key: '{region}_{type}' (e.g., 'nrw_jp2', 'rlp_laz')
           - url: Download URL for the tile
@@ -157,69 +248,58 @@ def calculate_required_tiles(
         tiles by converting to UTM, checking which native tile each user tile falls
         within, and verifying that tile exists in the provider's catalog.
 
+        Each region only receives tiles from its native UTM zone, ensuring correct
+        coordinate mapping (Zone 32 for NRW/RLP, Zone 33 for BB).
+
     Example:
         >>> # Map user tiles to native grid, identify missing tiles
-        >>> user_tiles = {(350, 5600), (351, 5600)}
+        >>> tiles_by_zone = {32: {(350, 5600), (351, 5600)}}
         >>> catalog = RegionCatalog('nrw', downloader,
         ...     jp2_catalog={(350, 5600): 'url1', (351, 5600): 'url2'},
         ...     laz_catalog={(350, 5600): 'url3'})
-        >>> tile_set, downloads = calculate_required_tiles(user_tiles, 1.0, [catalog])
+        >>> zone_by_region = {'nrw': 32}
+        >>> tile_set, downloads = calculate_required_tiles(tiles_by_zone, 1.0, [catalog], zone_by_region)
         >>> tile_set.jp2['nrw']  # Both JP2 tiles available
         {(350, 5600), (351, 5600)}
         >>> tile_set.missing_laz  # (351, 5600) LAZ not in catalog
-        {(351, 5600)}
+        {(32, 351, 5600)}
     """
     # Build normalized indexes for all catalogs (handles 2 or 3-tuple keys)
     jp2_indexes = {r.name: _build_catalog_index(r.jp2_catalog) for r in regions}
     laz_indexes = {r.name: _build_catalog_index(r.laz_catalog) for r in regions}
 
-    # ========== Phase 1: Map user tiles to native tiles ==========
-    # For each user tile, find which provider tile (if any) covers it.
-    # Priority order: first region in the list that has the tile wins.
-    # This allows NRW to take precedence over RLP for overlapping coverage areas.
-    jp2_mapping: dict[tuple[int, int], tuple[str, tuple] | None] = {}
-    laz_mapping: dict[tuple[int, int], tuple[str, tuple] | None] = {}
-
-    for user_tile in user_tiles:
-        # Convert user grid coords to UTM center point (in meters)
-        utm_x, utm_y = user_tile_to_utm_center(user_tile[0], user_tile[1], grid_size_km)
-
-        # Try each region in priority order for JP2
-        jp2_mapping[user_tile] = None
-        for region in regions:
-            # Ask region downloader: which native tile contains this UTM point?
-            coords, _ = region.downloader.utm_to_grid_coords(utm_x, utm_y)
-            native = (int(coords[0]), int(coords[1]))
-            # Check if that native tile is actually available in the catalog
-            if native in jp2_indexes[region.name]:
-                jp2_mapping[user_tile] = (region.name, native)
-                break  # First match wins - stop searching other regions
-
-        # Try each region in priority order for LAZ (independent from JP2)
-        laz_mapping[user_tile] = None
-        for region in regions:
-            coords, _ = region.downloader.utm_to_grid_coords(utm_x, utm_y)
-            native = (int(coords[0]), int(coords[1]))
-            if native in laz_indexes[region.name]:
-                laz_mapping[user_tile] = (region.name, native)
-                break
-
-    # ========== Phase 2: Collect unique native tiles per region ==========
-    # Multiple user tiles may map to the same native tile (e.g., four 0.5km user tiles
-    # all fall within one 1km NRW tile). Deduplicate to avoid downloading the same tile
-    # multiple times.
+    # ========== Phase 1: Map user tiles to native tiles per region ==========
+    # For each region, get tiles from its native zone and check catalog availability.
+    # Each region only sees tiles in its own coordinate system.
     jp2_natives: dict[str, set[tuple[int, int]]] = {r.name: set() for r in regions}
     laz_natives: dict[str, set[tuple[int, int]]] = {r.name: set() for r in regions}
 
-    for mapping in jp2_mapping.values():
-        if mapping:
-            region_name, native = mapping
-            jp2_natives[region_name].add(native)
+    # Track which user tiles (per zone) were matched, for missing tile reporting
+    jp2_matched: set[tuple[int, int, int]] = set()  # (zone, x, y)
+    laz_matched: set[tuple[int, int, int]] = set()
 
-    for mapping in laz_mapping.values():
-        if mapping:
-            region_name, native = mapping
-            laz_natives[region_name].add(native)
+    for region in regions:
+        zone = zone_by_region[region.name]
+        zone_tiles = tiles_by_zone.get(zone, set())
+
+        for user_tile in zone_tiles:
+            # Convert user grid coords to UTM center point (in meters)
+            # These coords are in the region's native zone coordinate system
+            utm_x, utm_y = user_tile_to_utm_center(user_tile[0], user_tile[1], grid_size_km)
+
+            # Ask region downloader: which native tile contains this UTM point?
+            coords, _ = region.downloader.utm_to_grid_coords(utm_x, utm_y)
+            native = (int(coords[0]), int(coords[1]))
+
+            # Check JP2 catalog
+            if native in jp2_indexes[region.name]:
+                jp2_natives[region.name].add(native)
+                jp2_matched.add((zone, user_tile[0], user_tile[1]))
+
+            # Check LAZ catalog
+            if native in laz_indexes[region.name]:
+                laz_natives[region.name].add(native)
+                laz_matched.add((zone, user_tile[0], user_tile[1]))
 
     # ========== Phase 3: Build download lists and tile set ==========
     # For each unique native tile, look up its URL and create download spec.
@@ -251,11 +331,19 @@ def calculate_required_tiles(
             if all_urls:
                 # Multi-year: add ALL URLs for this coord (different years = different files)
                 for u in all_urls:
-                    p = os.path.join(region.downloader.raw_dir, "image", _filename_from_url(u))
+                    if hasattr(region.downloader, "image_filename_from_url"):
+                        filename = region.downloader.image_filename_from_url(u)
+                    else:
+                        filename = _filename_from_url(u)
+                    p = os.path.join(region.downloader.raw_dir, "image", filename)
                     downloads[f"{name}_jp2"].append((u, p))
             else:
                 # Standard single-year mode or fallback
-                path = os.path.join(region.downloader.raw_dir, "image", _filename_from_url(url))
+                if hasattr(region.downloader, "image_filename_from_url"):
+                    filename = region.downloader.image_filename_from_url(url)
+                else:
+                    filename = _filename_from_url(url)
+                path = os.path.join(region.downloader.raw_dir, "image", filename)
                 downloads[f"{name}_jp2"].append((url, path))
 
         # LAZ downloads (no multi-year support currently)
@@ -269,9 +357,18 @@ def calculate_required_tiles(
             path = os.path.join(region.downloader.raw_dir, "dsm", filename)
             downloads[f"{name}_laz"].append((url, path))
 
-    # ========== Phase 4: Calculate missing tiles ==========
-    # Track which user tiles couldn't be satisfied by any region (for reporting)
-    tile_set.missing_jp2 = {ut for ut, m in jp2_mapping.items() if m is None}
-    tile_set.missing_laz = {ut for ut, m in laz_mapping.items() if m is None}
+    # ========== Phase 3: Calculate missing tiles ==========
+    if original_coords is not None and len(original_coords) > 0:
+        # Use vectorized coverage check with original coords (precise cross-zone detection)
+        tile_set.missing_jp2, tile_set.missing_laz = check_missing_coords(
+            original_coords, source_zone, grid_size_km, regions, zone_by_region
+        )
+    else:
+        # Fallback: use tile-based matching (less precise for cross-zone)
+        all_user_tiles: set[tuple[int, int, int]] = {
+            (zone, x, y) for zone, tiles in tiles_by_zone.items() for (x, y) in tiles
+        }
+        tile_set.missing_jp2 = all_user_tiles - jp2_matched
+        tile_set.missing_laz = all_user_tiles - laz_matched
 
     return tile_set, downloads

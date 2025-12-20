@@ -29,8 +29,10 @@ Thumbs.db
 
 # Project
 data/
+tiles/
 test/
 *.tmp
+
 
 # Local docs (generated or personal notes)
 docs/

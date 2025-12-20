@@ -573,6 +573,19 @@ Details:
             source_zone=source_zone,
         )
 
+        if args.command == "tif":
+            from georaffer.align import align_to_reference
+
+            print("Aligning outputs to reference GeoTIFF...")
+            aligned = align_to_reference(
+                reference_path=args.tif,
+                output_dir=args.output,
+                align_images=process_images,
+                align_dsm=process_pointclouds,
+            )
+            for key, path in aligned.items():
+                print(f"  {key}: {path}")
+
         # Exit with error if there were failures
         if stats.failed_download > 0 or stats.failed_convert > 0:
             print("⚠ Pipeline completed with errors - see messages above", file=sys.stderr)

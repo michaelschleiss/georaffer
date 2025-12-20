@@ -3,13 +3,17 @@
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
+import numpy as np
 import pytest
+from rasterio.enums import Resampling
+from rasterio.transform import from_origin
 
 from georaffer.converters.utils import (
     atomic_rasterio_write,
     generate_split_output_path,
     parse_rlp_tile_coords,
     parse_tile_coords,
+    resample_raster,
     uniquify_output_path,
 )
 
@@ -262,6 +266,27 @@ class TestAtomicRasterioWrite:
         assert call_args[0][1] == "w"
         assert call_args[1]["driver"] == "GTiff"
         assert call_args[1]["count"] == 3
+
+
+class TestResampleRaster:
+    def test_resample_multiband_keeps_data(self):
+        data = np.arange(3 * 4 * 4, dtype=np.uint8).reshape(3, 4, 4)
+        transform = from_origin(100.0, 200.0, 1.0, 1.0)
+
+        out_data, out_transform = resample_raster(
+            data,
+            transform,
+            "EPSG:25833",
+            target_size=2,
+            num_threads=1,
+            dtype=np.uint8,
+            resampling=Resampling.nearest,
+        )
+
+        assert out_data.shape == (3, 2, 2)
+        assert out_transform.a == 2.0
+        assert out_transform.e == -2.0
+        assert out_data.max() > 0
 
 
 class TestUniquifyOutputPath:

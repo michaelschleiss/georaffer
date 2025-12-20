@@ -44,6 +44,33 @@ class TestNRWDownloaderInit:
         assert "hist_dop_2010" in downloader.jp2_feed_url
 
 
+class TestNRWHistoricFiltering:
+    """Tests for historical feed filtering logic."""
+
+    def test_filters_current_feed_by_year_range(self, tmp_path, monkeypatch):
+        """Current feed tiles outside the requested range should be skipped."""
+        downloader = NRWDownloader(str(tmp_path), imagery_from=(2018, 2018))
+
+        monkeypatch.setattr(NRWDownloader, "HISTORIC_YEARS", [])
+        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
+
+        def fake_parse(_session, _feed_url, _base_url):
+            return {
+                (350, 5600): ("https://example.com/dop10rgbi_32_350_5600_1_nw_2018.jp2", 2018),
+                (351, 5600): ("https://example.com/dop10rgbi_32_351_5600_1_nw_2021.jp2", 2021),
+            }
+
+        monkeypatch.setattr(downloader, "_parse_jp2_feed_with_year", fake_parse)
+
+        jp2_tiles, laz_tiles = downloader.get_available_tiles()
+
+        assert jp2_tiles == {
+            (350, 5600): "https://example.com/dop10rgbi_32_350_5600_1_nw_2018.jp2"
+        }
+        assert laz_tiles == {}
+        assert downloader.total_jp2_count == 1
+
+
 class TestNRWUtmToGridCoords:
     """Tests for UTM to grid coordinate conversion."""
 

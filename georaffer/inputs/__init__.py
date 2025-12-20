@@ -2,8 +2,9 @@
 
 from georaffer.inputs.bbox import load_from_bbox
 from georaffer.inputs.csv import load_from_csv
+from georaffer.inputs.geotiff import load_from_geotiff
 
-__all__ = ["load_from_bbox", "load_from_csv"]
+__all__ = ["load_from_bbox", "load_from_csv", "load_from_geotiff"]
 
 # Pygeon is optional
 try:

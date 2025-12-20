@@ -3,7 +3,7 @@
 import numpy as np
 import utm
 
-from georaffer.config import METERS_PER_KM, UTM_ZONE
+from georaffer.config import METERS_PER_KM, UTM_ZONE, UTM_ZONE_BY_REGION, Region
 
 
 def latlon_to_utm(
@@ -173,3 +173,113 @@ def tile_to_utm_center(tile_x: int, tile_y: int, tile_size_m: float) -> tuple[fl
     utm_x = tile_x * METERS_PER_KM + tile_size_m / 2
     utm_y = tile_y * METERS_PER_KM + tile_size_m / 2
     return utm_x, utm_y
+
+
+def reproject_utm_coords(
+    coords: list[tuple[float, float]],
+    source_zone: int,
+    target_zone: int,
+) -> list[tuple[float, float]]:
+    """Reproject UTM coordinates from one zone to another.
+
+    Converts through lat/lon as intermediate step.
+
+    Args:
+        coords: List of (easting, northing) in source zone
+        source_zone: Source UTM zone number (e.g., 32)
+        target_zone: Target UTM zone number (e.g., 33)
+
+    Returns:
+        List of (easting, northing) in target zone
+    """
+    if source_zone == target_zone:
+        return coords
+
+    result = []
+    for utm_x, utm_y in coords:
+        # Convert to lat/lon (assumes northern hemisphere)
+        lat, lon = utm.to_latlon(utm_x, utm_y, source_zone, northern=True)
+        # Convert to target zone
+        easting, northing, _, _ = utm.from_latlon(lat, lon, force_zone_number=target_zone)
+        result.append((easting, northing))
+    return result
+
+
+def reproject_utm_coords_vectorized(
+    coords: np.ndarray,
+    source_zone: int,
+    target_zone: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized UTM reprojection for numpy arrays.
+
+    Much faster than reproject_utm_coords for large coordinate sets.
+    Uses utm library's native numpy support.
+
+    Args:
+        coords: Nx2 array of (easting, northing) in source zone
+        source_zone: Source UTM zone number (e.g., 32)
+        target_zone: Target UTM zone number (e.g., 33)
+
+    Returns:
+        (eastings, northings) arrays in target zone
+    """
+    if source_zone == target_zone:
+        return coords[:, 0].copy(), coords[:, 1].copy()
+
+    # Batch convert to lat/lon (assumes northern hemisphere)
+    lats, lons = utm.to_latlon(coords[:, 0], coords[:, 1], source_zone, northern=True)
+    # Batch convert to target zone
+    eastings, northings, _, _ = utm.from_latlon(lats, lons, force_zone_number=target_zone)
+    return eastings, northings
+
+
+def generate_tiles_by_zone(
+    coords: list[tuple[float, float]],
+    source_zone: int,
+    grid_size_km: float,
+    margin_km: float,
+) -> dict[int, set[tuple[int, int]]]:
+    """Generate user-grid tiles for each UTM zone.
+
+    Takes coordinates in a source zone and generates tile sets for all
+    supported zones by reprojecting coordinates appropriately.
+
+    Args:
+        coords: List of (easting, northing) in source_zone UTM
+        source_zone: UTM zone of input coordinates
+        grid_size_km: User's working grid resolution in km
+        margin_km: Buffer distance from tile border in km
+
+    Returns:
+        Dict mapping zone number -> set of (grid_x, grid_y) tiles
+        Example: {32: {(350, 5600), (351, 5600)}, 33: {(400, 5800)}}
+    """
+    # Get unique zones from all regions
+    unique_zones = set(UTM_ZONE_BY_REGION.values())
+
+    tiles_by_zone: dict[int, set[tuple[int, int]]] = {}
+
+    for target_zone in unique_zones:
+        # Reproject coords to target zone
+        if target_zone == source_zone:
+            zone_coords = coords
+        else:
+            zone_coords = reproject_utm_coords(coords, source_zone, target_zone)
+
+        # Generate tiles for this zone
+        tiles = generate_user_grid_tiles(zone_coords, grid_size_km, margin_km)
+        tiles_by_zone[target_zone] = tiles
+
+    return tiles_by_zone
+
+
+def get_regions_for_zone(zone: int) -> list[Region]:
+    """Get all regions that use a specific UTM zone.
+
+    Args:
+        zone: UTM zone number (e.g., 32 or 33)
+
+    Returns:
+        List of Region enums that use this zone
+    """
+    return [region for region, z in UTM_ZONE_BY_REGION.items() if z == zone]
