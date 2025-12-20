@@ -66,6 +66,7 @@ def _align_outputs(
     resampling: Resampling,
     nodata: float | None,
     area_or_point: str,
+    max_bands: int | None = None,
 ) -> None:
     with ExitStack() as stack:
         datasets = [stack.enter_context(rasterio.open(path)) for path in sources]
@@ -87,6 +88,8 @@ def _align_outputs(
             merge_kwargs["nodata"] = nodata
 
         mosaic, mosaic_transform = merge(datasets, **merge_kwargs)
+        if max_bands is not None and mosaic.shape[0] > max_bands:
+            mosaic = mosaic[:max_bands]
         band_count = mosaic.shape[0]
 
         dst_nodata = nodata if nodata is not None else datasets[0].nodata
@@ -190,6 +193,7 @@ def align_to_reference(
             resampling=Resampling.lanczos,
             nodata=None,
             area_or_point="Area",
+            max_bands=3,
         )
         outputs["image"] = output_path
 

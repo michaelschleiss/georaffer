@@ -101,3 +101,42 @@ def test_align_to_reference_uses_highest_resolution(tmp_path):
         assert src.crs.to_string() == "EPSG:25832"
         data = src.read(1)
         assert np.all(data == 30.0)
+
+
+def test_align_to_reference_drops_fourth_band(tmp_path):
+    output_dir = tmp_path / "output"
+    processed_dir = output_dir / "processed"
+    image_dir = processed_dir / "image" / "1000"
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    ref_path = tmp_path / "ref.tif"
+    ref_transform = from_origin(100.0, 200.0, 1.0, 1.0)
+    ref_data = np.zeros((1, 10, 10), dtype=np.uint8)
+    _write_raster(ref_path, ref_data, crs="EPSG:25832", transform=ref_transform)
+
+    image_data = np.stack(
+        [
+            np.full((10, 10), 7, dtype=np.uint8),
+            np.full((10, 10), 8, dtype=np.uint8),
+            np.full((10, 10), 9, dtype=np.uint8),
+            np.full((10, 10), 10, dtype=np.uint8),
+        ]
+    )
+    _write_raster(
+        image_dir / "bb_32_100000_200000_2020.tif",
+        image_data,
+        crs="EPSG:25832",
+        transform=ref_transform,
+    )
+
+    outputs = align_to_reference(str(ref_path), str(output_dir), align_images=True, align_dsm=False)
+
+    image_out = outputs["image"]
+
+    with rasterio.open(image_out) as src:
+        assert src.count == 3
+        data = src.read()
+        assert data.shape[0] == 3
+        assert np.all(data[0] == 7)
+        assert np.all(data[1] == 8)
+        assert np.all(data[2] == 9)
