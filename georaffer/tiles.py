@@ -359,9 +359,26 @@ def calculate_required_tiles(
 
     # ========== Phase 3: Calculate missing tiles ==========
     if original_coords is not None and len(original_coords) > 0:
-        # Use vectorized coverage check with original coords (precise cross-zone detection)
+        # Use vectorized coverage check, expanding to margin tiles when needed.
+        coords = np.asarray(original_coords)
+        source_tiles = tiles_by_zone.get(source_zone, set())
+        if source_tiles:
+            grid_size_m = grid_size_km * METERS_PER_KM
+            coord_tiles = set(
+                zip(
+                    (coords[:, 0] // grid_size_m).astype(int),
+                    (coords[:, 1] // grid_size_m).astype(int),
+                )
+            )
+            extra_tiles = source_tiles - coord_tiles
+            if extra_tiles:
+                extra_coords = np.array(
+                    [user_tile_to_utm_center(x, y, grid_size_km) for x, y in extra_tiles]
+                )
+                coords = np.vstack((coords, extra_coords))
+
         tile_set.missing_jp2, tile_set.missing_laz = check_missing_coords(
-            original_coords, source_zone, grid_size_km, regions, zone_by_region
+            coords, source_zone, grid_size_km, regions, zone_by_region
         )
     else:
         # Fallback: use tile-based matching (less precise for cross-zone)

@@ -2,6 +2,7 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
+import numpy as np
 import pytest
 
 from georaffer.conversion import convert_tiles
@@ -190,6 +191,35 @@ class TestCalculateRequiredTiles:
         assert tiles.jp2_count("nrw") == 1
         assert len(downloads["nrw_jp2"]) == 1
         assert len(tiles.missing_jp2) == 2
+
+    def test_missing_includes_margin_tiles_with_original_coords(self, tmp_path):
+        """Test missing tiles include margin tiles when original coords are provided."""
+        from georaffer.tiles import RegionCatalog, calculate_required_tiles
+
+        nrw_downloader = MagicMock(raw_dir=tmp_path / "nrw")
+        nrw_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
+            (int(x // 1000), int(y // 1000)),
+            (int(x // 1000), int(y // 1000)),
+        )
+
+        regions = [RegionCatalog("nrw", nrw_downloader, {}, {})]
+        zone_by_region = {"nrw": 32}
+
+        original_coords = np.array([(350500.0, 5600500.0)])
+        tiles_by_zone = {32: {(350, 5600), (351, 5600)}}
+
+        tiles, _ = calculate_required_tiles(
+            tiles_by_zone,
+            1.0,
+            regions,
+            zone_by_region,
+            original_coords=original_coords,
+            source_zone=32,
+        )
+
+        assert len(tiles.missing_jp2) == 2
+        assert (32, 350, 5600) in tiles.missing_jp2
+        assert (32, 351, 5600) in tiles.missing_jp2
 
     def test_coverage_from_nrw_only(self, tmp_path):
         """Test user tile covered by NRW but not RLP is not reported as missing."""
