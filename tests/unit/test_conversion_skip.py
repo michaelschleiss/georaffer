@@ -10,7 +10,7 @@ def test_outputs_exist_uses_laz_header_year(monkeypatch, tmp_path: Path) -> None
     raw_dsm_dir.mkdir(parents=True)
     (raw_dsm_dir / laz_filename).write_bytes(b"")  # placeholder, header read is mocked
 
-    monkeypatch.setattr("georaffer.conversion.get_laz_year", lambda _p: "2023")
+    monkeypatch.setattr("georaffer.workers.get_laz_year", lambda _p: "2023")
 
     processed_dir = tmp_path / "processed"
     out_dir = processed_dir / "dsm" / "5000"
@@ -29,4 +29,3 @@ def test_outputs_exist_uses_laz_header_year(monkeypatch, tmp_path: Path) -> None
         )
         is True
     )
-

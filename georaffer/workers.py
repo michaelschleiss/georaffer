@@ -58,8 +58,8 @@ def detect_region(filename: str) -> Region:
     # RLP files contain "_rp" or "_rp_" in the name
     if "_rp" in filename_lower:
         return Region.RLP
-    # BB bDOM raster naming: bdom_33xxx-xxxx.tif
-    if re.match(r"bdom_\d{5}-\d{4}\.tif$", filename_lower):
+    # BB raster naming: bdom_33xxx-xxxx.tif or dop_33xxx-xxxx.tif
+    if re.match(r"(bdom|dop)_\d{5}-\d{4}\.tif$", filename_lower):
         return Region.BB
     return Region.NRW
 
@@ -90,7 +90,9 @@ def generate_output_name(
     else:
         grid_x, grid_y = 0, 0
 
-    year_str = year if year else "latest"
+    year_str = str(year) if year is not None else ""
+    if not year_str.isdigit() or len(year_str) != 4:
+        raise ValueError(f"Year is required for output filenames (got '{year}').")
 
     easting = grid_x * METERS_PER_KM
     northing = grid_y * METERS_PER_KM
@@ -120,7 +122,7 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
 
     input_path = Path(jp2_dir) / filename
     region = detect_region(filename)
-    year = extract_year_from_filename(filename, require=True)
+    year = resolve_source_year(filename, input_path, data_type="image", region=region)
 
     # Setup output paths for each resolution
     output_paths: dict[int | None, str] = {}
@@ -208,13 +210,9 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
 
     input_path = Path(laz_dir) / filename
     region = detect_region(filename)
-    year = extract_year_from_filename(filename, require=False)
+    year = resolve_source_year(filename, input_path, data_type="dsm", region=region)
 
     if filename.lower().endswith(".tif"):
-        meta_year = _extract_bb_bdom_year(input_path)
-        if meta_year:
-            year = meta_year
-
         output_paths: dict[int | None, str] = {}
         for res in resolutions:
             output_name = generate_output_name(filename, region, year, "dsm")
@@ -253,15 +251,6 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
                 f"DSM conversion failed for {filename} "
                 f"(region={region}, year={year}, resolutions={resolutions})"
             ) from e
-
-    # Fallback to LAZ header if year not in filename
-    if year == "latest":
-        header_year = get_laz_year(str(input_path))
-        if header_year:
-            year = header_year
-
-    if not year or year == "latest":
-        raise RuntimeError(f"Year not found in filename or LAS header: {filename}")
 
     # Setup output paths for each resolution
     output_paths: dict[int | None, str] = {}
@@ -327,9 +316,55 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
         ) from e
 
 
-def _extract_bb_bdom_year(input_path: Path) -> str | None:
+def resolve_source_year(
+    filename: str,
+    input_path: Path,
+    *,
+    data_type: str,
+    region: Region | None = None,
+) -> str:
+    """Resolve a 4-digit year for a source file or raise if unavailable."""
+    def _normalize_year(value: str | None) -> str | None:
+        if value is None:
+            return None
+        year_str = str(value)
+        if year_str.isdigit() and len(year_str) == 4:
+            return year_str
+        raise RuntimeError(f"Invalid year '{value}' for {filename}.")
+
+    region = region or detect_region(filename)
+    year = extract_year_from_filename(filename, require=False)
+    normalized = _normalize_year(None if year == "latest" else year)
+    if normalized:
+        return normalized
+
+    if data_type == "image":
+        if region == Region.BB:
+            meta_year = _normalize_year(_extract_bb_meta_year(input_path))
+            if meta_year:
+                return meta_year
+        raise RuntimeError(f"Year not found in filename or metadata: {filename}")
+
+    if data_type == "dsm":
+        if input_path.suffix.lower() == ".laz":
+            header_year = _normalize_year(get_laz_year(str(input_path)))
+            if header_year:
+                return header_year
+        if input_path.suffix.lower() == ".tif":
+            meta_year = _normalize_year(_extract_bb_meta_year(input_path))
+            if meta_year:
+                return meta_year
+        raise RuntimeError(f"Year not found in filename or source metadata: {filename}")
+
+    raise ValueError(f"Unknown data_type '{data_type}' for year resolution.")
+
+
+def _extract_bb_meta_year(input_path: Path) -> str | None:
     meta_path = input_path.with_name(f"{input_path.stem}_meta.xml")
     if not meta_path.exists():
+        candidates = sorted(input_path.parent.glob(f"{input_path.stem}*.xml"))
+        meta_path = candidates[0] if candidates else None
+    if not meta_path or not meta_path.exists():
         return None
     try:
         text = meta_path.read_text(encoding="utf-8", errors="ignore")

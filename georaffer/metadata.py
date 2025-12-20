@@ -104,6 +104,9 @@ def get_wms_metadata(
                 except ValueError:
                     pass
 
+            if not found_dates:
+                return None
+
             if year is None or year not in found_dates:
                 return found_dates[max(found_dates.keys())]
 
@@ -290,8 +293,8 @@ def create_provenance_csv(tiles_metadata: list[dict], output_csv: str) -> bool:
     """Create or update CSV catalog of tile metadata.
 
     Merges new metadata with any existing CSV file, preserving existing rows
-    for outputs that weren't processed in this run. Uses processed_file as
-    the unique key for merging.
+    for outputs that weren't processed in this run. Uses processed_file plus
+    file_type as the unique key for merging.
 
     Args:
         tiles_metadata: List of metadata dictionaries
@@ -319,17 +322,24 @@ def create_provenance_csv(tiles_metadata: list[dict], output_csv: str) -> bool:
 
         # Merge with existing CSV if it exists
         existing_rows: dict[str, dict] = {}
+
+        def _provenance_key(row: dict) -> str:
+            processed = row.get("processed_file", "")
+            file_type = row.get("file_type", "")
+            if not processed:
+                return ""
+            return f"{processed}::{file_type}"
         if os.path.exists(output_csv):
             with open(output_csv, newline="") as csvfile:
                 reader = csv.DictReader(csvfile)
                 for row in reader:
-                    key = row.get("processed_file", "")
+                    key = _provenance_key(row)
                     if key:
                         existing_rows[key] = row
 
         # Update with new metadata (overwrites existing entries for same processed_file)
         for row in tiles_metadata:
-            key = row.get("processed_file", "")
+            key = _provenance_key(row)
             if key:
                 existing_rows[key] = row
 

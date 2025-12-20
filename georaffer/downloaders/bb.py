@@ -1,7 +1,8 @@
-"""BB (Brandenburg) tile downloader for bDOM raster DSM tiles.
+"""BB (Brandenburg) tile downloader for DOP RGBI and bDOM raster tiles.
 
 Catalog source:
 https://data.geobasis-bb.de/geobasis/daten/bdom/tif/
+https://data.geobasis-bb.de/geobasis/daten/dop/rgbi_tif/
 """
 
 import re
@@ -14,6 +15,7 @@ import requests
 
 from georaffer.config import (
     BB_BDOM_PATTERN,
+    BB_DOP_PATTERN,
     BB_GRID_SIZE,
     FEED_TIMEOUT,
     MAX_RETRIES,
@@ -25,15 +27,16 @@ from georaffer.downloaders.base import RegionDownloader
 
 
 class BrandenburgDownloader(RegionDownloader):
-    """BB (Brandenburg) downloader for bDOM raster tiles (GeoTIFF in ZIP)."""
+    """BB (Brandenburg) downloader for DOP RGBI + bDOM raster tiles (GeoTIFF in ZIP)."""
 
-    BASE_URL: ClassVar[str] = "https://data.geobasis-bb.de/geobasis/daten/bdom/tif/"
+    BDOM_BASE_URL: ClassVar[str] = "https://data.geobasis-bb.de/geobasis/daten/bdom/tif/"
+    DOP_BASE_URL: ClassVar[str] = "https://data.geobasis-bb.de/geobasis/daten/dop/rgbi_tif/"
     UTM_ZONE: ClassVar[int] = 33
 
     def __init__(self, output_dir: str, session: requests.Session | None = None):
         super().__init__(Region.BB, output_dir, imagery_from=None, session=session)
-        self._jp2_feed_url = self.BASE_URL
-        self._laz_feed_url = self.BASE_URL
+        self._jp2_feed_url = self.DOP_BASE_URL
+        self._laz_feed_url = self.BDOM_BASE_URL
 
     @property
     def jp2_feed_url(self) -> str:
@@ -62,20 +65,33 @@ class BrandenburgDownloader(RegionDownloader):
             return name[:-4] + ".tif"
         return name
 
+    def image_filename_from_url(self, url: str) -> str:
+        """Return extracted GeoTIFF filename for a DOP ZIP URL."""
+        name = Path(url).name
+        if name.lower().endswith(".zip"):
+            return name[:-4] + ".tif"
+        return name
+
     def get_available_tiles(self) -> tuple[dict, dict]:
-        """Parse the HTML listing and return available bDOM tiles."""
+        """Parse the HTML listing and return available DOP and bDOM tiles."""
         last_error = None
         for attempt in range(MAX_RETRIES):
             try:
                 if attempt > 0:
                     delay = min(RETRY_BACKOFF_BASE ** (attempt - 1), RETRY_MAX_WAIT)
                     time.sleep(delay)
-                response = self._session.get(
-                    self.BASE_URL, timeout=FEED_TIMEOUT, verify=self.verify_ssl
+                dop_resp = self._session.get(
+                    self.DOP_BASE_URL, timeout=FEED_TIMEOUT, verify=self.verify_ssl
                 )
-                response.raise_for_status()
-                laz_tiles = self._parse_bdom_listing(response.text)
-                return {}, laz_tiles
+                dop_resp.raise_for_status()
+                jp2_tiles = self._parse_dop_listing(dop_resp.text)
+
+                bdom_resp = self._session.get(
+                    self.BDOM_BASE_URL, timeout=FEED_TIMEOUT, verify=self.verify_ssl
+                )
+                bdom_resp.raise_for_status()
+                laz_tiles = self._parse_bdom_listing(bdom_resp.text)
+                return jp2_tiles, laz_tiles
             except Exception as e:
                 last_error = e
         raise RuntimeError(
@@ -97,6 +113,9 @@ class BrandenburgDownloader(RegionDownloader):
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        if url.lower().endswith(".tif"):
+            return super().download_file(url, str(output_path), on_progress=on_progress)
+
         zip_path = output_path.with_name(output_path.name + ".zip")
         super().download_file(url, str(zip_path), on_progress=on_progress)
 
@@ -107,9 +126,9 @@ class BrandenburgDownloader(RegionDownloader):
                     raise RuntimeError(f"No GeoTIFF found in {zip_path.name}")
                 self._write_member(zf, tif_name, output_path)
 
-                meta_name = self._find_member(zf, "_meta.xml")
+                meta_name = self._find_member(zf, "_meta.xml") or self._find_member(zf, ".xml")
                 if meta_name:
-                    meta_path = output_path.with_name(meta_name)
+                    meta_path = output_path.with_name(Path(meta_name).name)
                     self._write_member(zf, meta_name, meta_path)
         finally:
             zip_path.unlink(missing_ok=True)
@@ -119,14 +138,24 @@ class BrandenburgDownloader(RegionDownloader):
         tiles: dict[tuple[int, int], str] = {}
         for match in re.finditer(r'href="(bdom_\d{5}-\d{4}\.zip)"', html):
             filename = match.group(1)
-            coords = self._parse_filename(filename)
+            coords = self._parse_filename(filename, BB_BDOM_PATTERN)
             if not coords:
                 continue
-            tiles[coords] = f"{self.BASE_URL}{filename}"
+            tiles[coords] = f"{self.BDOM_BASE_URL}{filename}"
         return tiles
 
-    def _parse_filename(self, filename: str) -> tuple[int, int] | None:
-        match = BB_BDOM_PATTERN.match(filename)
+    def _parse_dop_listing(self, html: str) -> dict[tuple[int, int], str]:
+        tiles: dict[tuple[int, int], str] = {}
+        for match in re.finditer(r'href="(dop_\d{5}-\d{4}\.zip)"', html):
+            filename = match.group(1)
+            coords = self._parse_filename(filename, BB_DOP_PATTERN)
+            if not coords:
+                continue
+            tiles[coords] = f"{self.DOP_BASE_URL}{filename}"
+        return tiles
+
+    def _parse_filename(self, filename: str, pattern: re.Pattern) -> tuple[int, int] | None:
+        match = pattern.match(filename)
         if not match:
             return None
         east_code = match.group(1)

@@ -30,10 +30,10 @@ class TestTileSet:
         """Test adding tiles to TileSet."""
         ts = TileSet()
         ts.jp2["nrw"] = {(350, 5600)}
-        ts.missing_laz.add((351, 5601))
+        ts.missing_laz.add((32, 351, 5601))
 
         assert (350, 5600) in ts.jp2["nrw"]
-        assert (351, 5601) in ts.missing_laz
+        assert (32, 351, 5601) in ts.missing_laz
 
 
 class TestProcessingStats:
@@ -150,7 +150,9 @@ class TestCalculateRequiredTiles:
         # User tiles in grid coordinates (at 1km resolution) covering a 3x3 area
         user_tiles = {(350 + dx, 5600 + dy) for dx in range(-1, 2) for dy in range(-1, 2)}
 
-        tiles, downloads = calculate_required_tiles(user_tiles, 1.0, regions)
+        tiles_by_zone = {32: user_tiles}
+        zone_by_region = {"nrw": 32, "rlp": 32}
+        tiles, downloads = calculate_required_tiles(tiles_by_zone, 1.0, regions, zone_by_region)
 
         assert tiles.jp2_count("nrw") == 9
         assert len(downloads["nrw_jp2"]) == 9
@@ -181,7 +183,9 @@ class TestCalculateRequiredTiles:
         # Request 3 user tiles
         user_tiles = {(350, 5600), (351, 5601), (352, 5602)}
 
-        tiles, downloads = calculate_required_tiles(user_tiles, 1.0, regions)
+        tiles_by_zone = {32: user_tiles}
+        zone_by_region = {"nrw": 32, "rlp": 32}
+        tiles, downloads = calculate_required_tiles(tiles_by_zone, 1.0, regions, zone_by_region)
 
         assert tiles.jp2_count("nrw") == 1
         assert len(downloads["nrw_jp2"]) == 1
@@ -213,7 +217,9 @@ class TestCalculateRequiredTiles:
 
         user_tiles = {(350, 5600)}
 
-        tiles, downloads = calculate_required_tiles(user_tiles, 1.0, regions)
+        tiles_by_zone = {32: user_tiles}
+        zone_by_region = {"nrw": 32, "rlp": 32}
+        tiles, downloads = calculate_required_tiles(tiles_by_zone, 1.0, regions, zone_by_region)
 
         # Should find tile in NRW
         assert tiles.jp2_count("nrw") == 1
@@ -250,7 +256,9 @@ class TestCalculateRequiredTiles:
 
         user_tiles = {(350, 5600)}
 
-        tiles, downloads = calculate_required_tiles(user_tiles, 1.0, regions)
+        tiles_by_zone = {32: user_tiles}
+        zone_by_region = {"nrw": 32, "rlp": 32}
+        tiles, downloads = calculate_required_tiles(tiles_by_zone, 1.0, regions, zone_by_region)
 
         # Should find tile in RLP
         assert tiles.jp2_count("rlp") == 1
@@ -285,7 +293,9 @@ class TestCalculateRequiredTiles:
 
         user_tiles = {(350, 5600)}
 
-        tiles, downloads = calculate_required_tiles(user_tiles, 1.0, regions)
+        tiles_by_zone = {32: user_tiles}
+        zone_by_region = {"nrw": 32, "rlp": 32}
+        tiles, downloads = calculate_required_tiles(tiles_by_zone, 1.0, regions, zone_by_region)
 
         # Should find nothing
         assert tiles.jp2_count("nrw") == 0
@@ -377,9 +387,9 @@ class TestGenerateOutputName:
         from georaffer.config import Region
 
         name = generate_output_name(
-            "bdom20rgbi_32_362_5604_2_rp.laz", Region.RLP, None, "pointcloud"
+            "bdom20rgbi_32_362_5604_2_rp.laz", Region.RLP, "2023", "pointcloud"
         )
-        assert name == "rlp_32_362000_5604000_latest.tif"
+        assert name == "rlp_32_362000_5604000_2023.tif"
 
     def test_no_coords_match(self):
         """Test fallback when coords not found."""
@@ -567,6 +577,8 @@ class TestConvertTiles:
 
         region = workers_mod.detect_region("bdom_33250-5888.tif")
         assert region == Region.BB
+        region = workers_mod.detect_region("dop_33250-5888.tif")
+        assert region == Region.BB
 
     def test_empty_directories(self, tmp_path):
         """Test handling of empty directories."""
@@ -600,7 +612,7 @@ class TestConvertTiles:
 
         raw_dir = tmp_path / "raw" / "image"
         raw_dir.mkdir(parents=True)
-        (raw_dir / "noop.jp2").touch()
+        (raw_dir / "dop10rgbi_32_350_5600_1_nw_2021.jp2").touch()
 
         stats = convert_tiles(
             str(tmp_path / "raw"),
@@ -634,7 +646,7 @@ class TestConvertTiles:
 
         raw_dir = tmp_path / "raw" / "image"
         raw_dir.mkdir(parents=True)
-        (raw_dir / "split.jp2").touch()
+        (raw_dir / "dop10rgbi_32_351_5601_1_nw_2021.jp2").touch()
 
         stats = convert_tiles(
             str(tmp_path / "raw"),

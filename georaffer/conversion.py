@@ -5,7 +5,6 @@ format using ProcessPoolExecutor for CPU-bound operations.
 """
 
 import multiprocessing
-import re
 import os
 import signal
 import sys
@@ -18,12 +17,11 @@ from tqdm import tqdm
 
 from pathlib import Path
 
-from georaffer.config import get_tile_size_km
-from georaffer.converters import convert_jp2, convert_laz, get_laz_year
+from georaffer.config import Region, get_tile_size_km
+from georaffer.converters import convert_jp2, convert_laz
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
 from georaffer.metadata import create_provenance_csv
-from georaffer.provenance import compute_split_coordinates, extract_year_from_filename
 from georaffer.runtime import InterruptManager, shutdown_executor
 from georaffer.workers import (
     convert_dsm_worker,
@@ -31,6 +29,7 @@ from georaffer.workers import (
     detect_region,
     generate_output_name,
     init_worker,
+    resolve_source_year,
 )
 
 
@@ -78,31 +77,10 @@ def _outputs_exist(
         True if ALL expected output files exist, False if any are missing.
     """
     region = detect_region(filename)
+    input_path = Path(source_dir) / filename if source_dir is not None else Path(filename)
     # Match worker year logic as closely as possible to ensure we check
     # the exact output filenames that conversion would produce.
-    year_require = data_type == "image"
-    year = extract_year_from_filename(filename, require=year_require) or "latest"
-    if data_type == "dsm" and year == "latest" and source_dir is not None:
-        if filename.lower().endswith(".laz"):
-            try:
-                header_year = get_laz_year(str(Path(source_dir) / filename))
-                if header_year:
-                    year = header_year
-            except Exception:
-                pass
-        elif filename.lower().endswith(".tif"):
-            meta_path = Path(source_dir) / f"{Path(filename).stem}_meta.xml"
-            if meta_path.exists():
-                try:
-                    text = meta_path.read_text(encoding="utf-8", errors="ignore")
-                    match = re.search(
-                        r"<file_creation_day_year>\d{1,3}/(\d{4})</file_creation_day_year>",
-                        text,
-                    )
-                    if match:
-                        year = match.group(1)
-                except Exception:
-                    pass
+    year = resolve_source_year(filename, input_path, data_type=data_type, region=region)
 
     # Get base coordinates from filename
     coords = parse_tile_coords(filename)
