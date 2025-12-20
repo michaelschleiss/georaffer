@@ -412,39 +412,21 @@ def resolve_source_year(
 
 
 def _extract_bb_meta_year(input_path: Path) -> str | None:
+    """Extract year from BB ZIP metadata HTML (Bildflugdatum field)."""
     if input_path.suffix.lower() != ".zip":
         return None
 
-    texts: list[str] = []
     try:
         with zipfile.ZipFile(input_path) as zf:
-            meta_name = _find_zip_member(zf, "_meta.xml") or _find_zip_member(zf, ".xml")
-            if meta_name:
-                texts.append(zf.read(meta_name).decode("utf-8", errors="ignore"))
+            html_name = _find_zip_member(zf, ".html")
+            if not html_name:
+                return None
+            html = zf.read(html_name).decode("utf-8", errors="ignore")
+            match = re.search(r"Bildflugdatum:</td><td>\s*(\d{4})-\d{2}-\d{2}", html)
+            if match:
+                return match.group(1)
     except Exception:
-        return None
-
-    for text in texts:
-        year = _extract_bb_year_from_text(text)
-        if year:
-            return year
-
-    return None
-
-
-def _extract_bb_year_from_text(text: str) -> str | None:
-    match = re.search(
-        r"<file_creation_day_year>\d{1,3}/(\d{4})</file_creation_day_year>", text
-    )
-    if match:
-        return match.group(1)
-
-    year = _extract_iso_metadata_year(text, "creation")
-    if year:
-        return year
-    year = _extract_iso_metadata_year(text, "publication")
-    if year:
-        return year
+        pass
     return None
 
 
