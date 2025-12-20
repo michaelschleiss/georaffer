@@ -385,30 +385,36 @@ def process_tiles(
 
     # Filter downloads based on --type flag
     if process_images:
-        if downloads_by_source["nrw_jp2"]:
+        nrw_jp2_downloads = downloads_by_source.get("nrw_jp2", [])
+        if nrw_jp2_downloads:
             download_tasks.append(
-                DownloadTask("NRW Imagery", downloads_by_source["nrw_jp2"], nrw_downloader)
+                DownloadTask("NRW Imagery", nrw_jp2_downloads, nrw_downloader)
             )
-        if downloads_by_source["rlp_jp2"]:
+        rlp_jp2_downloads = downloads_by_source.get("rlp_jp2", [])
+        if rlp_jp2_downloads:
             download_tasks.append(
-                DownloadTask("RLP Imagery", downloads_by_source["rlp_jp2"], rlp_downloader)
+                DownloadTask("RLP Imagery", rlp_jp2_downloads, rlp_downloader)
             )
-        if downloads_by_source["bb_jp2"]:
+        bb_jp2_downloads = downloads_by_source.get("bb_jp2", [])
+        if bb_jp2_downloads:
             download_tasks.append(
-                DownloadTask("BB Imagery", downloads_by_source["bb_jp2"], bb_downloader)
+                DownloadTask("BB Imagery", bb_jp2_downloads, bb_downloader)
             )
     if process_pointclouds:
-        if downloads_by_source["nrw_laz"]:
+        nrw_laz_downloads = downloads_by_source.get("nrw_laz", [])
+        if nrw_laz_downloads:
             download_tasks.append(
-                DownloadTask("NRW DSM", downloads_by_source["nrw_laz"], nrw_downloader)
+                DownloadTask("NRW DSM", nrw_laz_downloads, nrw_downloader)
             )
-        if downloads_by_source["rlp_laz"]:
+        rlp_laz_downloads = downloads_by_source.get("rlp_laz", [])
+        if rlp_laz_downloads:
             download_tasks.append(
-                DownloadTask("RLP DSM", downloads_by_source["rlp_laz"], rlp_downloader)
+                DownloadTask("RLP DSM", rlp_laz_downloads, rlp_downloader)
             )
-        if downloads_by_source["bb_laz"]:
+        bb_laz_downloads = downloads_by_source.get("bb_laz", [])
+        if bb_laz_downloads:
             download_tasks.append(
-                DownloadTask("BB DSM", downloads_by_source["bb_laz"], bb_downloader)
+                DownloadTask("BB DSM", bb_laz_downloads, bb_downloader)
             )
 
     print_step_header(3, "Downloading Raw Tiles")
