@@ -358,34 +358,25 @@ def calculate_required_tiles(
             downloads[f"{name}_laz"].append((url, path))
 
     # ========== Phase 3: Calculate missing tiles ==========
-    if original_coords is not None and len(original_coords) > 0:
-        # Use vectorized coverage check, expanding to margin tiles when needed.
-        coords = np.asarray(original_coords)
-        source_tiles = tiles_by_zone.get(source_zone, set())
-        if source_tiles:
-            grid_size_m = grid_size_km * METERS_PER_KM
-            coord_tiles = set(
-                zip(
-                    (coords[:, 0] // grid_size_m).astype(int),
-                    (coords[:, 1] // grid_size_m).astype(int),
-                )
+    coords = np.asarray(original_coords)
+    source_tiles = tiles_by_zone.get(source_zone, set())
+    if source_tiles:
+        grid_size_m = grid_size_km * METERS_PER_KM
+        coord_tiles = set(
+            zip(
+                (coords[:, 0] // grid_size_m).astype(int),
+                (coords[:, 1] // grid_size_m).astype(int),
             )
-            extra_tiles = source_tiles - coord_tiles
-            if extra_tiles:
-                extra_coords = np.array(
-                    [user_tile_to_utm_center(x, y, grid_size_km) for x, y in extra_tiles]
-                )
-                coords = np.vstack((coords, extra_coords))
-
-        tile_set.missing_jp2, tile_set.missing_laz = check_missing_coords(
-            coords, source_zone, grid_size_km, regions, zone_by_region
         )
-    else:
-        # Fallback: use tile-based matching (less precise for cross-zone)
-        all_user_tiles: set[tuple[int, int, int]] = {
-            (zone, x, y) for zone, tiles in tiles_by_zone.items() for (x, y) in tiles
-        }
-        tile_set.missing_jp2 = all_user_tiles - jp2_matched
-        tile_set.missing_laz = all_user_tiles - laz_matched
+        extra_tiles = source_tiles - coord_tiles
+        if extra_tiles:
+            extra_coords = np.array(
+                [user_tile_to_utm_center(x, y, grid_size_km) for x, y in extra_tiles]
+            )
+            coords = np.vstack((coords, extra_coords))
+
+    tile_set.missing_jp2, tile_set.missing_laz = check_missing_coords(
+        coords, source_zone, grid_size_km, regions, zone_by_region
+    )
 
     return tile_set, downloads
