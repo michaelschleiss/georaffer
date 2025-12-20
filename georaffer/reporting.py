@@ -4,6 +4,7 @@ import textwrap
 from collections.abc import Iterable, Sequence
 from typing import Any
 
+from georaffer.config import Region
 from georaffer.tiles import TileSet
 
 # ASCII logo printed once at pipeline start.
@@ -93,6 +94,7 @@ def print_config(
     resolutions: list[int],
     output_dir: str,
     imagery_from: tuple[int, int | None] | None = None,
+    regions: list[Region] | None = None,
 ) -> None:
     """Print pipeline configuration summary.
 
@@ -103,6 +105,7 @@ def print_config(
         resolutions: Output resolutions
         output_dir: Output directory path
         imagery_from: Optional (from_year, to_year) for historic imagery
+        regions: Optional list of regions included in the run
     """
     print("Configuration:")
     print(f"  • Input coordinates: {num_coords} locations")
@@ -110,6 +113,9 @@ def print_config(
     print(f"  • Margin buffer: {margin_km:.2f} km from tile borders")
     print(f"  • Output resolutions: {', '.join(f'{r}px' for r in resolutions)}")
     print(f"  • Output directory: {output_dir}")
+    if regions:
+        region_names = ", ".join(region.value for region in regions)
+        print(f"  • Regions: {region_names}")
     if imagery_from:
         from_year, to_year = imagery_from
         if to_year is None:

@@ -215,6 +215,26 @@ def pixel_size_to_resolution(pixel_size: float, tile_size_km: float) -> int:
     return int(tile_size_m / pixel_size)
 
 
+def normalize_regions(region_args: list[str]) -> list["Region"]:
+    """Normalize region CLI args to Region enums, preserving order."""
+    from georaffer.config import Region
+
+    region_map = {region.value.lower(): region for region in Region}
+    normalized: list[Region] = []
+    seen: set[Region] = set()
+    for region_name in region_args:
+        key = region_name.lower()
+        region = region_map.get(key)
+        if region is None:
+            raise ValueError(f"Unknown region '{region_name}'. Use: nrw, rlp, bb.")
+        if region not in seen:
+            normalized.append(region)
+            seen.add(region)
+    if not normalized:
+        raise ValueError("At least one region is required.")
+    return normalized
+
+
 def validate_args(args) -> list[str]:
     """Validate parsed arguments, return list of errors."""
     from georaffer.config import METERS_PER_KM, OUTPUT_TILE_SIZE_KM
@@ -409,6 +429,14 @@ Details:
         metavar="ZONE",
         help="UTM zone for UTM inputs (required for UTM inputs; invalid for lat/lon)",
     )
+    shared.add_argument(
+        "--region",
+        nargs="+",
+        choices=["nrw", "rlp", "bb"],
+        default=["nrw", "rlp"],
+        metavar="REGION",
+        help="Regions to include: nrw rlp bb (default: nrw rlp)",
+    )
 
     # bbox subcommand
     subparsers._parser_class = QuietArgumentParser
@@ -550,6 +578,7 @@ Details:
         # Parse --type into booleans for pipeline
         process_images = args.data_types is None or "image" in args.data_types
         process_pointclouds = args.data_types is None or "dsm" in args.data_types
+        regions = normalize_regions(args.region)
 
         stats = process_tiles(
             coords=unique_coords,
@@ -565,6 +594,7 @@ Details:
             process_pointclouds=process_pointclouds,
             reprocess=args.reprocess,
             source_zone=source_zone,
+            regions=regions,
         )
 
         if args.command == "tif":

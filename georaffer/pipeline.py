@@ -120,6 +120,7 @@ def process_tiles(
     process_pointclouds: bool = True,
     reprocess: bool = False,
     source_zone: int = 32,
+    regions: list[Region] | None = None,
 ) -> ProcessingStats:
     """Main entry point: download and process tiles for given coordinates.
 
@@ -139,6 +140,7 @@ def process_tiles(
         reprocess: If True, re-download and re-convert existing files.
             By default (False), skip files where outputs already exist.
         source_zone: UTM zone of input coordinates (default: 32 for NRW/RLP)
+        regions: Optional list of regions to include (default: all)
 
     Returns:
         ProcessingStats with processing results
@@ -147,6 +149,16 @@ def process_tiles(
         resolutions = [1000]
 
     run_start = time.perf_counter()
+
+    selected_regions = regions or [Region.NRW, Region.RLP, Region.BB]
+    selected_zones = {UTM_ZONE_BY_REGION[region] for region in selected_regions}
+    if source_zone not in selected_zones:
+        region_names = ", ".join(region.value for region in selected_regions)
+        zone_list = ", ".join(str(zone) for zone in sorted(selected_zones))
+        raise ValueError(
+            f"Input coordinates are in UTM zone {source_zone}; selected regions "
+            f"({region_names}) use zones {zone_list}. Include the matching region."
+        )
 
     # Print banner and configuration
     print_pipeline_banner()
@@ -157,13 +169,26 @@ def process_tiles(
         resolutions=resolutions,
         output_dir=output_dir,
         imagery_from=imagery_from,
+        regions=selected_regions,
     )
 
     # Initialize downloaders
     # imagery_from is (from_year, to_year) or None; both NRW and RLP take year range
-    nrw_downloader = NRWDownloader(output_dir, imagery_from=imagery_from)
-    rlp_downloader = RLPDownloader(output_dir, imagery_from=imagery_from)
-    bb_downloader = BrandenburgDownloader(output_dir)
+    nrw_downloader = (
+        NRWDownloader(output_dir, imagery_from=imagery_from)
+        if Region.NRW in selected_regions
+        else None
+    )
+    rlp_downloader = (
+        RLPDownloader(output_dir, imagery_from=imagery_from)
+        if Region.RLP in selected_regions
+        else None
+    )
+    bb_downloader = (
+        BrandenburgDownloader(output_dir)
+        if Region.BB in selected_regions
+        else None
+    )
 
     # Create output directories
     for subdir in ["raw/image", "raw/dsm", "processed/image", "processed/dsm"]:
@@ -176,6 +201,9 @@ def process_tiles(
     )
     grid_start = time.perf_counter()
     tiles_by_zone = generate_tiles_by_zone(coords, source_zone, grid_size_km, margin_km)
+    tiles_by_zone = {
+        zone: tiles_by_zone.get(zone, set()) for zone in sorted(selected_zones)
+    }
     # User tiles = unique grid cells from original coords (source zone only)
     total_user_tiles = len(tiles_by_zone.get(source_zone, set()))
     grid_duration = time.perf_counter() - grid_start
@@ -184,45 +212,60 @@ def process_tiles(
     # Convert user tiles to RLP native grid coords for WMS queries
     # User tiles are in user grid coords; we need RLP 2km grid coords
     rlp_native_coords: set[tuple[int, int]] = set()
-    rlp_zone = UTM_ZONE_BY_REGION[Region.RLP]
-    rlp_user_tiles = tiles_by_zone.get(rlp_zone, set())
-    for x, y in rlp_user_tiles:
-        # Convert user grid to UTM (center of tile)
-        utm_x = (x + 0.5) * grid_size_km * 1000
-        utm_y = (y + 0.5) * grid_size_km * 1000
-        # Convert to RLP native grid
-        rlp_coords, _ = rlp_downloader.utm_to_grid_coords(utm_x, utm_y)
-        rlp_native_coords.add(rlp_coords)
+    if rlp_downloader is not None:
+        rlp_zone = UTM_ZONE_BY_REGION[Region.RLP]
+        rlp_user_tiles = tiles_by_zone.get(rlp_zone, set())
+        for x, y in rlp_user_tiles:
+            # Convert user grid to UTM (center of tile)
+            utm_x = (x + 0.5) * grid_size_km * 1000
+            utm_y = (y + 0.5) * grid_size_km * 1000
+            # Convert to RLP native grid
+            rlp_coords, _ = rlp_downloader.utm_to_grid_coords(utm_x, utm_y)
+            rlp_native_coords.add(rlp_coords)
 
     # STEP 2: Load tile catalogs
     print_step_header(2, "Loading Available Tiles from Remote Servers")
-    print("Querying tile catalogs from NRW, RLP, and BB servers...")
+    region_labels = ", ".join(region.value for region in selected_regions)
+    print(f"Querying tile catalogs from {region_labels} servers...")
     phase_start = time.perf_counter()
-    nrw_jp2, nrw_laz = nrw_downloader.get_available_tiles()
-    rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(requested_coords=rlp_native_coords)
-    bb_jp2, bb_laz = bb_downloader.get_available_tiles()
+    catalog_rows: list[tuple[str, int, int]] = []
+    region_catalogs: list[RegionCatalog] = []
+    nrw_jp2: dict = {}
+    nrw_laz: dict = {}
+    rlp_jp2: dict = {}
+    rlp_laz: dict = {}
+    bb_jp2: dict = {}
+    bb_laz: dict = {}
+
+    if nrw_downloader is not None:
+        nrw_jp2, nrw_laz = nrw_downloader.get_available_tiles()
+        catalog_rows.append(
+            ("NRW", nrw_downloader.total_jp2_count or len(nrw_jp2), len(nrw_laz))
+        )
+        region_catalogs.append(RegionCatalog("nrw", nrw_downloader, nrw_jp2, nrw_laz))
+    if rlp_downloader is not None:
+        rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(
+            requested_coords=rlp_native_coords
+        )
+        catalog_rows.append(
+            ("RLP", rlp_downloader.total_jp2_count or len(rlp_jp2), len(rlp_laz))
+        )
+        region_catalogs.append(RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz))
+    if bb_downloader is not None:
+        bb_jp2, bb_laz = bb_downloader.get_available_tiles()
+        catalog_rows.append(("BB", len(bb_jp2), len(bb_laz)))
+        region_catalogs.append(RegionCatalog("bb", bb_downloader, bb_jp2, bb_laz))
     catalogs_duration = time.perf_counter() - phase_start
 
     # Use total counts (includes historical) for JP2, unique locations for LAZ
-    print_catalog_summary(
-        [
-            ("NRW", nrw_downloader.total_jp2_count or len(nrw_jp2), len(nrw_laz)),
-            ("RLP", rlp_downloader.total_jp2_count or len(rlp_jp2), len(rlp_laz)),
-            ("BB", len(bb_jp2), len(bb_laz)),
-        ],
-        catalogs_duration,
-    )
+    print_catalog_summary(catalog_rows, catalogs_duration)
 
-    # Build region catalogs in priority order (first match wins)
-    regions = [
-        RegionCatalog("nrw", nrw_downloader, nrw_jp2, nrw_laz),
-        RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz),
-        RegionCatalog("bb", bb_downloader, bb_jp2, bb_laz),
-    ]
-    zone_by_region = {region.value.lower(): zone for region, zone in UTM_ZONE_BY_REGION.items()}
+    zone_by_region = {
+        region.value.lower(): UTM_ZONE_BY_REGION[region] for region in selected_regions
+    }
     original_coords = np.array(coords) if coords else None
     tile_set, downloads_by_source = calculate_required_tiles(
-        tiles_by_zone, grid_size_km, regions, zone_by_region,
+        tiles_by_zone, grid_size_km, region_catalogs, zone_by_region,
         original_coords=original_coords, source_zone=source_zone
     )
     calc_duration = time.perf_counter() - phase_start

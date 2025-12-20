@@ -3,6 +3,7 @@
 import os
 import sys
 import time
+import warnings
 import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -27,6 +28,10 @@ from georaffer.config import (
     RETRY_MAX_WAIT,
 )
 from georaffer.runtime import InterruptManager
+
+# Suppress PIL decompression bomb warnings for large aerial orthophotos.
+warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
+Image.MAX_IMAGE_PIXELS = None
 
 
 class RegionDownloader(ABC):
@@ -345,4 +350,3 @@ class RegionDownloader(ABC):
         if hasattr(self, "_all_jp2_by_coord"):
             return sum(len(urls) for urls in self._all_jp2_by_coord.values())
         return 0
-

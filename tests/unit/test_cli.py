@@ -8,7 +8,8 @@ import pytest
 import rasterio
 from rasterio.transform import from_origin
 
-from georaffer.cli import load_coordinates
+from georaffer.cli import load_coordinates, normalize_regions
+from georaffer.config import Region
 
 
 class TestLoadCoordinatesCSV:
@@ -74,6 +75,16 @@ class TestLoadCoordinatesCSV:
 
         with pytest.raises(FileNotFoundError):
             load_coordinates(args)
+
+
+class TestNormalizeRegions:
+    def test_deduplicates_and_preserves_order(self):
+        regions = normalize_regions(["nrw", "rlp", "nrw"])
+        assert regions == [Region.NRW, Region.RLP]
+
+    def test_case_insensitive(self):
+        regions = normalize_regions(["BB"])
+        assert regions == [Region.BB]
 
 
 class TestLoadCoordinatesBbox:

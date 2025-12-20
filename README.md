@@ -48,6 +48,7 @@ georaffer tiles 362,5604 --output ./tiles
 ```
 
 See `georaffer --help` for all options.
+By default, downloads target NRW + RLP; add `--region bb` to include Brandenburg.
 
 When using the `tif` command, aligned outputs are written to `./tiles/aligned/` and
 match the reference GeoTIFF grid (CRS, pixel size, width/height, and bounds).
