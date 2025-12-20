@@ -18,8 +18,6 @@ from georaffer.config import (
     BB_GRID_SIZE,
     FEED_TIMEOUT,
     MAX_RETRIES,
-    RETRY_BACKOFF_BASE,
-    RETRY_MAX_WAIT,
     Region,
 )
 from georaffer.downloaders.base import RegionDownloader
@@ -76,8 +74,8 @@ class BrandenburgDownloader(RegionDownloader):
         last_error = None
         for attempt in range(MAX_RETRIES):
             try:
-                if attempt > 0:
-                    delay = min(RETRY_BACKOFF_BASE ** (attempt - 1), RETRY_MAX_WAIT)
+                delay = self._backoff_delay(attempt)
+                if delay > 0:
                     time.sleep(delay)
                 dop_resp = self._session.get(
                     self.DOP_BASE_URL, timeout=FEED_TIMEOUT, verify=self.verify_ssl
@@ -97,35 +95,38 @@ class BrandenburgDownloader(RegionDownloader):
             f"Failed to fetch BB catalog after {MAX_RETRIES} retries: {last_error}"
         )
 
-    def _parse_jp2_feed(
-        self, session: requests.Session, root
+    def _parse_listing(
+        self, html: str, href_pattern: str, filename_pattern: re.Pattern, base_url: str
     ) -> dict[tuple[int, int], str]:
-        return {}
+        """Parse HTML directory listing for tile files.
 
-    def _parse_laz_feed(
-        self, session: requests.Session, root
-    ) -> dict[tuple[int, int], str]:
-        return {}
+        Args:
+            html: HTML content of directory listing
+            href_pattern: Regex pattern to match href attributes (e.g., r'href="(bdom_...)"')
+            filename_pattern: Compiled regex to extract coordinates from filename
+            base_url: Base URL to prepend to filenames
+
+        Returns:
+            Dict mapping (grid_x, grid_y) to download URL
+        """
+        tiles: dict[tuple[int, int], str] = {}
+        for match in re.finditer(href_pattern, html):
+            filename = match.group(1)
+            coords = self._parse_filename(filename, filename_pattern)
+            if not coords:
+                continue
+            tiles[coords] = f"{base_url}{filename}"
+        return tiles
 
     def _parse_bdom_listing(self, html: str) -> dict[tuple[int, int], str]:
-        tiles: dict[tuple[int, int], str] = {}
-        for match in re.finditer(r'href="(bdom_\d{5}-\d{4}\.zip)"', html):
-            filename = match.group(1)
-            coords = self._parse_filename(filename, BB_BDOM_PATTERN)
-            if not coords:
-                continue
-            tiles[coords] = f"{self.BDOM_BASE_URL}{filename}"
-        return tiles
+        return self._parse_listing(
+            html, r'href="(bdom_\d{5}-\d{4}\.zip)"', BB_BDOM_PATTERN, self.BDOM_BASE_URL
+        )
 
     def _parse_dop_listing(self, html: str) -> dict[tuple[int, int], str]:
-        tiles: dict[tuple[int, int], str] = {}
-        for match in re.finditer(r'href="(dop_\d{5}-\d{4}\.zip)"', html):
-            filename = match.group(1)
-            coords = self._parse_filename(filename, BB_DOP_PATTERN)
-            if not coords:
-                continue
-            tiles[coords] = f"{self.DOP_BASE_URL}{filename}"
-        return tiles
+        return self._parse_listing(
+            html, r'href="(dop_\d{5}-\d{4}\.zip)"', BB_DOP_PATTERN, self.DOP_BASE_URL
+        )
 
     def _parse_filename(self, filename: str, pattern: re.Pattern) -> tuple[int, int] | None:
         match = pattern.match(filename)

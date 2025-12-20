@@ -170,8 +170,8 @@ class NRWDownloader(RegionDownloader):
         # If not in historic mode, use standard parsing
         if self._from_year is None:
             jp2_tiles = self._fetch_and_parse_feed(self.jp2_feed_url, "jp2")
-            # Set _all_jp2_urls for total_jp2_count property
-            self._all_jp2_urls = list(jp2_tiles.values())
+            # Set _all_jp2_by_coord for base class total_jp2_count property
+            self._all_jp2_by_coord = {coords: [url] for coords, url in jp2_tiles.items()}
             return jp2_tiles, laz_tiles
 
         # Multi-year historic mode: load feeds for the requested year range
@@ -189,20 +189,29 @@ class NRWDownloader(RegionDownloader):
             current_tiles = self._parse_jp2_feed_with_year(
                 self._session, self.CURRENT_JP2_FEED_URL, self.CURRENT_JP2_BASE_URL
             )
+            kept_current = 0
+            skipped_current = 0
             for coords, (url, year) in current_tiles.items():
-                all_tiles[(coords, year)] = url
-            print(f"  Current feed: {len(current_tiles)} tiles")
+                if self._year_in_range(year, from_year, to_year):
+                    all_tiles[(coords, year)] = url
+                    kept_current += 1
+                else:
+                    skipped_current += 1
+            if skipped_current:
+                print(
+                    f"  Current feed: {len(current_tiles)} tiles "
+                    f"({kept_current} in range, {skipped_current} skipped)"
+                )
+            else:
+                print(f"  Current feed: {len(current_tiles)} tiles")
         except Exception as e:
             print(f"Failed to fetch current JP2 feed: {e}", file=sys.stderr)
             raise
 
         # Determine year range: from_year to to_year (or latest historic if to_year is None)
-        if to_year is None:
-            # All years from from_year to present
-            historic_years = [y for y in self.HISTORIC_YEARS if y >= from_year]
-        else:
-            # Only years in the specified range
-            historic_years = [y for y in self.HISTORIC_YEARS if from_year <= y <= to_year]
+        historic_years = [
+            y for y in self.HISTORIC_YEARS if self._year_in_range(y, from_year, to_year)
+        ]
 
         total_historic = 0
         duplicates_skipped = 0
@@ -247,8 +256,7 @@ class NRWDownloader(RegionDownloader):
 
         # Store complete mapping for multi-year downloads
         # tiles.py checks for this attribute to enable multi-year mode
-        self._all_jp2_urls = list(all_tiles.values())
-        self._all_jp2_by_coord = {}
+        self._all_jp2_by_coord: dict[tuple[int, int], list[str]] = {}
         for (coords, _year), url in all_tiles.items():
             if coords not in self._all_jp2_by_coord:
                 self._all_jp2_by_coord[coords] = []
@@ -262,19 +270,6 @@ class NRWDownloader(RegionDownloader):
         )
 
         return jp2_tiles, laz_tiles
-
-    def get_all_urls_for_coord(self, coords: tuple[int, int]) -> list:
-        """Get all URLs (all years) for a coordinate. For multi-year mode."""
-        if hasattr(self, "_all_jp2_by_coord"):
-            return self._all_jp2_by_coord.get(coords, [])
-        return []
-
-    @property
-    def total_jp2_count(self) -> int:
-        """Total JP2 files including all historical years."""
-        if hasattr(self, "_all_jp2_urls"):
-            return len(self._all_jp2_urls)
-        return 0
 
     def _parse_laz_feed(
         self, session: requests.Session, root: ET.Element

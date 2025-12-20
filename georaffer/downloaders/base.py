@@ -73,6 +73,38 @@ class RegionDownloader(ABC):
         """Get HTTP session (allows injection for testing)."""
         return self._session
 
+    @staticmethod
+    def _backoff_delay(attempt: int) -> float:
+        """Calculate exponential backoff delay for retry attempt.
+
+        Args:
+            attempt: The current attempt number (0-indexed, delay only for attempt > 0)
+
+        Returns:
+            Delay in seconds, capped at RETRY_MAX_WAIT
+        """
+        if attempt <= 0:
+            return 0.0
+        return min(RETRY_BACKOFF_BASE ** (attempt - 1), RETRY_MAX_WAIT)
+
+    @staticmethod
+    def _year_in_range(year: int, from_year: int | None, to_year: int | None) -> bool:
+        """Check if a year falls within the specified range.
+
+        Args:
+            year: The year to check
+            from_year: Start of range (inclusive), or None for no lower bound
+            to_year: End of range (inclusive), or None for no upper bound
+
+        Returns:
+            True if year is in range
+        """
+        if from_year is None:
+            return True
+        if to_year is None:
+            return year >= from_year
+        return from_year <= year <= to_year
+
     @abstractmethod
     def utm_to_grid_coords(
         self, utm_x: float, utm_y: float
@@ -91,19 +123,25 @@ class RegionDownloader(ABC):
         """
         pass
 
-    @abstractmethod
     def _parse_jp2_feed(
         self, session: requests.Session, root: ET.Element
     ) -> dict[tuple[int, int], str]:
-        """Parse JP2 feed XML and return dict mapping (grid_x, grid_y) -> URL."""
-        pass
+        """Parse JP2 feed XML and return dict mapping (grid_x, grid_y) -> URL.
 
-    @abstractmethod
+        Default implementation returns empty dict. Override for XML feed parsing.
+        Subclasses using non-XML sources (e.g., HTML scraping) can skip this.
+        """
+        return {}
+
     def _parse_laz_feed(
         self, session: requests.Session, root: ET.Element
     ) -> dict[tuple[int, int], str]:
-        """Parse LAZ feed XML and return dict mapping (grid_x, grid_y) -> URL."""
-        pass
+        """Parse LAZ feed XML and return dict mapping (grid_x, grid_y) -> URL.
+
+        Default implementation returns empty dict. Override for XML feed parsing.
+        Subclasses using non-XML sources (e.g., HTML scraping) can skip this.
+        """
+        return {}
 
     @property
     @abstractmethod
@@ -161,8 +199,8 @@ class RegionDownloader(ABC):
 
         for attempt in range(MAX_RETRIES):
             try:
-                if attempt > 0:
-                    delay = min(RETRY_BACKOFF_BASE ** (attempt - 1), RETRY_MAX_WAIT)
+                delay = self._backoff_delay(attempt)
+                if delay > 0:
                     time.sleep(delay)
 
                 response = self._session.get(feed_url, timeout=FEED_TIMEOUT, verify=self.verify_ssl)
@@ -207,8 +245,8 @@ class RegionDownloader(ABC):
 
         for attempt in range(MAX_RETRIES):
             try:
-                if attempt > 0:
-                    delay = min(RETRY_BACKOFF_BASE ** (attempt - 1), RETRY_MAX_WAIT)
+                delay = self._backoff_delay(attempt)
+                if delay > 0:
                     time.sleep(delay)
 
                 with self._session.get(
@@ -295,19 +333,16 @@ class RegionDownloader(ABC):
         except Exception:
             return False
 
-    def extract_laz_metadata(self, laz_path: str) -> dict | None:
-        """Extract metadata from LAZ file header."""
-        try:
-            with laspy.open(laz_path) as f:
-                header = f.header
-                return {
-                    "source_region": self.region_name,
-                    "acquisition_date": str(header.creation_date) if header.creation_date else None,
-                    "point_count": header.point_count,
-                    "point_format": header.point_format.id,
-                    "file_version": str(header.version),
-                    "mins": list(header.mins),
-                    "maxs": list(header.maxs),
-                }
-        except Exception:
-            return None
+    def get_all_urls_for_coord(self, coords: tuple[int, int]) -> list[str]:
+        """Get all URLs (all years) for a coordinate. For multi-year mode."""
+        if hasattr(self, "_all_jp2_by_coord"):
+            return self._all_jp2_by_coord.get(coords, [])
+        return []
+
+    @property
+    def total_jp2_count(self) -> int:
+        """Total JP2 files including all historical years."""
+        if hasattr(self, "_all_jp2_by_coord"):
+            return sum(len(urls) for urls in self._all_jp2_by_coord.values())
+        return 0
+

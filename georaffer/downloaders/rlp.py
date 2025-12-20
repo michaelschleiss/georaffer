@@ -18,10 +18,10 @@ Historical imagery (1994-2024) is only available via WMS:
 Note: The old geoportal.rlp.de INSPIRE ATOM feeds were deprecated April 2025.
 """
 
-import sys
 import time
 import xml.etree.ElementTree as ET
 from typing import ClassVar
+from urllib.parse import parse_qs, urlparse
 
 import requests
 import urllib3
@@ -30,8 +30,6 @@ from georaffer.config import (
     FEED_TIMEOUT,
     MAX_RETRIES,
     METERS_PER_KM,
-    RETRY_BACKOFF_BASE,
-    RETRY_MAX_WAIT,
     RLP_GRID_SIZE,
     RLP_JP2_PATTERN,
     RLP_LAZ_PATTERN,
@@ -68,8 +66,12 @@ class RLPDownloader(RegionDownloader):
         super().__init__(Region.RLP, output_dir, imagery_from=imagery_from, session=session)
 
         # GeoBasis-RLP ATOM feeds (replaced deprecated geoportal feeds April 2025)
-        self._jp2_feed_url = "https://geobasis-rlp.de/data/dop20rgb/current/jp2/atomfeed-links/atomfeed-links.xml"
-        self._laz_feed_url = "https://geobasis-rlp.de/data/bdom20rgbi/current/las/atomfeed-links/atomfeed-links.xml"
+        self._jp2_feed_url = (
+            "https://geobasis-rlp.de/data/dop20rgb/current/jp2/atomfeed-links/atomfeed-links.xml"
+        )
+        self._laz_feed_url = (
+            "https://geobasis-rlp.de/data/bdom20rgbi/current/las/atomfeed-links/atomfeed-links.xml"
+        )
 
         # Parse imagery_from (like NRW)
         if imagery_from is None:
@@ -128,6 +130,25 @@ class RLPDownloader(RegionDownloader):
     def verify_ssl(self) -> bool:
         return False  # RLP has SSL certificate issues
 
+    @staticmethod
+    def _is_wms_getmap(url: str) -> bool:
+        parsed = urlparse(url)
+        params = parse_qs(parsed.query)
+        service = params.get("SERVICE") or params.get("service")
+        request = params.get("REQUEST") or params.get("request")
+        if service and request:
+            return service[0].lower() == "wms" and request[0].lower() == "getmap"
+        lowered = url.lower()
+        return "service=wms" in lowered and "request=getmap" in lowered
+
+    def download_file(self, url: str, output_path: str, on_progress=None) -> bool:
+        """Download a file, routing WMS GetMap URLs through WMS validation."""
+        if self._is_wms_getmap(url):
+            if self.wms.download_tile(url, output_path, on_progress=on_progress):
+                return True
+            raise RuntimeError(f"WMS download failed for {url}")
+        return super().download_file(url, output_path, on_progress=on_progress)
+
     def get_available_tiles(
         self,
         requested_coords: set[tuple[int, int]] | None = None,
@@ -177,21 +198,31 @@ class RLPDownloader(RegionDownloader):
         assert from_year is not None
 
         # Determine year range
-        if to_year is None:
-            historic_years = [y for y in self.HISTORIC_YEARS if y >= from_year]
-        else:
-            historic_years = [y for y in self.HISTORIC_YEARS if from_year <= y <= to_year]
+        historic_years = [
+            y for y in self.HISTORIC_YEARS if self._year_in_range(y, from_year, to_year)
+        ]
 
         # Collect tiles: (coords, year) -> url
         all_tiles: dict[tuple[tuple[int, int], int], str] = {}
 
         # Load current ATOM feed first (takes precedence, like NRW)
         current_tiles = self._fetch_and_parse_feed(self._jp2_feed_url, "jp2")
+        kept_current = 0
+        skipped_current = 0
         for coords, url in current_tiles.items():
             year = self._extract_year_from_url(url)
-            if year:
+            if year and self._year_in_range(year, from_year, to_year):
                 all_tiles[(coords, year)] = url
-        print(f"  Current feed: {len(current_tiles)} tiles")
+                kept_current += 1
+            else:
+                skipped_current += 1
+        if skipped_current:
+            print(
+                f"  Current feed: {len(current_tiles)} tiles "
+                f"({kept_current} in range, {skipped_current} skipped)"
+            )
+        else:
+            print(f"  Current feed: {len(current_tiles)} tiles")
 
         # Query WMS for each year (only requested tiles)
         successful_years = []
@@ -223,9 +254,7 @@ class RLPDownloader(RegionDownloader):
 
         # Summary
         year_str = f"{from_year}-{to_year}" if to_year else f"{from_year}-present"
-        print(
-            f"  Total: {len(all_tiles)} tiles across {len(jp2_tiles)} locations ({year_str})"
-        )
+        print(f"  Total: {len(all_tiles)} tiles across {len(jp2_tiles)} locations ({year_str})")
 
         return jp2_tiles
 
@@ -237,22 +266,7 @@ class RLPDownloader(RegionDownloader):
             return int(match.group(3))
         return None
 
-    def get_all_urls_for_coord(self, coords: tuple[int, int]) -> list[str]:
-        """Get all URLs (all years) for a coordinate. For multi-year mode."""
-        if hasattr(self, "_all_jp2_by_coord"):
-            return self._all_jp2_by_coord.get(coords, [])
-        return []
-
-    @property
-    def total_jp2_count(self) -> int:
-        """Total JP2 files including all historical years."""
-        if hasattr(self, "_all_jp2_by_coord"):
-            return sum(len(urls) for urls in self._all_jp2_by_coord.values())
-        return 0
-
-    def _fetch_and_parse_feed(
-        self, feed_url: str, tile_type: str
-    ) -> dict[tuple[int, int], str]:
+    def _fetch_and_parse_feed(self, feed_url: str, tile_type: str) -> dict[tuple[int, int], str]:
         """Fetch XML feed and parse - wraps content in root element.
 
         The geobasis-rlp.de atomfeed-links.xml files contain raw <link> elements
@@ -262,13 +276,11 @@ class RLPDownloader(RegionDownloader):
 
         for attempt in range(MAX_RETRIES):
             try:
-                if attempt > 0:
-                    delay = min(RETRY_BACKOFF_BASE ** (attempt - 1), RETRY_MAX_WAIT)
+                delay = self._backoff_delay(attempt)
+                if delay > 0:
                     time.sleep(delay)
 
-                response = self._session.get(
-                    feed_url, timeout=FEED_TIMEOUT, verify=self.verify_ssl
-                )
+                response = self._session.get(feed_url, timeout=FEED_TIMEOUT, verify=self.verify_ssl)
                 response.raise_for_status()
 
                 # Wrap raw <link> elements in a root element for valid XML
