@@ -173,26 +173,37 @@ def check_missing_coords(
         # Vectorized reproject to region's zone
         xs, ys = reproject_utm_coords_vectorized(coords, source_zone, zone)
 
-        # Vectorized snap to native grid
-        # Get native grid size from downloader (1000m for NRW/BB, 2000m for RLP)
-        if hasattr(region.downloader, "GRID_SIZE"):
-            native_size_m = region.downloader.GRID_SIZE
+        jp2_tuples = []
+        laz_tuples = []
+        if hasattr(region.downloader, "utm_to_grid_coords"):
+            for utm_x, utm_y in zip(xs, ys):
+                jp2_coords, laz_coords = region.downloader.utm_to_grid_coords(
+                    float(utm_x), float(utm_y)
+                )
+                jp2_tuples.append((int(jp2_coords[0]), int(jp2_coords[1])))
+                laz_tuples.append((int(laz_coords[0]), int(laz_coords[1])))
         else:
-            # Fallback: try to infer from region name
-            native_size_m = 2000 if "rlp" in region.name.lower() else 1000
+            # Vectorized snap to native grid
+            # Get native grid size from downloader (1000m for NRW/BB, 2000m for RLP)
+            native_size_m = getattr(region.downloader, "GRID_SIZE", None)
+            if not isinstance(native_size_m, (int, float)):
+                # Fallback: try to infer from region name
+                native_size_m = 2000 if "rlp" in region.name.lower() else 1000
 
-        tile_xs = (xs // native_size_m).astype(int)
-        tile_ys = (ys // native_size_m).astype(int)
+            tile_xs = (xs // native_size_m).astype(int)
+            tile_ys = (ys // native_size_m).astype(int)
 
-        # RLP special case: tiles are 2km but indexed by km coordinate
-        if native_size_m == 2000:
-            tile_xs *= 2
-            tile_ys *= 2
+            # RLP special case: tiles are 2km but indexed by km coordinate
+            if native_size_m == 2000:
+                tile_xs *= 2
+                tile_ys *= 2
+
+            jp2_tuples = list(zip(tile_xs, tile_ys))
+            laz_tuples = list(zip(tile_xs, tile_ys))
 
         # Check each coord's tile against catalogs (set lookup is O(1))
-        tile_tuples = list(zip(tile_xs, tile_ys))
-        jp2_covered |= np.array([t in jp2_tiles for t in tile_tuples])
-        laz_covered |= np.array([t in laz_tiles for t in tile_tuples])
+        jp2_covered |= np.array([t in jp2_tiles for t in jp2_tuples])
+        laz_covered |= np.array([t in laz_tiles for t in laz_tuples])
 
     # Convert uncovered coords to source_zone tiles for reporting
     source_tile_xs = (coords[:, 0] // grid_size_m).astype(int)
@@ -358,9 +369,25 @@ def calculate_required_tiles(
             downloads[f"{name}_laz"].append((url, path))
 
     # ========== Phase 3: Calculate missing tiles ==========
-    coords = np.asarray(original_coords)
+    coords_from_input = original_coords is not None
+    if original_coords is None:
+        coords = np.empty((0, 2), dtype=float)
+    else:
+        coords = np.asarray(original_coords)
+        if coords.size == 0:
+            coords = np.empty((0, 2), dtype=float)
+            coords_from_input = False
+        elif coords.ndim == 1:
+            if coords.size != 2:
+                raise ValueError("original_coords must be an Nx2 array.")
+            coords = coords.reshape(1, 2)
     source_tiles = tiles_by_zone.get(source_zone, set())
-    if source_tiles:
+    if coords.size == 0:
+        if source_tiles:
+            coords = np.array(
+                [user_tile_to_utm_center(x, y, grid_size_km) for x, y in source_tiles]
+            )
+    elif coords_from_input and source_tiles:
         grid_size_m = grid_size_km * METERS_PER_KM
         coord_tiles = set(
             zip(

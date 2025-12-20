@@ -24,6 +24,33 @@ from georaffer.config import (
 _wms_session = requests.Session()
 
 
+def _normalize_wms_date(date_str: str) -> str | None:
+    if not date_str:
+        return None
+    stripped = date_str.strip()
+    if not stripped:
+        return None
+
+    match = re.search(r"\d{2}\.\d{2}\.\d{4}", stripped)
+    if match:
+        try:
+            dt = datetime.strptime(match.group(0), "%d.%m.%Y")
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+
+    match = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", stripped)
+    if not match:
+        return None
+    year, month, day = match.groups()
+    normalized = f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    try:
+        datetime.strptime(normalized, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return normalized
+
+
 def get_wms_metadata(
     utm_x: float,
     utm_y: float,
@@ -91,18 +118,14 @@ def get_wms_metadata(
             found_dates = {}
 
             for date_str in dates:
-                try:
-                    if "." in date_str:
-                        dt = datetime.strptime(date_str, "%d.%m.%Y")
-                        acquisition_date = dt.strftime("%Y-%m-%d")
-                    else:
-                        acquisition_date = date_str
-                    found_year = datetime.strptime(acquisition_date, "%Y-%m-%d").date().year
-                    found_dates[found_year] = {
-                        "acquisition_date": acquisition_date, "metadata_source": "WMS GetFeatureInfo"
-                    }
-                except ValueError:
-                    pass
+                normalized = _normalize_wms_date(date_str)
+                if not normalized:
+                    continue
+                found_year = datetime.strptime(normalized, "%Y-%m-%d").date().year
+                found_dates[found_year] = {
+                    "acquisition_date": normalized,
+                    "metadata_source": "WMS GetFeatureInfo",
+                }
 
             if not found_dates:
                 return None
@@ -187,23 +210,17 @@ def get_wms_metadata_rlp(
             resp.raise_for_status()
             text = resp.text
             # look for erstellung or Bildflugdatum
-            import re
-
             match = re.search(r"erstellung\s*=\s*'([^']+)'", text, re.IGNORECASE)
             if not match:
                 match = re.search(r"Bildflugdatum\s*=\s*'([^']+)'", text, re.IGNORECASE)
             if not match:
                 return None
             date_str = match.group(1)
-            # normalize DD.MM.YYYY -> YYYY-MM-DD
-            if "." in date_str:
-                try:
-                    dt = datetime.strptime(date_str, "%d.%m.%Y")
-                    date_str = dt.strftime("%Y-%m-%d")
-                except Exception:
-                    pass
+            normalized = _normalize_wms_date(date_str)
+            if not normalized:
+                return None
             return {
-                "acquisition_date": date_str,
+                "acquisition_date": normalized,
                 "metadata_source": "RLP WMS GetFeatureInfo",
             }
         except Exception as e:

@@ -823,7 +823,7 @@ packages:
 - pypi: ./
   name: georaffer
   version: 0.1.0
-  sha256: d659add250343061504102a5a74bdb1a4a3a3fa958acb4716f57f83502dd6957
+  sha256: b4991db4657fe0ffd3c5ea13811d76a93eee642f6651b837b618e4f3a21274f2
   requires_dist:
   - requests>=2.20
   - laspy[lazrs]>=2.0
@@ -4231,20 +4231,20 @@ packages:
   - pytest-cov>=2.2.0 ; extra == 'test'
   - pytest>=2.8.2 ; extra == 'test'
   - shapely ; extra == 'test'
-  - shapely ; extra == 'all'
-  - ghp-import ; extra == 'all'
-  - sphinx-click ; extra == 'all'
   - sphinx ; extra == 'all'
-  - hypothesis ; extra == 'all'
-  - boto3>=1.2.4 ; extra == 'all'
+  - sphinx-click ; extra == 'all'
+  - shapely ; extra == 'all'
   - matplotlib ; extra == 'all'
-  - pytest>=2.8.2 ; extra == 'all'
-  - packaging ; extra == 'all'
-  - pytest-cov>=2.2.0 ; extra == 'all'
   - fsspec ; extra == 'all'
-  - numpydoc ; extra == 'all'
-  - ipython>=2.0 ; extra == 'all'
+  - packaging ; extra == 'all'
   - sphinx-rtd-theme ; extra == 'all'
+  - ghp-import ; extra == 'all'
+  - pytest>=2.8.2 ; extra == 'all'
+  - boto3>=1.2.4 ; extra == 'all'
+  - ipython>=2.0 ; extra == 'all'
+  - hypothesis ; extra == 'all'
+  - pytest-cov>=2.2.0 ; extra == 'all'
+  - numpydoc ; extra == 'all'
   requires_python: '>=3.9'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/readline-8.2-h8c095d6_2.conda
   sha256: 2d6d0c026902561ed77cd646b5021aef2d4db22e57a5b0178dfc669231e06d2c
