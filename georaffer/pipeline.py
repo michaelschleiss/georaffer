@@ -253,6 +253,20 @@ def process_tiles(
         region_catalogs.append(RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz))
     if bb_downloader is not None:
         bb_jp2, bb_laz = bb_downloader.get_available_tiles()
+        if process_images and process_pointclouds:
+            jp2_keys = set(bb_jp2)
+            laz_keys = set(bb_laz)
+            if jp2_keys != laz_keys:
+                missing_laz = sorted(jp2_keys - laz_keys)
+                missing_jp2 = sorted(laz_keys - jp2_keys)
+                missing_laz_sample = ", ".join(map(str, missing_laz[:5]))
+                missing_jp2_sample = ", ".join(map(str, missing_jp2[:5]))
+                raise ValueError(
+                    "BB imagery/DSM catalogs must match. "
+                    f"Imagery tiles: {len(jp2_keys)}, DSM tiles: {len(laz_keys)}. "
+                    f"Missing DSM tiles (sample): {missing_laz_sample or 'none'}. "
+                    f"Missing imagery tiles (sample): {missing_jp2_sample or 'none'}."
+                )
         catalog_rows.append(("BB", len(bb_jp2), len(bb_laz)))
         region_catalogs.append(RegionCatalog("bb", bb_downloader, bb_jp2, bb_laz))
     catalogs_duration = time.perf_counter() - phase_start
