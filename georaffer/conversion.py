@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 from pathlib import Path
 
-from georaffer.config import Region, get_tile_size_km
+from georaffer.config import get_tile_size_km
 from georaffer.converters import convert_jp2, convert_laz
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
@@ -183,11 +183,14 @@ def convert_tiles(
 
     jp2_dir = os.path.join(raw_dir, "image")
     if process_images and os.path.exists(jp2_dir):
-        jp2_files = sorted(f for f in os.listdir(jp2_dir) if f.endswith((".jp2", ".tif")))
+        jp2_files = sorted(f for f in os.listdir(jp2_dir) if f.endswith((".jp2", ".tif", ".zip")))
 
     laz_dir = os.path.join(raw_dir, "dsm")
     if process_pointclouds and os.path.exists(laz_dir):
-        laz_files = sorted(f for f in os.listdir(laz_dir) if f.lower().endswith((".laz", ".tif")))
+        laz_files = sorted(
+            f for f in os.listdir(laz_dir) if f.lower().endswith((".laz", ".tif", ".zip"))
+        )
+
 
     total_files = len(jp2_files) + len(laz_files)
     if total_files == 0:

@@ -42,9 +42,14 @@ class TestParseTileCoords:
         coords = parse_tile_coords("bdom20rgbi_32_364_5582_2_rp.laz")
         assert coords == (364, 5582)
 
-    def test_bb_bdom_tif(self):
-        """BB bDOM raster files."""
-        coords = parse_tile_coords("bdom_33250-5888.tif")
+    def test_bb_bdom_zip(self):
+        """BB bDOM raw ZIP files."""
+        coords = parse_tile_coords("bdom_33250-5888.zip")
+        assert coords == (250, 5888)
+
+    def test_bb_dop_zip(self):
+        """BB DOP raw ZIP files."""
+        coords = parse_tile_coords("dop_33250-5888.zip")
         assert coords == (250, 5888)
 
     def test_output_file_nrw(self):
@@ -68,6 +73,7 @@ class TestParseTileCoords:
         """Non-matching filenames return None."""
         assert parse_tile_coords("random_file.jp2") is None
         assert parse_tile_coords("something.tif") is None
+        assert parse_tile_coords("bdom_33250-5888.tif") is None
 
 
 class TestParseRLPCoords:

@@ -7,7 +7,6 @@ https://data.geobasis-bb.de/geobasis/daten/dop/rgbi_tif/
 
 import re
 import time
-import zipfile
 from pathlib import Path
 from typing import ClassVar
 
@@ -59,17 +58,17 @@ class BrandenburgDownloader(RegionDownloader):
         return (grid_x, grid_y), (grid_x, grid_y)
 
     def dsm_filename_from_url(self, url: str) -> str:
-        """Return extracted GeoTIFF filename for a bDOM ZIP URL."""
+        """Return raw filename for a bDOM URL (keeps ZIPs intact)."""
         name = Path(url).name
-        if name.lower().endswith(".zip"):
-            return name[:-4] + ".tif"
+        if not name.lower().endswith(".zip"):
+            raise ValueError(f"BB DSM downloads must be ZIP archives (got {name}).")
         return name
 
     def image_filename_from_url(self, url: str) -> str:
-        """Return extracted GeoTIFF filename for a DOP ZIP URL."""
+        """Return raw filename for a DOP URL (keeps ZIPs intact)."""
         name = Path(url).name
-        if name.lower().endswith(".zip"):
-            return name[:-4] + ".tif"
+        if not name.lower().endswith(".zip"):
+            raise ValueError(f"BB imagery downloads must be ZIP archives (got {name}).")
         return name
 
     def get_available_tiles(self) -> tuple[dict, dict]:
@@ -108,32 +107,6 @@ class BrandenburgDownloader(RegionDownloader):
     ) -> dict[tuple[int, int], str]:
         return {}
 
-    def download_file(self, url: str, output_path: str, on_progress=None) -> bool:
-        """Download a ZIP and extract the GeoTIFF (and meta XML) to output_path."""
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if url.lower().endswith(".tif"):
-            return super().download_file(url, str(output_path), on_progress=on_progress)
-
-        zip_path = output_path.with_name(output_path.name + ".zip")
-        super().download_file(url, str(zip_path), on_progress=on_progress)
-
-        try:
-            with zipfile.ZipFile(zip_path) as zf:
-                tif_name = self._find_member(zf, ".tif")
-                if not tif_name:
-                    raise RuntimeError(f"No GeoTIFF found in {zip_path.name}")
-                self._write_member(zf, tif_name, output_path)
-
-                meta_name = self._find_member(zf, "_meta.xml") or self._find_member(zf, ".xml")
-                if meta_name:
-                    meta_path = output_path.with_name(Path(meta_name).name)
-                    self._write_member(zf, meta_name, meta_path)
-        finally:
-            zip_path.unlink(missing_ok=True)
-        return True
-
     def _parse_bdom_listing(self, html: str) -> dict[tuple[int, int], str]:
         tiles: dict[tuple[int, int], str] = {}
         for match in re.finditer(r'href="(bdom_\d{5}-\d{4}\.zip)"', html):
@@ -165,17 +138,3 @@ class BrandenburgDownloader(RegionDownloader):
         grid_x = int(east_code[2:])
         grid_y = int(match.group(2))
         return grid_x, grid_y
-
-    @staticmethod
-    def _find_member(zf: zipfile.ZipFile, suffix: str) -> str | None:
-        for name in zf.namelist():
-            if name.lower().endswith(suffix):
-                return name
-        return None
-
-    @staticmethod
-    def _write_member(zf: zipfile.ZipFile, member: str, output_path: Path) -> None:
-        temp_path = output_path.with_name(output_path.name + ".tmp")
-        with zf.open(member) as src, open(temp_path, "wb") as dst:
-            dst.write(src.read())
-        temp_path.replace(output_path)

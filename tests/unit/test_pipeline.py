@@ -392,11 +392,11 @@ class TestGenerateOutputName:
         assert name == "rlp_32_362000_5604000_2023.tif"
 
     def test_no_coords_match(self):
-        """Test fallback when coords not found."""
+        """Reject filenames without parseable coordinates."""
         from georaffer.config import Region
 
-        name = generate_output_name("weird_filename.jp2", Region.NRW, "2021", "image")
-        assert name == "nrw_32_0_0_2021.tif"
+        with pytest.raises(ValueError):
+            generate_output_name("weird_filename.jp2", Region.NRW, "2021", "image")
 
 
 class TestDownloadFiles:
@@ -575,10 +575,17 @@ class TestConvertTiles:
         import georaffer.workers as workers_mod
         from georaffer.config import Region
 
-        region = workers_mod.detect_region("bdom_33250-5888.tif")
+        region = workers_mod.detect_region("bdom_33250-5888.zip")
         assert region == Region.BB
-        region = workers_mod.detect_region("dop_33250-5888.tif")
+        region = workers_mod.detect_region("dop_33250-5888.zip")
         assert region == Region.BB
+
+    def test_rejects_bb_tif(self):
+        """Test rejecting legacy BB TIFF raw tiles."""
+        import georaffer.workers as workers_mod
+
+        with pytest.raises(ValueError):
+            workers_mod.detect_region("bdom_33250-5888.tif")
 
     def test_empty_directories(self, tmp_path):
         """Test handling of empty directories."""

@@ -7,6 +7,9 @@ file with all its target resolutions.
 
 import os
 import re
+import tempfile
+import zipfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -32,7 +35,16 @@ def init_worker(threads_per_worker: int) -> None:
     os.environ["KMP_WARNINGS"] = "0"
 
 
-from georaffer.config import METERS_PER_KM, Region, get_tile_size_km, utm_zone_str_for_region
+from georaffer.config import (
+    METERS_PER_KM,
+    NRW_JP2_PATTERN,
+    NRW_LAZ_PATTERN,
+    RLP_JP2_PATTERN,
+    RLP_LAZ_PATTERN,
+    Region,
+    get_tile_size_km,
+    utm_zone_str_for_region,
+)
 from georaffer.converters import convert_dsm_raster, convert_jp2, convert_laz, get_laz_year
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
@@ -55,13 +67,17 @@ def detect_region(filename: str) -> Region:
     """
     filename_lower = filename.lower()
 
-    # RLP files contain "_rp" or "_rp_" in the name
-    if "_rp" in filename_lower:
+    if RLP_JP2_PATTERN.match(filename) or RLP_LAZ_PATTERN.match(filename):
         return Region.RLP
-    # BB raster naming: bdom_33xxx-xxxx.tif or dop_33xxx-xxxx.tif
-    if re.match(r"(bdom|dop)_\d{5}-\d{4}\.tif$", filename_lower):
+    if re.match(r"(bdom|dop)_\d{5}-\d{4}\.zip$", filename_lower):
         return Region.BB
-    return Region.NRW
+    if re.match(r"(bdom|dop)_\d{5}-\d{4}\.tif$", filename_lower):
+        raise ValueError(
+            f"BB raw tiles must remain .zip (remove legacy TIFF: {filename})."
+        )
+    if NRW_JP2_PATTERN.match(filename) or NRW_LAZ_PATTERN.match(filename):
+        return Region.NRW
+    raise ValueError(f"Unrecognized tile filename: {filename}")
 
 
 def generate_output_name(
@@ -85,10 +101,9 @@ def generate_output_name(
     """
     # Extract grid coordinates from filename
     match_result = parse_tile_coords(filename)
-    if match_result:
-        grid_x, grid_y = match_result
-    else:
-        grid_x, grid_y = 0, 0
+    if not match_result:
+        raise ValueError(f"Cannot parse grid coordinates from filename: {filename}")
+    grid_x, grid_y = match_result
 
     year_str = str(year) if year is not None else ""
     if not year_str.isdigit() or len(year_str) != 4:
@@ -124,25 +139,39 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
     region = detect_region(filename)
     year = resolve_source_year(filename, input_path, data_type="image", region=region)
 
-    # Setup output paths for each resolution
-    output_paths: dict[int | None, str] = {}
-    for res in resolutions:
-        output_name = generate_output_name(filename, region, year, "image")
-        res_dir = Path(processed_dir) / "image" / ("native" if res is None else str(res))
-        res_dir.mkdir(parents=True, exist_ok=True)
-        output_paths[res] = str(res_dir / output_name)
-
     try:
-        convert_jp2(
-            input_path,
-            output_paths,
-            region,
-            year,
-            resolutions,
-            num_threads=num_threads,
-            grid_size_km=grid_size_km,
-            profiling=profiling,
-        )
+        # Setup output paths for each resolution
+        output_paths: dict[int | None, str] = {}
+        for res in resolutions:
+            output_name = generate_output_name(filename, region, year, "image")
+            res_dir = Path(processed_dir) / "image" / ("native" if res is None else str(res))
+            res_dir.mkdir(parents=True, exist_ok=True)
+            output_paths[res] = str(res_dir / output_name)
+
+        if input_path.suffix.lower() == ".zip":
+            with tempfile.TemporaryDirectory() as tmpdir:
+                extracted_tif = _extract_bb_zip_tif(input_path, Path(tmpdir))
+                convert_jp2(
+                    extracted_tif,
+                    output_paths,
+                    region,
+                    year,
+                    resolutions,
+                    num_threads=num_threads,
+                    grid_size_km=grid_size_km,
+                    profiling=profiling,
+                )
+        else:
+            convert_jp2(
+                input_path,
+                output_paths,
+                region,
+                year,
+                resolutions,
+                num_threads=num_threads,
+                grid_size_km=grid_size_km,
+                profiling=profiling,
+            )
 
         # Get acquisition date from WMS for provenance
         acquisition_date = None
@@ -212,7 +241,7 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
     region = detect_region(filename)
     year = resolve_source_year(filename, input_path, data_type="dsm", region=region)
 
-    if filename.lower().endswith(".tif"):
+    if input_path.suffix.lower() in (".tif", ".zip"):
         output_paths: dict[int | None, str] = {}
         for res in resolutions:
             output_name = generate_output_name(filename, region, year, "dsm")
@@ -221,16 +250,30 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
             output_paths[res] = str(res_dir / output_name)
 
         try:
-            convert_dsm_raster(
-                str(input_path),
-                output_paths,
-                region,
-                year,
-                target_sizes=resolutions,
-                num_threads=num_threads,
-                grid_size_km=grid_size_km,
-                profiling=profiling,
-            )
+            if input_path.suffix.lower() == ".zip":
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    extracted_tif = _extract_bb_zip_tif(input_path, Path(tmpdir))
+                    convert_dsm_raster(
+                        str(extracted_tif),
+                        output_paths,
+                        region,
+                        year,
+                        target_sizes=resolutions,
+                        num_threads=num_threads,
+                        grid_size_km=grid_size_km,
+                        profiling=profiling,
+                    )
+            else:
+                convert_dsm_raster(
+                    str(input_path),
+                    output_paths,
+                    region,
+                    year,
+                    target_sizes=resolutions,
+                    num_threads=num_threads,
+                    grid_size_km=grid_size_km,
+                    profiling=profiling,
+                )
 
             metadata = build_metadata_rows(
                 filename=filename,
@@ -330,7 +373,7 @@ def resolve_source_year(
         year_str = str(value)
         if year_str.isdigit() and len(year_str) == 4:
             return year_str
-        raise RuntimeError(f"Invalid year '{value}' for {filename}.")
+        raise ValueError(f"Invalid year '{value}' for {filename}.")
 
     region = region or detect_region(filename)
     year = extract_year_from_filename(filename, require=False)
@@ -340,37 +383,112 @@ def resolve_source_year(
 
     if data_type == "image":
         if region == Region.BB:
+            if input_path.suffix.lower() != ".zip":
+                raise ValueError(
+                    f"BB raw tiles must remain .zip (remove legacy TIFF: {filename})."
+                )
             meta_year = _normalize_year(_extract_bb_meta_year(input_path))
             if meta_year:
                 return meta_year
-        raise RuntimeError(f"Year not found in filename or metadata: {filename}")
+            raise ValueError(f"Year not found in BB metadata: {filename}")
+        raise ValueError(f"Year not found in filename or metadata: {filename}")
 
     if data_type == "dsm":
         if input_path.suffix.lower() == ".laz":
             header_year = _normalize_year(get_laz_year(str(input_path)))
             if header_year:
                 return header_year
-        if input_path.suffix.lower() == ".tif":
+        if input_path.suffix.lower() == ".zip":
             meta_year = _normalize_year(_extract_bb_meta_year(input_path))
             if meta_year:
                 return meta_year
-        raise RuntimeError(f"Year not found in filename or source metadata: {filename}")
+        if region == Region.BB:
+            raise ValueError(
+                f"BB raw tiles must remain .zip (remove legacy TIFF: {filename})."
+            )
+        raise ValueError(f"Year not found in filename or source metadata: {filename}")
 
     raise ValueError(f"Unknown data_type '{data_type}' for year resolution.")
 
 
 def _extract_bb_meta_year(input_path: Path) -> str | None:
-    meta_path = input_path.with_name(f"{input_path.stem}_meta.xml")
-    if not meta_path.exists():
-        candidates = sorted(input_path.parent.glob(f"{input_path.stem}*.xml"))
-        meta_path = candidates[0] if candidates else None
-    if not meta_path or not meta_path.exists():
+    if input_path.suffix.lower() != ".zip":
         return None
+
+    texts: list[str] = []
     try:
-        text = meta_path.read_text(encoding="utf-8", errors="ignore")
+        with zipfile.ZipFile(input_path) as zf:
+            meta_name = _find_zip_member(zf, "_meta.xml") or _find_zip_member(zf, ".xml")
+            if meta_name:
+                texts.append(zf.read(meta_name).decode("utf-8", errors="ignore"))
     except Exception:
         return None
-    match = re.search(r"<file_creation_day_year>\d{1,3}/(\d{4})</file_creation_day_year>", text)
+
+    for text in texts:
+        year = _extract_bb_year_from_text(text)
+        if year:
+            return year
+
+    return None
+
+
+def _extract_bb_year_from_text(text: str) -> str | None:
+    match = re.search(
+        r"<file_creation_day_year>\d{1,3}/(\d{4})</file_creation_day_year>", text
+    )
     if match:
         return match.group(1)
+
+    year = _extract_iso_metadata_year(text, "creation")
+    if year:
+        return year
+    year = _extract_iso_metadata_year(text, "publication")
+    if year:
+        return year
     return None
+
+
+def _extract_iso_metadata_year(text: str, date_type: str) -> str | None:
+    try:
+        root = ET.fromstring(text)
+    except Exception:
+        return None
+
+    ns = {
+        "gmd": "http://www.isotc211.org/2005/gmd",
+        "gco": "http://www.isotc211.org/2005/gco",
+    }
+
+    for ci_date in root.findall(".//gmd:CI_Date", ns):
+        type_el = ci_date.find("gmd:dateType/gmd:CI_DateTypeCode", ns)
+        if type_el is None or not type_el.text:
+            continue
+        if type_el.text.strip() != date_type:
+            continue
+        date_el = ci_date.find("gmd:date/gco:DateTime", ns)
+        if date_el is None:
+            date_el = ci_date.find("gmd:date/gco:Date", ns)
+        if date_el is None or not date_el.text:
+            continue
+        match = re.match(r"(19\d{2}|20\d{2})", date_el.text.strip())
+        if match:
+            return match.group(1)
+    return None
+
+
+def _find_zip_member(zf: zipfile.ZipFile, suffix: str) -> str | None:
+    for name in zf.namelist():
+        if name.lower().endswith(suffix):
+            return name
+    return None
+
+
+def _extract_bb_zip_tif(input_path: Path, temp_dir: Path) -> Path:
+    with zipfile.ZipFile(input_path) as zf:
+        tif_name = _find_zip_member(zf, ".tif")
+        if not tif_name:
+            raise RuntimeError(f"No GeoTIFF found in {input_path.name}")
+        output_path = temp_dir / Path(tif_name).name
+        with zf.open(tif_name) as src, open(output_path, "wb") as dst:
+            dst.write(src.read())
+    return output_path

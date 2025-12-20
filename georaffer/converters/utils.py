@@ -14,6 +14,7 @@ from rasterio.transform import Affine
 
 from georaffer.config import (
     BB_BDOM_PATTERN,
+    BB_DOP_PATTERN,
     NRW_JP2_PATTERN,
     NRW_LAZ_PATTERN,
     RLP_JP2_PATTERN,
@@ -85,7 +86,8 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
     - NRW LAZ: bdom50_32350_5600_1_nw_2025.laz → (350, 5600) [raw input tile coords]
     - RLP JP2: dop20rgb_32_362_5604_2_rp_2023.jp2 → (362, 5604) [raw input tile coords]
     - RLP LAZ: bdom20rgbi_32_364_5582_2_rp.laz → (364, 5582) [raw input tile coords]
-    - BB bDOM: bdom_33250-5888.tif → (250, 5888) [raw input tile coords]
+    - BB bDOM: bdom_33250-5888.zip → (250, 5888) [raw input tile coords]
+    - BB DOP: dop_33250-5888.zip → (250, 5888) [raw input tile coords]
     - Output files: nrw_32_350500_5600000_2021.tif → (350500, 5600000) [UTM coordinates]
 
     Pattern matching strategy:
@@ -113,13 +115,14 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
     if rlp_result:
         return rlp_result
 
-    # Try BB bDOM pattern (zone prefix + km coords)
-    match = BB_BDOM_PATTERN.match(filename)
-    if match:
-        east_code = match.group(1)
-        grid_x = int(east_code[2:])
-        grid_y = int(match.group(2))
-        return grid_x, grid_y
+    # Try BB patterns (zone prefix + km coords)
+    for pattern in (BB_BDOM_PATTERN, BB_DOP_PATTERN):
+        match = pattern.match(filename)
+        if match:
+            east_code = match.group(1)
+            grid_x = int(east_code[2:])
+            grid_y = int(match.group(2))
+            return grid_x, grid_y
 
     # Processed output files: {region}_{zone}_{easting}_{northing}_{year}.tif
     # Uses UTM coordinates in meters (e.g., 350500, 5600000)
