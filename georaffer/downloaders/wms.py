@@ -4,6 +4,7 @@ import re
 import time
 from collections.abc import Callable
 from pathlib import Path
+from threading import Lock
 
 import requests
 
@@ -16,6 +17,9 @@ from georaffer.config import (
     RETRY_BACKOFF_BASE,
     RETRY_MAX_WAIT,
     RLP_GRID_SIZE,
+    WMS_COVERAGE_RETRIES,
+    WMS_RETRY_MAX_WAIT,
+    WMS_TIMEOUT,
 )
 
 
@@ -60,6 +64,8 @@ class WMSImagerySource:
         self.crs = crs
         self._session = session or requests.Session()
         self.verify_ssl = verify_ssl
+        self._coverage_cache: dict[tuple[int, int, int], dict | None] = {}
+        self._coverage_cache_lock = Lock()
 
     def _rgb_layer(self, year: int) -> str:
         """Get RGB layer name for a year."""
@@ -110,6 +116,11 @@ class WMSImagerySource:
         Raises:
             RuntimeError: If WMS request fails after MAX_RETRIES attempts
         """
+        cache_key = (year, grid_x, grid_y)
+        with self._coverage_cache_lock:
+            if cache_key in self._coverage_cache:
+                return self._coverage_cache[cache_key]
+
         bbox = self._grid_to_bbox(grid_x, grid_y)
         layer = self._info_layer(year)
 
@@ -130,12 +141,12 @@ class WMSImagerySource:
         }
 
         last_error = None
-        for attempt in range(MAX_RETRIES):
+        for attempt in range(WMS_COVERAGE_RETRIES):
             try:
                 response = self._session.get(
                     self.base_url,
                     params=params,
-                    timeout=DEFAULT_TIMEOUT,
+                    timeout=WMS_TIMEOUT,
                     verify=self.verify_ssl,
                 )
                 response.raise_for_status()
@@ -143,11 +154,15 @@ class WMSImagerySource:
 
                 # Check for "no results" response
                 if "Search returned no results" in text or "no results" in text.lower():
+                    with self._coverage_cache_lock:
+                        self._coverage_cache[cache_key] = None
                     return None
 
                 # Extract kachelname (tile name) - required
                 tile_match = re.search(r"kachelname\s*=\s*'([^']+)'", text)
                 if not tile_match:
+                    with self._coverage_cache_lock:
+                        self._coverage_cache[cache_key] = None
                     return None
 
                 # Validate kachelname matches expected tile coordinates
@@ -158,6 +173,8 @@ class WMSImagerySource:
                 expected_with_underscore = f"dop_32_{grid_x}_{grid_y}"
                 expected_without_underscore = f"dop_32{grid_x}_{grid_y}"
                 if tile_name not in (expected_with_underscore, expected_without_underscore):
+                    with self._coverage_cache_lock:
+                        self._coverage_cache[cache_key] = None
                     return None
 
                 # Extract acquisition date - try bildflugdatum first, fall back to erstellung
@@ -172,21 +189,169 @@ class WMSImagerySource:
                         acquisition_date = erstellung_match.group(1)
 
                 if not acquisition_date:
+                    with self._coverage_cache_lock:
+                        self._coverage_cache[cache_key] = None
                     return None
 
-                return {
+                result = {
                     "acquisition_date": acquisition_date,
                     "tile_name": tile_name,
                 }
+                with self._coverage_cache_lock:
+                    self._coverage_cache[cache_key] = result
+                return result
 
             except requests.RequestException as e:
                 last_error = e
-                if attempt < MAX_RETRIES - 1:
-                    wait_time = min(RETRY_BACKOFF_BASE**attempt, RETRY_MAX_WAIT)
+                if attempt < WMS_COVERAGE_RETRIES - 1:
+                    wait_time = min(RETRY_BACKOFF_BASE**attempt, WMS_RETRY_MAX_WAIT)
                     time.sleep(wait_time)
 
         raise RuntimeError(
-            f"WMS coverage check failed after {MAX_RETRIES} attempts: {last_error}"
+            f"WMS coverage check failed after {WMS_COVERAGE_RETRIES} attempts: {last_error}"
+        )
+
+    def check_coverage_multi(
+        self,
+        years: list[int],
+        grid_x: int,
+        grid_y: int,
+    ) -> dict[int, dict]:
+        """Query GetFeatureInfo for multiple years in one request.
+
+        The RLP WMS returns a plain-text report that contains multiple "Layer '...'"
+        sections. For each requested rp_dop20_info_{year} layer, it may include a
+        metadata block (e.g., "Metadaten_27") containing kachelname/date fields.
+
+        Returns:
+            Dict[year] -> {"acquisition_date": str, "tile_name": str}
+        """
+        if not years:
+            return {}
+
+        # Fast-path: if everything is cached, return from cache.
+        cached: dict[int, dict] = {}
+        missing: list[int] = []
+        with self._coverage_cache_lock:
+            for year in years:
+                key = (year, grid_x, grid_y)
+                if key in self._coverage_cache:
+                    value = self._coverage_cache[key]
+                    if value is not None:
+                        cached[year] = value
+                else:
+                    missing.append(year)
+        if not missing:
+            return cached
+
+        bbox = self._grid_to_bbox(grid_x, grid_y)
+        layers = ",".join(self._info_layer(y) for y in missing)
+
+        params = {
+            "SERVICE": "WMS",
+            "VERSION": "1.1.1",
+            "REQUEST": "GetFeatureInfo",
+            "LAYERS": layers,
+            "QUERY_LAYERS": layers,
+            "STYLES": "",
+            "SRS": self.crs,
+            "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
+            "WIDTH": "100",
+            "HEIGHT": "100",
+            "X": "50",
+            "Y": "50",
+            "INFO_FORMAT": "text/plain",
+        }
+
+        last_error = None
+        for attempt in range(WMS_COVERAGE_RETRIES):
+            try:
+                response = self._session.get(
+                    self.base_url,
+                    params=params,
+                    timeout=WMS_TIMEOUT,
+                    verify=self.verify_ssl,
+                )
+                response.raise_for_status()
+                text = response.text
+
+                # Quick "no results" shortcut
+                if "Search returned no results" in text or "no results" in text.lower():
+                    with self._coverage_cache_lock:
+                        for y in missing:
+                            self._coverage_cache[(y, grid_x, grid_y)] = None
+                    return dict(cached)
+
+                expected_with_underscore = f"dop_32_{grid_x}_{grid_y}"
+                expected_without_underscore = f"dop_32{grid_x}_{grid_y}"
+
+                current_year: int | None = None
+                per_year: dict[int, dict[str, str | None]] = {}
+
+                for line in text.splitlines():
+                    layer_match = re.match(r"Layer 'rp_dop20_info_(\d{4})'\s*$", line.strip())
+                    if layer_match:
+                        y = int(layer_match.group(1))
+                        current_year = y if y in missing else None
+                        if current_year is not None and current_year not in per_year:
+                            per_year[current_year] = {
+                                "tile_name": None,
+                                "bildflugdatum": None,
+                                "erstellung": None,
+                            }
+                        continue
+
+                    if current_year is None:
+                        continue
+
+                    tile_match = re.search(r"kachelname\s*=\s*'([^']+)'", line)
+                    if tile_match:
+                        per_year[current_year]["tile_name"] = tile_match.group(1)
+                        continue
+
+                    date_match = re.search(r"bildflugdatum\s*=\s*'([^']*)'", line)
+                    if date_match:
+                        per_year[current_year]["bildflugdatum"] = date_match.group(1)
+                        continue
+
+                    erstellung_match = re.search(r"erstellung\s*=\s*'([^']+)'", line)
+                    if erstellung_match:
+                        per_year[current_year]["erstellung"] = erstellung_match.group(1)
+
+                result = dict(cached)
+                with self._coverage_cache_lock:
+                    for y in missing:
+                        info = per_year.get(y)
+                        if not info:
+                            self._coverage_cache[(y, grid_x, grid_y)] = None
+                            continue
+
+                        tile_name = info.get("tile_name")
+                        if tile_name not in (expected_with_underscore, expected_without_underscore):
+                            self._coverage_cache[(y, grid_x, grid_y)] = None
+                            continue
+
+                        acquisition_date = info.get("bildflugdatum") or None
+                        if not acquisition_date:
+                            acquisition_date = info.get("erstellung") or None
+                        if not acquisition_date:
+                            self._coverage_cache[(y, grid_x, grid_y)] = None
+                            continue
+
+                        payload = {"acquisition_date": acquisition_date, "tile_name": tile_name}
+                        self._coverage_cache[(y, grid_x, grid_y)] = payload
+                        result[y] = payload
+
+                return result
+
+            except requests.RequestException as e:
+                last_error = e
+                if attempt < WMS_COVERAGE_RETRIES - 1:
+                    wait_time = min(RETRY_BACKOFF_BASE**attempt, WMS_RETRY_MAX_WAIT)
+                    time.sleep(wait_time)
+
+        raise RuntimeError(
+            f"WMS coverage check failed after {WMS_COVERAGE_RETRIES} attempts: {last_error}"
         )
 
     def get_tile_url(

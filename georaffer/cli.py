@@ -252,8 +252,8 @@ def validate_args(args) -> list[str]:
 
     # Validate --from/--to: FROM <= TO, reasonable range
     if args.from_year:
-        if args.from_year < 2000:
-            errors.append(f"--from: {args.from_year} is before 2000 (no data available)")
+        if args.from_year < 1994:
+            errors.append(f"--from: {args.from_year} is before 1994 (no data available)")
         if args.to_year is not None and args.to_year < args.from_year:
             errors.append(f"--to: {args.to_year} must be >= --from year ({args.from_year})")
     if args.to_year and not args.from_year:
@@ -329,7 +329,8 @@ Details:
   --type:       Download only image or dsm (default: both).
                 DSM: Photogrammetric surface model (bDOM) from aerial imagery.
 
-  --from/--to:  Include historic orthophotos (NRW only, availability varies).
+  --from/--to:  Include historic orthophotos (availability varies).
+                NRW: uses yearly tile catalogs. RLP: uses WMS coverage checks (slower).
                 Examples: --from 2015 (2015 to present), --from 2015 --to 2018
 """
 

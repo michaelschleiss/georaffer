@@ -20,6 +20,7 @@ Note: The old geoportal.rlp.de INSPIRE ATOM feeds were deprecated April 2025.
 
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
 
@@ -34,6 +35,7 @@ from georaffer.config import (
     RLP_JP2_PATTERN,
     RLP_LAZ_PATTERN,
     Region,
+    WMS_QUERY_WORKERS,
 )
 from georaffer.downloaders.base import RegionDownloader
 from georaffer.downloaders.wms import WMSImagerySource
@@ -201,6 +203,10 @@ class RLPDownloader(RegionDownloader):
         historic_years = [
             y for y in self.HISTORIC_YEARS if self._year_in_range(y, from_year, to_year)
         ]
+        if not historic_years:
+            year_str = f"{from_year}-{to_year}" if to_year else f"{from_year}-present"
+            print(f"  Historic: none (no RLP WMS years in range {year_str})")
+            return {}
 
         # Collect tiles: (coords, year) -> url
         all_tiles: dict[tuple[tuple[int, int], int], str] = {}
@@ -224,21 +230,57 @@ class RLPDownloader(RegionDownloader):
         else:
             print(f"  Current feed: {len(current_tiles)} tiles")
 
-        # Query WMS for each year (only requested tiles)
-        successful_years = []
-        for hist_year in historic_years:
-            added = 0
-            for grid_x, grid_y in requested_coords:
-                coverage = self.wms.check_coverage(hist_year, grid_x, grid_y)
-                if coverage:
-                    key = ((grid_x, grid_y), hist_year)
-                    if key not in all_tiles:
-                        url = self.wms.get_tile_url(hist_year, grid_x, grid_y)
-                        all_tiles[key] = url
-                        added += 1
-            if added > 0:
-                successful_years.append(f"{hist_year}:+{added}")
+        # Query WMS for all years in one request per tile (much faster than year×tile).
+        total_tiles = len(requested_coords)
+        total_years = len(historic_years)
+        print(
+            f"  WMS coverage: {total_tiles} tiles × {total_years} years "
+            f"({total_tiles} requests, {WMS_QUERY_WORKERS} workers)"
+        )
 
+        year_added: dict[int, int] = {}
+        checked = 0
+        failed = 0
+        started = time.perf_counter()
+
+        with ThreadPoolExecutor(max_workers=WMS_QUERY_WORKERS) as executor:
+            futures = {
+                executor.submit(self.wms.check_coverage_multi, historic_years, grid_x, grid_y): (
+                    grid_x,
+                    grid_y,
+                )
+                for grid_x, grid_y in requested_coords
+            }
+
+            for i, fut in enumerate(as_completed(futures), start=1):
+                checked = i
+                grid_x, grid_y = futures[fut]
+                try:
+                    coverage_by_year = fut.result()
+                except Exception:
+                    coverage_by_year = {}
+                    failed += 1
+
+                for hist_year in coverage_by_year:
+                    key = ((grid_x, grid_y), hist_year)
+                    if key in all_tiles:
+                        continue
+                    url = self.wms.get_tile_url(hist_year, grid_x, grid_y)
+                    all_tiles[key] = url
+                    year_added[hist_year] = year_added.get(hist_year, 0) + 1
+
+                if checked % 50 == 0 or checked == total_tiles:
+                    elapsed = time.perf_counter() - started
+                    rate = checked / elapsed if elapsed > 0 else 0.0
+                    print(
+                        f"\r    {checked}/{total_tiles} tiles checked, {failed} failed ({rate:.1f} req/s)",
+                        end="",
+                        flush=True,
+                    )
+
+        print()
+
+        successful_years = [f"{y}:+{year_added[y]}" for y in sorted(year_added)]
         if successful_years:
             print(f"  Historic: {', '.join(successful_years)}")
 

@@ -119,9 +119,9 @@ def print_config(
     if imagery_from:
         from_year, to_year = imagery_from
         if to_year is None:
-            print(f"  • Historical imagery: {from_year} to present (NRW only)")
+            print(f"  • Historical imagery: {from_year} to present")
         else:
-            print(f"  • Historical imagery: {from_year} to {to_year} (NRW only)")
+            print(f"  • Historical imagery: {from_year} to {to_year}")
     print()
 
 

@@ -325,7 +325,7 @@ def calculate_required_tiles(
         tile_set.jp2[name] = set()
         tile_set.laz[name] = set()
 
-        # JP2 downloads - support multi-year mode (NRW only currently)
+        # JP2 downloads - support multi-year mode (e.g., NRW catalogs, RLP WMS)
         for native in jp2_natives[name]:
             tile_key, url = jp2_indexes[name][native]
             tile_set.jp2[name].add(tile_key)

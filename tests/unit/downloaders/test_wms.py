@@ -242,7 +242,7 @@ class TestWMSCheckCoverage:
         with patch.object(
             wms._session, "get", side_effect=requests.RequestException("timeout")
         ):
-            with patch("georaffer.downloaders.wms.MAX_RETRIES", 2):
+            with patch("georaffer.downloaders.wms.WMS_COVERAGE_RETRIES", 2):
                 with patch("georaffer.downloaders.wms.time.sleep"):
                     with pytest.raises(RuntimeError, match="WMS coverage check failed"):
                         wms.check_coverage(2020, 362, 5604)
@@ -310,6 +310,56 @@ class TestWMSCheckCoverage:
         assert result is not None
         assert result["acquisition_date"] == "2022-06-14"
         assert result["tile_name"] == "dop_32362_5604"
+
+    def test_check_coverage_multi_parses_multiple_years(self, wms):
+        """Multi-year query should return coverage for multiple years from one response."""
+        mock_response = Mock()
+        mock_response.text = """
+        GetFeatureInfo results:
+
+        Layer 'rp_dop20_info_2020'
+          Feature 1:
+        Layer 'Metadaten_27'
+          Feature 1:
+            bildflugdatum = '2020-08-07'
+            kachelname = 'dop_32_380_5540'
+
+        Layer 'rp_dop20_info_2022'
+          Feature 2:
+        Layer 'Metadaten_29'
+          Feature 2:
+            bildflugdatum = ''
+            kachelname = 'dop_32380_5540'
+            erstellung = '2022-06-14'
+        """
+        mock_response.raise_for_status = Mock()
+
+        with patch.object(wms._session, "get", return_value=mock_response):
+            result = wms.check_coverage_multi([2020, 2021, 2022], 380, 5540)
+
+        assert set(result) == {2020, 2022}
+        assert result[2020]["acquisition_date"] == "2020-08-07"
+        assert result[2020]["tile_name"] == "dop_32_380_5540"
+        assert result[2022]["acquisition_date"] == "2022-06-14"
+        assert result[2022]["tile_name"] == "dop_32380_5540"
+
+    def test_check_coverage_multi_respects_coords(self, wms):
+        """Multi-year query should ignore results if kachelname doesn't match coords."""
+        mock_response = Mock()
+        mock_response.text = """
+        GetFeatureInfo results:
+        Layer 'rp_dop20_info_2020'
+        Layer 'Metadaten_27'
+          Feature 1:
+            bildflugdatum = '2020-08-07'
+            kachelname = 'dop_32_999_9999'
+        """
+        mock_response.raise_for_status = Mock()
+
+        with patch.object(wms._session, "get", return_value=mock_response):
+            result = wms.check_coverage_multi([2020], 380, 5540)
+
+        assert result == {}
 
 
 class TestWMSOutputFilename:

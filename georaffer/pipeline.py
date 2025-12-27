@@ -173,7 +173,8 @@ def process_tiles(
     )
 
     # Initialize downloaders
-    # imagery_from is (from_year, to_year) or None; both NRW and RLP take year range
+    # imagery_from is (from_year, to_year) or None.
+    # NRW supports historic imagery via catalog feeds; RLP supports historic imagery via WMS.
     nrw_downloader = (
         NRWDownloader(output_dir, imagery_from=imagery_from)
         if Region.NRW in selected_regions

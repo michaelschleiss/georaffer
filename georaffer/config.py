@@ -52,6 +52,8 @@ OUTPUT_TILE_SIZE_KM = 1.0
 DEFAULT_TIMEOUT = 120
 FEED_TIMEOUT = 30
 WMS_TIMEOUT = 10
+WMS_COVERAGE_RETRIES = 4
+WMS_RETRY_MAX_WAIT = 10  # Keep GetFeatureInfo retries bounded
 
 # Streaming
 CHUNK_SIZE = 65536  # 64KB
@@ -68,7 +70,7 @@ RETRY_MAX_WAIT = 300  # 5 minutes max
 # WMS Metadata
 # =============================================================================
 
-WMS_QUERY_WORKERS = 5
+WMS_QUERY_WORKERS = 16
 WMS_NRW_BUFFER_M = 500
 WMS_RLP_BUFFER_M = 1000
 

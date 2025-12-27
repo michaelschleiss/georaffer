@@ -344,6 +344,9 @@ class TestRLPHistoricalImagery:
             def check_coverage(self, _year, _grid_x, _grid_y):
                 return None
 
+            def check_coverage_multi(self, _years, _grid_x, _grid_y):
+                return {}
+
             def get_tile_url(self, _year, _grid_x, _grid_y):
                 return ""
 

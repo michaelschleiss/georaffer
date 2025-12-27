@@ -9,6 +9,7 @@ import rasterio
 from rasterio.transform import from_origin
 
 from georaffer.cli import load_coordinates, normalize_regions
+from georaffer.cli import validate_args
 from georaffer.config import Region
 
 
@@ -221,6 +222,27 @@ class TestLoadCoordinatesTif:
 
         assert source_zone == 32
         assert coords == [(350500.0, 5600500.0)]
+
+
+class TestValidateArgs:
+    def test_from_before_1994_errors(self):
+        args = Namespace(
+            command="bbox",
+            bbox="350000,5600000,350500,5600500",
+            output="out",
+            margin=0,
+            pixel_size=[0.5],
+            workers=None,
+            reprocess=False,
+            profiling=False,
+            from_year=1993,
+            to_year=None,
+            data_types=None,
+            utm_zone=32,
+            region=["rlp"],
+        )
+        errors = validate_args(args)
+        assert any("before 1994" in e for e in errors)
 
 
 class TestLoadCoordinatesTiles:
