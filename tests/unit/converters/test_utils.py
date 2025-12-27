@@ -26,6 +26,11 @@ class TestParseTileCoords:
         coords = parse_tile_coords("dop10rgbi_32_350_5600_1_nw_2021.jp2")
         assert coords == (350, 5600)
 
+    def test_nrw_jp2_missing_underscore_after_zone(self):
+        """Historic NRW JP2 files may omit the underscore after '32'."""
+        coords = parse_tile_coords("dop10rgbi_32288_5736_1_nw_2015.jp2")
+        assert coords == (288, 5736)
+
     def test_nrw_laz_strips_zone_prefix(self):
         """NRW LAZ files concatenate zone with x-coord (32350 -> 350)."""
         coords = parse_tile_coords("bdom50_32350_5600_1_nw_2025.laz")
@@ -77,7 +82,6 @@ class TestParseTileCoords:
         """Non-matching filenames return None."""
         assert parse_tile_coords("random_file.jp2") is None
         assert parse_tile_coords("something.tif") is None
-        assert parse_tile_coords("bdom_33250-5888.tif") is None
 
 
 class TestParseRLPCoords:

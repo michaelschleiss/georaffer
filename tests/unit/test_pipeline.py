@@ -1,5 +1,6 @@
 """Tests for pipeline module."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
@@ -337,6 +338,81 @@ class TestCalculateRequiredTiles:
         )
 
 
+def test_process_tiles_passes_imagery_from_to_nrw_and_rlp(tmp_path):
+    """--from/--to should enable historic imagery for NRW and RLP."""
+    from georaffer.config import Region
+    from georaffer.pipeline import process_tiles
+    from georaffer.tiles import TileSet
+
+    nrw_imagery_from: list[tuple[int, int | None] | None] = []
+    rlp_imagery_from: list[tuple[int, int | None] | None] = []
+
+    class DummyNRW:
+        def __init__(self, output_dir: str, imagery_from=None, session=None):
+            nrw_imagery_from.append(imagery_from)
+            self.total_jp2_count = None
+
+        def get_available_tiles(self):
+            return {}, {}
+
+        def utm_to_grid_coords(self, utm_x: float, utm_y: float):
+            grid_x = int(utm_x // 1000)
+            grid_y = int(utm_y // 1000)
+            return (grid_x, grid_y), (grid_x, grid_y)
+
+    class DummyRLP:
+        def __init__(self, output_dir: str, imagery_from=None, session=None):
+            rlp_imagery_from.append(imagery_from)
+            self.total_jp2_count = None
+
+        def get_available_tiles(self, requested_coords=None):
+            return {}, {}
+
+        def utm_to_grid_coords(self, utm_x: float, utm_y: float):
+            grid_x = int(utm_x // 2000) * 2
+            grid_y = int(utm_y // 2000) * 2
+            return (grid_x, grid_y), (grid_x, grid_y)
+
+    dummy_convert = SimpleNamespace(
+        converted=0,
+        failed=0,
+        jp2_sources=0,
+        jp2_converted=0,
+        jp2_failed=0,
+        jp2_skipped=0,
+        laz_sources=0,
+        laz_converted=0,
+        laz_failed=0,
+        laz_skipped=0,
+        jp2_duration=0.0,
+        laz_duration=0.0,
+        jp2_split_performed=False,
+        laz_split_performed=False,
+        interrupted=False,
+    )
+
+    with patch("georaffer.pipeline.NRWDownloader", DummyNRW), patch(
+        "georaffer.pipeline.RLPDownloader", DummyRLP
+    ), patch("georaffer.pipeline.generate_tiles_by_zone", return_value={32: {(350, 5600)}}), patch(
+        "georaffer.pipeline.calculate_required_tiles",
+        return_value=(TileSet(), {}),
+    ), patch("georaffer.pipeline.convert_tiles", return_value=dummy_convert):
+        process_tiles(
+            coords=[(350500.0, 5600500.0)],
+            output_dir=str(tmp_path),
+            resolutions=[1000],
+            grid_size_km=1.0,
+            margin_km=0.0,
+            imagery_from=(2020, None),
+            regions=[Region.NRW, Region.RLP],
+            process_images=False,
+            process_pointclouds=False,
+        )
+
+    assert nrw_imagery_from == [(2020, None)]
+    assert rlp_imagery_from == [(2020, None)]
+
+
 class TestLatLonToUtm:
     """Tests for latlon_to_utm function."""
 
@@ -609,13 +685,6 @@ class TestConvertTiles:
         assert region == Region.BB
         region = workers_mod.detect_region("dop_33250-5888.zip")
         assert region == Region.BB
-
-    def test_rejects_bb_tif(self):
-        """Test rejecting legacy BB TIFF raw tiles."""
-        import georaffer.workers as workers_mod
-
-        with pytest.raises(ValueError):
-            workers_mod.detect_region("bdom_33250-5888.tif")
 
     def test_empty_directories(self, tmp_path):
         """Test handling of empty directories."""

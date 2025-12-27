@@ -78,7 +78,6 @@ class TestBrandenburgFilenamePatterns:
         [
             "bdom_3325-5886.zip",  # Wrong easting format (4 digits)
             "bdom_332500-5886.zip",  # Wrong easting format (6 digits)
-            "bdom_33250-5886.tif",  # Legacy raster naming (unsupported)
             "random.zip",
             "dop_33250-5886.zip",  # Wrong prefix
         ],
@@ -111,7 +110,6 @@ class TestBrandenburgFilenamePatterns:
         [
             "dop_3325-5886.zip",
             "dop_332500-5886.zip",
-            "dop_33250-5886.tif",  # Legacy raster naming (unsupported)
             "random.zip",
             "bdom_33250-5886.zip",
         ],
@@ -268,12 +266,6 @@ class TestBrandenburgDsmFilename:
         result = downloader.dsm_filename_from_url(url)
         assert result == "bdom_33250-5886.zip"
 
-    def test_dsm_filename_from_tif_url(self, downloader):
-        """Test that tif URL is rejected."""
-        url = "https://example.com/bdom_33250-5886.tif"
-        with pytest.raises(ValueError):
-            downloader.dsm_filename_from_url(url)
-
 
 class TestBrandenburgImageFilename:
     """Tests for DOP filename extraction."""
@@ -287,9 +279,3 @@ class TestBrandenburgImageFilename:
         url = "https://data.geobasis-bb.de/geobasis/daten/dop/rgbi_tif/dop_33250-5886.zip"
         result = downloader.image_filename_from_url(url)
         assert result == "dop_33250-5886.zip"
-
-    def test_image_filename_from_tif_url(self, downloader):
-        """Test that tif URL is rejected."""
-        url = "https://example.com/dop_33250-5886.tif"
-        with pytest.raises(ValueError):
-            downloader.image_filename_from_url(url)

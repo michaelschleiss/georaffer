@@ -29,6 +29,8 @@ def init_worker(threads_per_worker: int) -> None:
     os.environ["NUMBA_NUM_THREADS"] = threads_str
     # OpenMP (used by some GDAL operations)
     os.environ["OMP_NUM_THREADS"] = threads_str
+    os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
+    os.environ["OMP_NESTED"] = "FALSE"
     # Suppress "omp_set_nested deprecated" warning from GDAL/rasterio internals.
     # This is an upstream issue - GDAL still uses the deprecated OpenMP API.
     # See: https://github.com/OSGeo/gdal - waiting for fix to use omp_set_max_active_levels
@@ -36,6 +38,8 @@ def init_worker(threads_per_worker: int) -> None:
 
 
 from georaffer.config import (
+    BB_BDOM_PATTERN,
+    BB_DOP_PATTERN,
     METERS_PER_KM,
     NRW_JP2_PATTERN,
     NRW_LAZ_PATTERN,
@@ -69,12 +73,8 @@ def detect_region(filename: str) -> Region:
 
     if RLP_JP2_PATTERN.match(filename) or RLP_LAZ_PATTERN.match(filename):
         return Region.RLP
-    if re.match(r"(bdom|dop)_\d{5}-\d{4}\.zip$", filename_lower):
+    if BB_BDOM_PATTERN.match(filename_lower) or BB_DOP_PATTERN.match(filename_lower):
         return Region.BB
-    if re.match(r"(bdom|dop)_\d{5}-\d{4}\.tif$", filename_lower):
-        raise ValueError(
-            f"BB raw tiles must remain .zip (remove legacy TIFF: {filename})."
-        )
     if NRW_JP2_PATTERN.match(filename) or NRW_LAZ_PATTERN.match(filename):
         return Region.NRW
     raise ValueError(f"Unrecognized tile filename: {filename}")
@@ -384,9 +384,7 @@ def resolve_source_year(
     if data_type == "image":
         if region == Region.BB:
             if input_path.suffix.lower() != ".zip":
-                raise ValueError(
-                    f"BB raw tiles must remain .zip (remove legacy TIFF: {filename})."
-                )
+                raise ValueError(f"BB raw tiles must be .zip: {filename}")
             meta_year = _normalize_year(_extract_bb_meta_year(input_path))
             if meta_year:
                 return meta_year
@@ -403,9 +401,7 @@ def resolve_source_year(
             if meta_year:
                 return meta_year
         if region == Region.BB:
-            raise ValueError(
-                f"BB raw tiles must remain .zip (remove legacy TIFF: {filename})."
-            )
+            raise ValueError(f"BB raw tiles must be .zip: {filename}")
         raise ValueError(f"Year not found in filename or source metadata: {filename}")
 
     raise ValueError(f"Unknown data_type '{data_type}' for year resolution.")
