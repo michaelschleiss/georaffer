@@ -823,12 +823,12 @@ packages:
 - pypi: ./
   name: georaffer
   version: 0.1.0
-  sha256: b4991db4657fe0ffd3c5ea13811d76a93eee642f6651b837b618e4f3a21274f2
+  sha256: a8648fe4f06942fa99235362cfe2637b43d65adeea58aef9579c2833ee246ff4
   requires_dist:
   - requests>=2.20
   - laspy[lazrs]>=2.0
   - numpy>=1.20
-  - numba>=0.50
+  - numba>=0.62
   - pillow>=9.0
   - rasterio>=1.2
   - utm>=0.7
