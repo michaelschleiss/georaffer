@@ -108,7 +108,12 @@ LAZ_SAMPLE_SIZE = 10000  # Points to sample for verification
 # =============================================================================
 
 # Capture groups: (grid_x, grid_y, year)
-NRW_JP2_PATTERN = re.compile(r"dop10rgbi_32_(\d{3})_(\d{4})_\d_nw_(\d{4})\.jp2$")
+# Historic NRW feeds vary slightly:
+# - 2010: dop10rgb_32_XXX_YYYY_1_nw_2010.jp2 (no IR band, "rgb" not "rgbi")
+# - 2015: dop10rgbi_32288_5736_1_nw_2015.jp2 (missing underscore after "32")
+NRW_JP2_PATTERN = re.compile(
+    r"dop10rgb(?:i)?_32_?(\d{3})_(\d{4})_\d_nw_(\d{4})\.jp2$"
+)
 NRW_LAZ_PATTERN = re.compile(
     r"bdom50_32_?(\d{3})_(\d{4})_\d_nw_(\d{4})\.laz$"
 )  # _? : underscore sometimes missing

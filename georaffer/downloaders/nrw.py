@@ -22,7 +22,16 @@ class NRWDownloader(RegionDownloader):
     )
 
     # Available historic years (UTM era)
-    HISTORIC_YEARS: ClassVar[list[int]] = list(range(2010, 2024))  # 2010-2023
+    # NOTE: 2010 is the first year in the UTM/EPSG:25832-era feeds used by this pipeline.
+    # Older NRW "hist_dop" years exist (e.g. down to the 1950s), but are published in Gauss–Krüger
+    # CRS folders (EPSG:31466/31467) with different tile coordinate conventions, which the
+    # UTM-based tiling/matching logic in georaffer does not currently support.
+    # The upper bound is discovered dynamically from the provider index when needed.
+    HISTORIC_YEARS: ClassVar[list[int]] = list(range(2010, 2024))  # fallback: 2010-2023
+    HISTORIC_INDEX_URL = (
+        "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/"
+        "hist_dop/hist_dop_jp2_f10/index.xml"
+    )
 
     def __init__(
         self,
@@ -122,6 +131,26 @@ class NRWDownloader(RegionDownloader):
 
         return jp2_tiles
 
+    def _available_historic_years(self) -> list[int]:
+        try:
+            response = self._session.get(
+                self.HISTORIC_INDEX_URL, timeout=FEED_TIMEOUT, verify=self.verify_ssl
+            )
+            response.raise_for_status()
+            root = ET.fromstring(response.content)
+            years = sorted(
+                {
+                    int((folder.get("name") or "").rsplit("_", 1)[-1])
+                    for folder in root.findall(".//folder")
+                    if (folder.get("name") or "").startswith("hist_dop_")
+                    and (folder.get("name") or "").rsplit("_", 1)[-1].isdigit()
+                    and int((folder.get("name") or "").rsplit("_", 1)[-1]) >= 2010
+                }
+            )
+            return years or self.HISTORIC_YEARS
+        except Exception:
+            return self.HISTORIC_YEARS
+
     def _parse_jp2_feed(
         self, session: requests.Session, root: ET.Element
     ) -> dict[tuple[int, int], str]:
@@ -210,7 +239,7 @@ class NRWDownloader(RegionDownloader):
 
         # Determine year range: from_year to to_year (or latest historic if to_year is None)
         historic_years = [
-            y for y in self.HISTORIC_YEARS if self._year_in_range(y, from_year, to_year)
+            y for y in self._available_historic_years() if self._year_in_range(y, from_year, to_year)
         ]
 
         total_historic = 0
