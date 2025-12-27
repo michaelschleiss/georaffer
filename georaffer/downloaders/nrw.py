@@ -22,12 +22,11 @@ class NRWDownloader(RegionDownloader):
     )
 
     # Available historic years (UTM era)
-    # NOTE: 2010 is the first year in the UTM/EPSG:25832-era feeds used by this pipeline.
-    # Older NRW "hist_dop" years exist (e.g. down to the 1950s), but are published in Gauss–Krüger
-    # CRS folders (EPSG:31466/31467) with different tile coordinate conventions, which the
-    # UTM-based tiling/matching logic in georaffer does not currently support.
+    # NOTE: 2014 is the first year where NRW historic orthophotos are consistently "dop10"
+    # and aligned with the georaffer tiling assumptions; 2010–2013 include "dop20" variants
+    # that cover different areas and are skipped in this pipeline.
     # The upper bound is discovered dynamically from the provider index when needed.
-    HISTORIC_YEARS: ClassVar[list[int]] = list(range(2010, 2024))  # fallback: 2010-2023
+    HISTORIC_YEARS: ClassVar[list[int]] = list(range(2014, 2024))  # fallback: 2014-2023
     HISTORIC_INDEX_URL = (
         "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/"
         "hist_dop/hist_dop_jp2_f10/index.xml"
@@ -144,7 +143,7 @@ class NRWDownloader(RegionDownloader):
                     for folder in root.findall(".//folder")
                     if (folder.get("name") or "").startswith("hist_dop_")
                     and (folder.get("name") or "").rsplit("_", 1)[-1].isdigit()
-                    and int((folder.get("name") or "").rsplit("_", 1)[-1]) >= 2010
+                    and int((folder.get("name") or "").rsplit("_", 1)[-1]) >= 2014
                 }
             )
             return years or self.HISTORIC_YEARS

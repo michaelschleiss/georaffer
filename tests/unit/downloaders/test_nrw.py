@@ -82,6 +82,7 @@ class TestNRWHistoricYearsDiscovery:
 <opengeodata>
   <folders>
     <folder name='hist_dop_2010'/>
+    <folder name='hist_dop_2014'/>
     <folder name='hist_dop_2023'/>
     <folder name='hist_dop_2024'/>
   </folders>
@@ -104,7 +105,7 @@ class TestNRWHistoricYearsDiscovery:
         downloader._session.get = fake_get  # type: ignore[method-assign]
 
         years = downloader._available_historic_years()
-        assert years == [2010, 2023, 2024]
+        assert years == [2014, 2023, 2024]
 
 
 class TestNRWUtmToGridCoords:
