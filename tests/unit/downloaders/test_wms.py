@@ -239,9 +239,7 @@ class TestWMSCheckCoverage:
         """Test coverage check raises RuntimeError after retries on network error."""
         import requests
 
-        with patch.object(
-            wms._session, "get", side_effect=requests.RequestException("timeout")
-        ):
+        with patch.object(wms._session, "get", side_effect=requests.RequestException("timeout")):
             with patch("georaffer.downloaders.wms.WMS_COVERAGE_RETRIES", 2):
                 with patch("georaffer.downloaders.wms.time.sleep"):
                     with pytest.raises(RuntimeError, match="WMS coverage check failed"):

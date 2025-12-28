@@ -23,9 +23,7 @@ from georaffer.config import (
 
 # Pattern for processed output files: {region}_{zone}_{easting}_{northing}_{year}.tif
 # Easting is 6 digits, northing is 7 digits.
-OUTPUT_FILE_PATTERN = re.compile(
-    r"(?:nrw|rlp|bb)_(?:32|33)_(\d{6})_(\d{7})_\d{4}(?:_\d+)?\.tif$"
-)
+OUTPUT_FILE_PATTERN = re.compile(r"(?:nrw|rlp|bb)_(?:32|33)_(\d{6})_(\d{7})_\d{4}(?:_\d+)?\.tif$")
 
 
 @contextmanager

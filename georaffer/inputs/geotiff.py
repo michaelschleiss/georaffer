@@ -3,9 +3,10 @@
 from pathlib import Path
 
 import rasterio
+from rasterio.crs import CRS
 
 
-def load_from_geotiff(path: str) -> tuple[tuple[float, float, float, float], rasterio.crs.CRS]:
+def load_from_geotiff(path: str) -> tuple[tuple[float, float, float, float], CRS]:
     """Load bounds and CRS from a GeoTIFF.
 
     Args:

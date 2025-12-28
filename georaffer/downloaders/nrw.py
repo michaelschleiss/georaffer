@@ -128,9 +128,7 @@ class NRWDownloader(RegionDownloader):
 
     def _available_historic_years(self) -> list[int]:
         try:
-            response = self._session.get(
-                self.HISTORIC_INDEX_URL, timeout=FEED_TIMEOUT
-            )
+            response = self._session.get(self.HISTORIC_INDEX_URL, timeout=FEED_TIMEOUT)
             response.raise_for_status()
             root = ET.fromstring(response.content)
             years = sorted(
@@ -234,7 +232,9 @@ class NRWDownloader(RegionDownloader):
 
         # Determine year range: from_year to to_year (or latest historic if to_year is None)
         historic_years = [
-            y for y in self._available_historic_years() if self._year_in_range(y, from_year, to_year)
+            y
+            for y in self._available_historic_years()
+            if self._year_in_range(y, from_year, to_year)
         ]
 
         total_historic = 0

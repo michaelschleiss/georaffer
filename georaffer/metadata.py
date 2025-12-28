@@ -346,6 +346,7 @@ def create_provenance_csv(tiles_metadata: list[dict], output_csv: str) -> bool:
             if not processed:
                 return ""
             return f"{processed}::{file_type}"
+
         if os.path.exists(output_csv):
             with open(output_csv, newline="") as csvfile:
                 reader = csv.DictReader(csvfile)

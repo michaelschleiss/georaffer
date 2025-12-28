@@ -185,11 +185,7 @@ def process_tiles(
         if Region.RLP in selected_regions
         else None
     )
-    bb_downloader = (
-        BrandenburgDownloader(output_dir)
-        if Region.BB in selected_regions
-        else None
-    )
+    bb_downloader = BrandenburgDownloader(output_dir) if Region.BB in selected_regions else None
 
     # Create output directories
     for subdir in ["raw/image", "raw/dsm", "processed/image", "processed/dsm"]:
@@ -202,9 +198,7 @@ def process_tiles(
     )
     grid_start = time.perf_counter()
     tiles_by_zone = generate_tiles_by_zone(coords, source_zone, grid_size_km, margin_km)
-    tiles_by_zone = {
-        zone: tiles_by_zone.get(zone, set()) for zone in sorted(selected_zones)
-    }
+    tiles_by_zone = {zone: tiles_by_zone.get(zone, set()) for zone in sorted(selected_zones)}
     # User tiles = unique grid cells from original coords (source zone only)
     total_user_tiles = len(tiles_by_zone.get(source_zone, set()))
     grid_duration = time.perf_counter() - grid_start
@@ -240,17 +234,11 @@ def process_tiles(
 
     if nrw_downloader is not None:
         nrw_jp2, nrw_laz = nrw_downloader.get_available_tiles()
-        catalog_rows.append(
-            ("NRW", nrw_downloader.total_jp2_count or len(nrw_jp2), len(nrw_laz))
-        )
+        catalog_rows.append(("NRW", nrw_downloader.total_jp2_count or len(nrw_jp2), len(nrw_laz)))
         region_catalogs.append(RegionCatalog("nrw", nrw_downloader, nrw_jp2, nrw_laz))
     if rlp_downloader is not None:
-        rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(
-            requested_coords=rlp_native_coords
-        )
-        catalog_rows.append(
-            ("RLP", rlp_downloader.total_jp2_count or len(rlp_jp2), len(rlp_laz))
-        )
+        rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(requested_coords=rlp_native_coords)
+        catalog_rows.append(("RLP", rlp_downloader.total_jp2_count or len(rlp_jp2), len(rlp_laz)))
         region_catalogs.append(RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz))
     if bb_downloader is not None:
         bb_jp2, bb_laz = bb_downloader.get_available_tiles()
@@ -280,8 +268,12 @@ def process_tiles(
     }
     original_coords = np.array(coords) if coords else None
     tile_set, downloads_by_source = calculate_required_tiles(
-        tiles_by_zone, grid_size_km, region_catalogs, zone_by_region,
-        original_coords=original_coords, source_zone=source_zone
+        tiles_by_zone,
+        grid_size_km,
+        region_catalogs,
+        zone_by_region,
+        original_coords=original_coords,
+        source_zone=source_zone,
     )
     calc_duration = time.perf_counter() - phase_start
 
@@ -402,35 +394,23 @@ def process_tiles(
     if process_images:
         nrw_jp2_downloads = downloads_by_source.get("nrw_jp2", [])
         if nrw_jp2_downloads:
-            download_tasks.append(
-                DownloadTask("NRW Imagery", nrw_jp2_downloads, nrw_downloader)
-            )
+            download_tasks.append(DownloadTask("NRW Imagery", nrw_jp2_downloads, nrw_downloader))
         rlp_jp2_downloads = downloads_by_source.get("rlp_jp2", [])
         if rlp_jp2_downloads:
-            download_tasks.append(
-                DownloadTask("RLP Imagery", rlp_jp2_downloads, rlp_downloader)
-            )
+            download_tasks.append(DownloadTask("RLP Imagery", rlp_jp2_downloads, rlp_downloader))
         bb_jp2_downloads = downloads_by_source.get("bb_jp2", [])
         if bb_jp2_downloads:
-            download_tasks.append(
-                DownloadTask("BB Imagery", bb_jp2_downloads, bb_downloader)
-            )
+            download_tasks.append(DownloadTask("BB Imagery", bb_jp2_downloads, bb_downloader))
     if process_pointclouds:
         nrw_laz_downloads = downloads_by_source.get("nrw_laz", [])
         if nrw_laz_downloads:
-            download_tasks.append(
-                DownloadTask("NRW DSM", nrw_laz_downloads, nrw_downloader)
-            )
+            download_tasks.append(DownloadTask("NRW DSM", nrw_laz_downloads, nrw_downloader))
         rlp_laz_downloads = downloads_by_source.get("rlp_laz", [])
         if rlp_laz_downloads:
-            download_tasks.append(
-                DownloadTask("RLP DSM", rlp_laz_downloads, rlp_downloader)
-            )
+            download_tasks.append(DownloadTask("RLP DSM", rlp_laz_downloads, rlp_downloader))
         bb_laz_downloads = downloads_by_source.get("bb_laz", [])
         if bb_laz_downloads:
-            download_tasks.append(
-                DownloadTask("BB DSM", bb_laz_downloads, bb_downloader)
-            )
+            download_tasks.append(DownloadTask("BB DSM", bb_laz_downloads, bb_downloader))
 
     print_step_header(3, "Downloading Raw Tiles")
 

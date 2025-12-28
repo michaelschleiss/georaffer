@@ -12,10 +12,9 @@ import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, TimeoutError, as_completed
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from tqdm import tqdm
-
-from pathlib import Path
 
 from georaffer.config import get_tile_size_km
 from georaffer.converters import convert_jp2, convert_laz
@@ -191,7 +190,6 @@ def convert_tiles(
             f for f in os.listdir(laz_dir) if f.lower().endswith((".laz", ".tif", ".zip"))
         )
 
-
     total_files = len(jp2_files) + len(laz_files)
     if total_files == 0:
         return stats
@@ -266,6 +264,7 @@ def convert_tiles(
     signal.signal(signal.SIGTERM, _signal_handler)
 
     try:
+
         def _update_files_per_second(pbar: tqdm) -> None:
             rate = pbar.format_dict.get("rate")
             if rate is None:

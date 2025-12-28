@@ -104,9 +104,7 @@ def _fetch_remote_size(downloader: Any, url: str, timeout: int) -> int | None:
     if session is None:
         session = requests.Session()
     try:
-        with session.head(
-            url, allow_redirects=True, timeout=timeout
-        ) as response:
+        with session.head(url, allow_redirects=True, timeout=timeout) as response:
             if response.ok:
                 size = _parse_content_length(response.headers)
                 if size is not None:

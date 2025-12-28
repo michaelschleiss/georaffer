@@ -83,9 +83,7 @@ class BrandenburgDownloader(RegionDownloader):
                 return jp2_tiles, laz_tiles
             except Exception as e:
                 last_error = e
-        raise RuntimeError(
-            f"Failed to fetch BB catalog after {MAX_RETRIES} retries: {last_error}"
-        )
+        raise RuntimeError(f"Failed to fetch BB catalog after {MAX_RETRIES} retries: {last_error}")
 
     def _parse_listing(
         self, html: str, href_pattern: str, filename_pattern: re.Pattern, base_url: str

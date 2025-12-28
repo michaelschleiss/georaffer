@@ -117,7 +117,9 @@ def test_provenance_csv_created(tmp_path):
 
     # Required columns must be present
     required_cols = {"processed_file", "source_file", "source_region", "grid_x", "grid_y", "year"}
-    assert required_cols <= set(rows[0].keys()), f"Missing columns: {required_cols - set(rows[0].keys())}"
+    assert required_cols <= set(rows[0].keys()), (
+        f"Missing columns: {required_cols - set(rows[0].keys())}"
+    )
 
     # All rows must have valid coordinates (not empty, not 'None')
     for row in rows:

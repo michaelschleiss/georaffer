@@ -151,8 +151,9 @@ def test_provenance_comprehensive_ground_truth(tmp_path):
     assert int(row["grid_y"]) == NRW_TILE[1], f"Wrong grid_y: {row['grid_y']}"
     year = int(row["year"])
     assert 2020 <= year <= 2030, f"Year out of range: {year}"
-    assert re.match(r"\d{4}-\d{2}-\d{2}", row["acquisition_date"]), \
+    assert re.match(r"\d{4}-\d{2}-\d{2}", row["acquisition_date"]), (
         f"Invalid date format: {row['acquisition_date']}"
+    )
 
     # --- NRW current LAZ ---
     filename = downloaded["nrw_current_laz"]
@@ -187,8 +188,9 @@ def test_provenance_comprehensive_ground_truth(tmp_path):
         assert row["file_type"] == "orthophoto", f"Wrong file_type: {row['file_type']}"
         year = int(row["year"])
         assert 2020 <= year <= 2030, f"Year out of range: {year}"
-        assert re.match(r"\d{4}-\d{2}-\d{2}", row["acquisition_date"]), \
+        assert re.match(r"\d{4}-\d{2}-\d{2}", row["acquisition_date"]), (
             f"Invalid date format: {row['acquisition_date']}"
+        )
 
     # --- RLP current LAZ (2×2 split) ---
     filename = downloaded["rlp_current_laz"]
@@ -220,8 +222,9 @@ def test_provenance_comprehensive_ground_truth(tmp_path):
     assert int(row["grid_y"]) == NRW_TILE[1], f"Wrong grid_y: {row['grid_y']}"
     # Historical ground truth: exact year and date
     assert row["year"] == "2021", f"Wrong year: {row['year']}"
-    assert row["acquisition_date"] == NRW_HISTORICAL_GROUND_TRUTH[2021]["acquisition_date"], \
+    assert row["acquisition_date"] == NRW_HISTORICAL_GROUND_TRUTH[2021]["acquisition_date"], (
         f"NRW 2021 date mismatch: {row['acquisition_date']} != {NRW_HISTORICAL_GROUND_TRUTH[2021]['acquisition_date']}"
+    )
 
     # --- RLP historical 2022 (TIF from WMS, ground truth + 2×2 split) ---
     filename = downloaded["rlp_hist_2022"]
@@ -240,5 +243,6 @@ def test_provenance_comprehensive_ground_truth(tmp_path):
         assert row["file_type"] == "orthophoto", f"Wrong file_type: {row['file_type']}"
         # Historical ground truth: exact year and date
         assert row["year"] == "2022", f"Wrong year: {row['year']}"
-        assert row["acquisition_date"] == RLP_HISTORICAL_GROUND_TRUTH[2022]["acquisition_date"], \
+        assert row["acquisition_date"] == RLP_HISTORICAL_GROUND_TRUTH[2022]["acquisition_date"], (
             f"RLP 2022 date mismatch: {row['acquisition_date']} != {RLP_HISTORICAL_GROUND_TRUTH[2022]['acquisition_date']}"
+        )

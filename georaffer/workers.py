@@ -367,6 +367,7 @@ def resolve_source_year(
     region: Region | None = None,
 ) -> str:
     """Resolve a 4-digit year for a source file or raise if unavailable."""
+
     def _normalize_year(value: str | None) -> str | None:
         if value is None:
             return None
@@ -434,9 +435,7 @@ def _extract_bb_meta_year(input_path: Path) -> str | None:
 
 def _extract_bb_year_from_text(text: str) -> str | None:
     # Legacy XML format: <file_creation_day_year>123/2024</file_creation_day_year>
-    match = re.search(
-        r"<file_creation_day_year>\d{1,3}/(\d{4})</file_creation_day_year>", text
-    )
+    match = re.search(r"<file_creation_day_year>\d{1,3}/(\d{4})</file_creation_day_year>", text)
     if match:
         return match.group(1)
 

@@ -333,7 +333,9 @@ class TestRLPHistoricalImagery:
             (362, 5604): "https://example.com/dop20rgb_32_362_5604_2_rp_2021.jp2",
             (363, 5604): "https://example.com/dop20rgb_32_363_5604_2_rp_2023.jp2",
         }
-        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: current_tiles)
+        monkeypatch.setattr(
+            downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: current_tiles
+        )
 
         class FakeWMS:
             def check_coverage(self, _year, _grid_x, _grid_y):
@@ -349,9 +351,7 @@ class TestRLPHistoricalImagery:
 
         tiles = downloader._get_wms_tiles({(362, 5604), (363, 5604)})
 
-        assert tiles == {
-            (362, 5604): "https://example.com/dop20rgb_32_362_5604_2_rp_2021.jp2"
-        }
+        assert tiles == {(362, 5604): "https://example.com/dop20rgb_32_362_5604_2_rp_2021.jp2"}
         assert downloader.get_all_urls_for_coord((362, 5604)) == [
             "https://example.com/dop20rgb_32_362_5604_2_rp_2021.jp2"
         ]

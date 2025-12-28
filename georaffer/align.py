@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import rasterio
+from rasterio.crs import CRS
 from rasterio.enums import Resampling
 from rasterio.merge import merge
 from rasterio.warp import reproject, transform_bounds
@@ -45,7 +46,7 @@ def _collect_geotiffs(res_dir: Path) -> list[Path]:
     return _sort_paths_latest_first(tifs)
 
 
-def _ensure_single_crs(datasets: list[rasterio.DatasetReader]) -> rasterio.crs.CRS:
+def _ensure_single_crs(datasets: list[rasterio.DatasetReader]) -> CRS:
     crs_set = {ds.crs.to_string() if ds.crs else None for ds in datasets}
     if None in crs_set:
         raise ValueError("Processed tile missing CRS; cannot align.")
@@ -73,9 +74,7 @@ def _align_outputs(
         src_crs = _ensure_single_crs(datasets)
 
         if src_crs != ref_crs:
-            src_bounds = transform_bounds(
-                ref_crs, src_crs, *ref_bounds, densify_pts=21
-            )
+            src_bounds = transform_bounds(ref_crs, src_crs, *ref_bounds, densify_pts=21)
         else:
             src_bounds = ref_bounds
 
@@ -96,9 +95,7 @@ def _align_outputs(
         if dst_nodata is None:
             aligned = np.zeros((band_count, ref_height, ref_width), dtype=mosaic.dtype)
         else:
-            aligned = np.full(
-                (band_count, ref_height, ref_width), dst_nodata, dtype=mosaic.dtype
-            )
+            aligned = np.full((band_count, ref_height, ref_width), dst_nodata, dtype=mosaic.dtype)
 
         reproject_kwargs = {
             "src_transform": mosaic_transform,

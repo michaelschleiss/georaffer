@@ -29,4 +29,3 @@ def test_outputs_exist_uses_laz_header_year(monkeypatch, tmp_path: Path) -> None
         )
         is True
     )
-

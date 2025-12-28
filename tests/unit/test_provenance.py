@@ -221,6 +221,7 @@ class TestBuildMetadataRows:
         assert conversion_date is not None
         # Verify it parses as valid datetime
         from datetime import datetime
+
         datetime.strptime(conversion_date, "%Y-%m-%d-%H-%M-%S")
 
 
@@ -263,6 +264,7 @@ class TestProvenanceCsvMerge:
 
         # Read merged result
         import csv
+
         with open(csv_path) as f:
             reader = csv.DictReader(f)
             rows = list(reader)
@@ -302,6 +304,7 @@ class TestProvenanceCsvMerge:
 
         # Read result
         import csv
+
         with open(csv_path) as f:
             reader = csv.DictReader(f)
             rows = list(reader)

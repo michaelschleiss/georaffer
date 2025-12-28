@@ -149,6 +149,7 @@ def _load_provenance(path: str):
 
 def _parse_coords(row):
     """Return grid coords, trying provenance fields then filenames as fallback."""
+
     def _normalize_coords(coords):
         gx, gy = coords
         if gx >= 10000 and gy >= 100000:

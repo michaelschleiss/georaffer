@@ -309,9 +309,7 @@ class TestConvertSplitRlpJP2:
 
         def fake_generate(p, x, y, **kwargs):
             captured_kwargs.append(kwargs)
-            return (
-                f"/output/rlp_{kwargs['utm_zone']}_{kwargs['easting']}_{kwargs['northing']}_2023.tif"
-            )
+            return f"/output/rlp_{kwargs['utm_zone']}_{kwargs['easting']}_{kwargs['northing']}_2023.tif"
 
         with patch("georaffer.converters.jp2.write_geotiff") as mock_write:
             with patch("georaffer.converters.jp2.generate_split_output_path") as mock_path:

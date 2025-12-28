@@ -391,12 +391,16 @@ def test_process_tiles_passes_imagery_from_to_nrw_and_rlp(tmp_path):
         interrupted=False,
     )
 
-    with patch("georaffer.pipeline.NRWDownloader", DummyNRW), patch(
-        "georaffer.pipeline.RLPDownloader", DummyRLP
-    ), patch("georaffer.pipeline.generate_tiles_by_zone", return_value={32: {(350, 5600)}}), patch(
-        "georaffer.pipeline.calculate_required_tiles",
-        return_value=(TileSet(), {}),
-    ), patch("georaffer.pipeline.convert_tiles", return_value=dummy_convert):
+    with (
+        patch("georaffer.pipeline.NRWDownloader", DummyNRW),
+        patch("georaffer.pipeline.RLPDownloader", DummyRLP),
+        patch("georaffer.pipeline.generate_tiles_by_zone", return_value={32: {(350, 5600)}}),
+        patch(
+            "georaffer.pipeline.calculate_required_tiles",
+            return_value=(TileSet(), {}),
+        ),
+        patch("georaffer.pipeline.convert_tiles", return_value=dummy_convert),
+    ):
         process_tiles(
             coords=[(350500.0, 5600500.0)],
             output_dir=str(tmp_path),

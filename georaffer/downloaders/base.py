@@ -248,9 +248,7 @@ class RegionDownloader(ABC):
                 if delay > 0:
                     time.sleep(delay)
 
-                with self._session.get(
-                    url, timeout=DEFAULT_TIMEOUT, stream=True
-                ) as response:
+                with self._session.get(url, timeout=DEFAULT_TIMEOUT, stream=True) as response:
                     response.raise_for_status()
 
                     Path(output_path).parent.mkdir(parents=True, exist_ok=True)

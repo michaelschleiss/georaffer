@@ -65,9 +65,7 @@ class TestNRWHistoricFiltering:
 
         jp2_tiles, laz_tiles = downloader.get_available_tiles()
 
-        assert jp2_tiles == {
-            (350, 5600): "https://example.com/dop10rgbi_32_350_5600_1_nw_2018.jp2"
-        }
+        assert jp2_tiles == {(350, 5600): "https://example.com/dop10rgbi_32_350_5600_1_nw_2018.jp2"}
         assert laz_tiles == {}
         assert downloader.total_jp2_count == 1
 

@@ -4,13 +4,20 @@ import argparse
 import signal
 import sys
 import warnings
+from typing import Literal, overload
 
 import numpy as np
-from PIL import Image
 import utm
+from PIL import Image
 from rasterio.warp import transform_bounds
 
 from georaffer import __version__
+from georaffer.align import align_to_reference
+from georaffer.config import DEFAULT_WORKERS, METERS_PER_KM, OUTPUT_TILE_SIZE_KM, UTM_ZONE, Region
+from georaffer.grids import latlon_array_to_utm, tile_to_utm_center
+from georaffer.inputs import load_from_bbox, load_from_csv, load_from_geotiff, load_from_pygeon
+from georaffer.pipeline import process_tiles
+from georaffer.runtime import InterruptManager
 
 # Suppress PIL decompression bomb warnings for large aerial orthophotos
 warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
@@ -40,7 +47,6 @@ class QuietArgumentParser(argparse.ArgumentParser):
 
 def signal_handler(signum, frame):
     """Handle Ctrl+C by signaling interrupt and raising KeyboardInterrupt."""
-    from georaffer.runtime import InterruptManager
 
     # Just set flag and raise - let the handler print after closing progress bars
     InterruptManager.get().signal()
@@ -51,20 +57,30 @@ def signal_handler(signum, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 
-def load_coordinates(args, *, return_zone: bool = False):
+@overload
+def load_coordinates(
+    args: argparse.Namespace, *, return_zone: Literal[True]
+) -> tuple[list[tuple[float, float]], int]: ...
+
+
+@overload
+def load_coordinates(
+    args: argparse.Namespace, *, return_zone: Literal[False] = False
+) -> list[tuple[float, float]]: ...
+
+
+def load_coordinates(args: argparse.Namespace, *, return_zone: bool = False):
     """Load coordinates based on CLI arguments.
 
     If return_zone is True, also return the detected/source UTM zone.
     """
-    from georaffer.config import METERS_PER_KM, OUTPUT_TILE_SIZE_KM, UTM_ZONE
-    from georaffer.inputs import load_from_bbox, load_from_csv, load_from_geotiff
 
     # Use output tile size consistently for all coordinate loading
     tile_size_m = int(OUTPUT_TILE_SIZE_KM * METERS_PER_KM)
 
-    coords = []
-    utm_zone = getattr(args, "utm_zone", None)
-    source_zone = utm_zone or UTM_ZONE
+    coords: list[tuple[float, float]] = []
+    utm_zone: int | None = getattr(args, "utm_zone", None)
+    source_zone: int = utm_zone or UTM_ZONE
 
     def _require_utm_zone() -> int:
         if utm_zone is None:
@@ -171,9 +187,6 @@ def load_coordinates(args, *, return_zone: bool = False):
         coords = load_from_bbox(min_x, min_y, max_x, max_y, tile_size_m)
 
     elif args.command == "pygeon":
-        from georaffer.grids import latlon_array_to_utm
-        from georaffer.inputs import load_from_pygeon
-
         raw_coords = load_from_pygeon(args.dataset_path)
         # pygeon returns (lat, lon, alt) - vectorized UTM conversion
         coords_array = np.array(raw_coords)
@@ -194,8 +207,6 @@ def load_coordinates(args, *, return_zone: bool = False):
             coords = list(zip(utm_x, utm_y))
 
     elif args.command == "tiles":
-        from georaffer.grids import tile_to_utm_center
-
         source_zone = _require_utm_zone()
         # Parse tile coordinates: "350,5600 351,5601" (km indices)
         for tile_str in args.tiles:
@@ -209,15 +220,13 @@ def load_coordinates(args, *, return_zone: bool = False):
 
 def pixel_size_to_resolution(pixel_size: float, tile_size_km: float) -> int:
     """Convert pixel size (meters) to resolution (pixels per tile side)."""
-    from georaffer.config import METERS_PER_KM
 
     tile_size_m = tile_size_km * METERS_PER_KM
     return int(tile_size_m / pixel_size)
 
 
-def normalize_regions(region_args: list[str]) -> list["Region"]:
+def normalize_regions(region_args: list[str]) -> list[Region]:
     """Normalize region CLI args to Region enums, preserving order."""
-    from georaffer.config import Region
 
     region_map = {region.value.lower(): region for region in Region}
     normalized: list[Region] = []
@@ -237,7 +246,6 @@ def normalize_regions(region_args: list[str]) -> list["Region"]:
 
 def validate_args(args) -> list[str]:
     """Validate parsed arguments, return list of errors."""
-    from georaffer.config import METERS_PER_KM, OUTPUT_TILE_SIZE_KM
 
     errors = []
     tile_size_m = OUTPUT_TILE_SIZE_KM * METERS_PER_KM
@@ -545,8 +553,6 @@ Details:
         print(f"Loaded {len(coords)} coordinates")
 
         # Deduplicate at output tile level
-        from georaffer.config import METERS_PER_KM, OUTPUT_TILE_SIZE_KM
-        from georaffer.pipeline import process_tiles
 
         coords_array = np.array(coords)
         grid_size_m = OUTPUT_TILE_SIZE_KM * METERS_PER_KM
@@ -572,7 +578,6 @@ Details:
         margin_km = args.margin * OUTPUT_TILE_SIZE_KM
 
         # Use config defaults if not specified on CLI
-        from georaffer.config import DEFAULT_WORKERS
 
         workers = args.workers if args.workers is not None else DEFAULT_WORKERS
 
@@ -599,8 +604,6 @@ Details:
         )
 
         if args.command == "tif":
-            from georaffer.align import align_to_reference
-
             print("Aligning outputs to reference GeoTIFF...")
             aligned = align_to_reference(
                 reference_path=args.tif,
