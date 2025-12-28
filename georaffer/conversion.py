@@ -250,7 +250,7 @@ def convert_tiles(
     interrupt_manager = InterruptManager.get()
 
     # Signal handler for fast shutdown
-    def _signal_handler(signum, frame):
+    def _signal_handler(*_):
         nonlocal interrupted
         if not stop_event.is_set():
             interrupted = True
