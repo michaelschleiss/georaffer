@@ -1,4 +1,4 @@
-#!/home/administrator/projects/georaffer/.direnv/georaffer/bin/python
+#!/usr/bin/env python3
 import argparse
 import time
 
