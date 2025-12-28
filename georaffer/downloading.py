@@ -4,6 +4,8 @@ This module handles downloading raw tiles from NRW, RLP, and BB servers,
 with support for parallel downloads across different endpoints.
 """
 
+import math
+import re
 import sys
 import time
 from collections.abc import Callable
@@ -13,8 +15,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import requests
 from tqdm import tqdm
 
+from georaffer.config import FEED_TIMEOUT, MIN_FILE_SIZE
 from georaffer.runtime import InterruptManager
 
 
@@ -30,10 +34,14 @@ class DownloadStats:
 class ByteProgress:
     """Thread-safe byte counter for progress tracking."""
 
-    def __init__(self, pbar: Any | None = None):
+    def __init__(self, pbar: Any | None = None, tau_seconds: float = 3.0):
         self.total_bytes = 0
         self.pbar = pbar
         self.start_time = time.perf_counter()
+        self.tau_seconds = tau_seconds
+        self._last_time = self.start_time
+        self._last_bytes = 0
+        self._rate_ewma: float | None = None
         import threading
 
         self._lock = threading.Lock()
@@ -41,14 +49,118 @@ class ByteProgress:
     def update(self, chunk_size: int) -> None:
         with self._lock:
             self.total_bytes += chunk_size
-            if self.pbar is not None:
-                elapsed = time.perf_counter() - self.start_time
-                mb = self.total_bytes / 1_000_000
-                rate = mb / elapsed if elapsed > 0 else 0
-                if mb >= 1000:
-                    self.pbar.set_description_str(f"↓ {mb / 1000:.1f}GB @ {rate:.0f}MB/s")
+            now = time.perf_counter()
+            dt = now - self._last_time
+            if dt > 0:
+                delta_bytes = self.total_bytes - self._last_bytes
+                inst_rate = delta_bytes / dt
+                if self._rate_ewma is None:
+                    self._rate_ewma = inst_rate
                 else:
-                    self.pbar.set_description_str(f"↓ {mb:.0f}MB @ {rate:.0f}MB/s")
+                    alpha = 1 - math.exp(-dt / self.tau_seconds)
+                    self._rate_ewma = (1 - alpha) * self._rate_ewma + alpha * inst_rate
+                self._last_time = now
+                self._last_bytes = self.total_bytes
+
+            if self.pbar is not None:
+                mb = self.total_bytes / 1_000_000
+                rate = (self._rate_ewma or 0.0) / 1_000_000
+                if mb >= 1000:
+                    self.pbar.set_description_str(f"↓ {mb / 1000:.1f}GB @ {rate:.1f}MB/s")
+                else:
+                    self.pbar.set_description_str(f"↓ {mb:.0f}MB @ {rate:.1f}MB/s")
+
+
+def _is_wms_url(downloader: Any, url: str) -> bool:
+    checker = getattr(downloader, "_is_wms_getmap", None)
+    if callable(checker):
+        try:
+            return bool(checker(url))
+        except Exception:
+            return False
+    lowered = url.lower()
+    return "service=wms" in lowered and "request=getmap" in lowered
+
+
+def _parse_content_length(headers: dict[str, str]) -> int | None:
+    length = headers.get("Content-Length")
+    if length:
+        try:
+            value = int(length)
+            return value if value > 0 else None
+        except ValueError:
+            return None
+    content_range = headers.get("Content-Range")
+    if not content_range:
+        return None
+    match = re.search(r"/(\d+)$", content_range)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def _fetch_remote_size(downloader: Any, url: str, timeout: int) -> int | None:
+    session = getattr(downloader, "session", None)
+    if session is None:
+        session = requests.Session()
+    verify_ssl = getattr(downloader, "verify_ssl", True)
+
+    try:
+        with session.head(
+            url, allow_redirects=True, timeout=timeout, verify=verify_ssl
+        ) as response:
+            if response.ok:
+                size = _parse_content_length(response.headers)
+                if size is not None:
+                    return size
+    except requests.RequestException:
+        pass
+
+    try:
+        with session.get(
+            url,
+            headers={"Range": "bytes=0-0"},
+            stream=True,
+            allow_redirects=True,
+            timeout=timeout,
+            verify=verify_ssl,
+        ) as response:
+            if response.ok:
+                return _parse_content_length(response.headers)
+    except requests.RequestException:
+        return None
+
+    return None
+
+
+def _local_file_is_valid(downloader: Any, path: Path) -> bool:
+    if path.stat().st_size < MIN_FILE_SIZE:
+        return False
+    checker = getattr(downloader, "_verify_file_integrity", None)
+    if not callable(checker):
+        return True
+    try:
+        with path.open("rb") as handle:
+            return bool(checker(handle, str(path)))
+    except Exception:
+        return False
+
+
+def _cached_file_is_ok(
+    downloader: Any,
+    url: str,
+    path: Path,
+    check_remote_size: bool,
+    remote_size_timeout: int,
+) -> bool:
+    local_ok = _local_file_is_valid(downloader, path)
+    if not local_ok:
+        return False
+    if check_remote_size and not _is_wms_url(downloader, url):
+        remote_size = _fetch_remote_size(downloader, url, timeout=remote_size_timeout)
+        if remote_size is not None and path.stat().st_size != remote_size:
+            return False
+    return True
 
 
 def download_files(
@@ -60,6 +172,8 @@ def download_files(
     progress_bar: Any | None = None,
     log_progress: bool = True,
     byte_progress: ByteProgress | None = None,
+    check_remote_size: bool = False,
+    remote_size_timeout: int = FEED_TIMEOUT,
 ) -> DownloadStats:
     """Download a list of files sequentially.
 
@@ -76,6 +190,8 @@ def download_files(
         progress_bar: Optional shared tqdm instance to increment per file
         log_progress: Whether to log progress to stdout
         byte_progress: Optional ByteProgress for live byte updates
+        check_remote_size: Validate cached files against remote Content-Length when available
+        remote_size_timeout: Timeout for remote size checks (seconds)
 
     Returns:
         DownloadStats with results
@@ -101,9 +217,18 @@ def download_files(
 
             filename = Path(url).name
 
+            skip = False
             if Path(path).exists() and not force:
-                stats.skipped += 1
-            else:
+                if check_remote_size:
+                    skip = _cached_file_is_ok(
+                        downloader, url, Path(path), check_remote_size, remote_size_timeout
+                    )
+                else:
+                    skip = True
+                if skip:
+                    stats.skipped += 1
+            if not skip:
+                # Download or re-download invalid/mismatched cache files.
                 try:
                     downloader.download_file(url, path, on_progress=on_progress)
                     stats.downloaded += 1
@@ -134,8 +259,15 @@ def download_files(
                 pbar.set_postfix_str(filename, refresh=False)
 
                 if Path(path).exists() and not force:
-                    stats.skipped += 1
-                    continue
+                    if check_remote_size:
+                        if _cached_file_is_ok(
+                            downloader, url, Path(path), check_remote_size, remote_size_timeout
+                        ):
+                            stats.skipped += 1
+                            continue
+                    else:
+                        stats.skipped += 1
+                        continue
 
                 try:
                     downloader.download_file(url, path, on_progress=on_progress)
@@ -181,6 +313,8 @@ def download_parallel_streams(
     force: bool = False,
     max_streams: int = 4,
     on_interrupt: Callable[[], None] | None = None,
+    check_remote_size: bool = False,
+    remote_size_timeout: int = FEED_TIMEOUT,
 ) -> tuple[list[DownloadResult], DownloadStats]:
     """Download from multiple sources in parallel.
 
@@ -193,6 +327,8 @@ def download_parallel_streams(
         force: Re-download existing files
         max_streams: Maximum concurrent download streams
         on_interrupt: Optional callback when interrupted
+        check_remote_size: Validate cached files against remote Content-Length when available
+        remote_size_timeout: Timeout for remote size checks (seconds)
 
     Returns:
         Tuple of (results_list, total_stats) where:
@@ -214,7 +350,7 @@ def download_parallel_streams(
             desc="↓ 0MB @ 0MB/s",
             unit="file",
             ncols=90,
-            bar_format="Downloading: [{bar:25}] {n}/{total} | ⏱ {elapsed} | {desc}",
+            bar_format="Downloading: [{bar:23}] {n}/{total} | ⏱ {elapsed} | {desc}",
             mininterval=0.1,
         ) as pbar,
     ):
@@ -237,6 +373,8 @@ def download_parallel_streams(
                     progress_bar=pbar,
                     log_progress=False,
                     byte_progress=byte_progress,
+                    check_remote_size=check_remote_size,
+                    remote_size_timeout=remote_size_timeout,
                 )
                 futures[future] = task.name
                 meta[future] = {"count": len(task.downloads), "start": start}

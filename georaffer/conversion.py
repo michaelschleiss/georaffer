@@ -277,7 +277,7 @@ def convert_tiles(
             desc="0.0 files/s",
             unit="file",
             ncols=90,
-            bar_format="Converting: [{bar:25}] {n}/{total} | ⏱ {elapsed} | {desc}",
+            bar_format="Converting: [{bar:23}] {n}/{total} | ⏱ {elapsed} | {desc}",
             mininterval=0.1,
         ) as pbar:
             # Convert JP2 files first (fail fast on missing GDAL driver)
