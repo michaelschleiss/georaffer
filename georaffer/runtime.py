@@ -176,6 +176,17 @@ def install_signal_handlers(
     return old_int, old_term
 
 
+def install_interrupt_signal_handlers() -> tuple[Callable | None, Callable | None]:
+    """Install SIGINT/SIGTERM handlers that signal the InterruptManager and raise KeyboardInterrupt."""
+
+    def _on_interrupt() -> None:
+        # Set the global interrupt flag and exit the current flow.
+        InterruptManager.get().signal()
+        raise KeyboardInterrupt()
+
+    return install_signal_handlers(_on_interrupt)
+
+
 def restore_signal_handlers(old_int: Callable | None, old_term: Callable | None) -> None:
     """Restore previous signal handlers.
 

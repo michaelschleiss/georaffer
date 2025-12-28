@@ -87,6 +87,29 @@ def generate_user_grid_tiles(
     return user_tiles
 
 
+def dedupe_by_output_tile(
+    utm_coords: list[tuple[float, float]], tile_size_km: float
+) -> list[tuple[float, float]]:
+    """Deduplicate UTM coordinates at the output tile level.
+
+    Args:
+        utm_coords: List of (easting, northing) coordinates in UTM meters
+        tile_size_km: Output tile size in kilometers
+
+    Returns:
+        List of deduplicated coordinates that map to unique output tiles
+    """
+    if not utm_coords:
+        return []
+    coords_array = np.array(utm_coords)
+    grid_size_m = tile_size_km * METERS_PER_KM
+    tile_x = (coords_array[:, 0] // grid_size_m).astype(int)
+    tile_y = (coords_array[:, 1] // grid_size_m).astype(int)
+    tiles = np.column_stack([tile_x, tile_y])
+    _, unique_indices = np.unique(tiles, axis=0, return_index=True)
+    return coords_array[unique_indices].tolist()
+
+
 def compute_split_factor(tile_km: float, grid_size_km: float) -> int:
     """Calculate how many output tiles to create from one source tile.
 

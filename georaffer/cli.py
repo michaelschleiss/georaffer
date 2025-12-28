@@ -12,10 +12,10 @@ from rasterio.warp import transform_bounds
 from georaffer import __version__
 from georaffer.align import align_to_reference
 from georaffer.config import DEFAULT_WORKERS, METERS_PER_KM, OUTPUT_TILE_SIZE_KM, UTM_ZONE, Region
-from georaffer.grids import latlon_array_to_utm, tile_to_utm_center
+from georaffer.grids import dedupe_by_output_tile, latlon_array_to_utm, tile_to_utm_center
 from georaffer.inputs import load_from_bbox, load_from_csv, load_from_geotiff, load_from_pygeon
 from georaffer.pipeline import process_tiles
-from georaffer.runtime import InterruptManager, install_signal_handlers, restore_signal_handlers
+from georaffer.runtime import install_interrupt_signal_handlers, restore_signal_handlers
 
 # Suppress PIL decompression bomb warnings for large aerial orthophotos
 warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
@@ -514,12 +514,7 @@ Details:
     old_term = None
     try:
 
-        def _on_interrupt() -> None:
-            # Just set flag and raise - let the handler print after closing progress bars
-            InterruptManager.get().signal()
-            raise KeyboardInterrupt()
-
-        old_int, old_term = install_signal_handlers(_on_interrupt)
+        old_int, old_term = install_interrupt_signal_handlers()
 
         # Load coordinates
         print(f"Loading coordinates from {args.command}...", flush=True)
@@ -533,14 +528,7 @@ Details:
 
         # Deduplicate at output tile level
 
-        coords_array = np.array(coords)
-        grid_size_m = OUTPUT_TILE_SIZE_KM * METERS_PER_KM
-        tile_x = (coords_array[:, 0] // grid_size_m).astype(int)
-        tile_y = (coords_array[:, 1] // grid_size_m).astype(int)
-        tiles = np.column_stack([tile_x, tile_y])
-        _, unique_indices = np.unique(tiles, axis=0, return_index=True)
-
-        unique_coords = coords_array[unique_indices].tolist()
+        unique_coords = dedupe_by_output_tile(coords, OUTPUT_TILE_SIZE_KM)
         print(f"Deduplicated {len(coords)} coordinates to {len(unique_coords)} center tiles")
 
         # Build imagery_from tuple from --from/--to flags
