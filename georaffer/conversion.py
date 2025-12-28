@@ -100,7 +100,7 @@ def _outputs_exist(
     from georaffer.config import METERS_PER_KM, utm_zone_str_for_region
     from georaffer.converters.utils import generate_split_output_path
 
-    ratio = int(round(tile_km / grid_size_km)) if split_factor > 1 else 1
+    ratio = round(tile_km / grid_size_km) if split_factor > 1 else 1
     grid_size_m = round(grid_size_km * METERS_PER_KM)
     utm_zone = utm_zone_str_for_region(region)
 

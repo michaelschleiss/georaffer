@@ -1,10 +1,8 @@
 """Command-line interface for georaffer."""
 
 import argparse
-import signal
 import sys
 import warnings
-from typing import Literal, overload
 
 import numpy as np
 import utm
@@ -17,7 +15,7 @@ from georaffer.config import DEFAULT_WORKERS, METERS_PER_KM, OUTPUT_TILE_SIZE_KM
 from georaffer.grids import latlon_array_to_utm, tile_to_utm_center
 from georaffer.inputs import load_from_bbox, load_from_csv, load_from_geotiff, load_from_pygeon
 from georaffer.pipeline import process_tiles
-from georaffer.runtime import InterruptManager
+from georaffer.runtime import InterruptManager, install_signal_handlers, restore_signal_handlers
 
 # Suppress PIL decompression bomb warnings for large aerial orthophotos
 warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
@@ -45,35 +43,8 @@ class QuietArgumentParser(argparse.ArgumentParser):
         sys.exit(2)
 
 
-def signal_handler(signum, frame):
-    """Handle Ctrl+C by signaling interrupt and raising KeyboardInterrupt."""
-
-    # Just set flag and raise - let the handler print after closing progress bars
-    InterruptManager.get().signal()
-    raise KeyboardInterrupt()
-
-
-# Install signal handler for immediate Ctrl+C response
-signal.signal(signal.SIGINT, signal_handler)
-
-
-@overload
-def load_coordinates(
-    args: argparse.Namespace, *, return_zone: Literal[True]
-) -> tuple[list[tuple[float, float]], int]: ...
-
-
-@overload
-def load_coordinates(
-    args: argparse.Namespace, *, return_zone: Literal[False] = False
-) -> list[tuple[float, float]]: ...
-
-
-def load_coordinates(args: argparse.Namespace, *, return_zone: bool = False):
-    """Load coordinates based on CLI arguments.
-
-    If return_zone is True, also return the detected/source UTM zone.
-    """
+def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]], int]:
+    """Load coordinates based on CLI arguments."""
 
     # Use output tile size consistently for all coordinate loading
     tile_size_m = int(OUTPUT_TILE_SIZE_KM * METERS_PER_KM)
@@ -213,9 +184,7 @@ def load_coordinates(args: argparse.Namespace, *, return_zone: bool = False):
             x, y = map(int, tile_str.split(","))
             coords.append(tile_to_utm_center(x, y, tile_size_m))
 
-    if return_zone:
-        return coords, source_zone
-    return coords
+    return coords, source_zone
 
 
 def pixel_size_to_resolution(pixel_size: float, tile_size_km: float) -> int:
@@ -541,10 +510,20 @@ Details:
 
     Image.MAX_IMAGE_PIXELS = None
 
+    old_int = None
+    old_term = None
     try:
+
+        def _on_interrupt() -> None:
+            # Just set flag and raise - let the handler print after closing progress bars
+            InterruptManager.get().signal()
+            raise KeyboardInterrupt()
+
+        old_int, old_term = install_signal_handlers(_on_interrupt)
+
         # Load coordinates
         print(f"Loading coordinates from {args.command}...", flush=True)
-        coords, source_zone = load_coordinates(args, return_zone=True)
+        coords, source_zone = load_coordinates(args)
 
         if not coords:
             print("Error: No coordinates found", file=sys.stderr)
@@ -641,6 +620,8 @@ Details:
         print("Run with --help for usage information", file=sys.stderr)
         print(file=sys.stderr)
         raise
+    finally:
+        restore_signal_handlers(old_int, old_term)
 
 
 if __name__ == "__main__":
