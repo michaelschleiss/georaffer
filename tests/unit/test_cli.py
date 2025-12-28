@@ -27,7 +27,7 @@ class TestLoadCoordinatesCSV:
             utm_zone=32,
         )
 
-        coords = load_coordinates(args)
+        coords, _ = load_coordinates(args)
 
         assert len(coords) == 2
         assert coords[0] == (350000.0, 5600000.0)
@@ -45,7 +45,7 @@ class TestLoadCoordinatesCSV:
 
         with patch("utm.from_latlon") as mock_utm:
             mock_utm.return_value = (350000, 5640000, 32, "N")
-            coords = load_coordinates(args)
+            coords, _ = load_coordinates(args)
 
         assert len(coords) == 1
         mock_utm.assert_called_once()
@@ -98,7 +98,7 @@ class TestLoadCoordinatesBbox:
             utm_zone=32,
         )
 
-        coords = load_coordinates(args)
+        coords, _ = load_coordinates(args)
 
         # Should convert tile coords to UTM center points
         assert len(coords) == 1
@@ -113,7 +113,7 @@ class TestLoadCoordinatesBbox:
             utm_zone=32,
         )
 
-        coords = load_coordinates(args)
+        coords, _ = load_coordinates(args)
 
         # Should generate 4 tiles (2x2)
         assert len(coords) == 4
@@ -135,7 +135,7 @@ class TestLoadCoordinatesBbox:
             bbox="6.9,50.9,7.0,51.0",  # Small values = lat/lon
         )
 
-        coords = load_coordinates(args)
+        coords, _ = load_coordinates(args)
 
         # Should detect as lat/lon and convert to UTM
         # Results should be in UTM range (not small lat/lon values)
@@ -183,7 +183,7 @@ class TestLoadCoordinatesTif:
             tif=str(tif_path),
         )
 
-        coords, source_zone = load_coordinates(args, return_zone=True)
+        coords, source_zone = load_coordinates(args)
 
         assert source_zone == 33
         assert coords == [(500500.0, 5800500.0)]
@@ -217,7 +217,7 @@ class TestLoadCoordinatesTif:
                 (350000, 5600000, 32, "N"),
                 (350500, 5600500, 32, "N"),
             ]
-            coords, source_zone = load_coordinates(args, return_zone=True)
+            coords, source_zone = load_coordinates(args)
 
         assert source_zone == 32
         assert coords == [(350500.0, 5600500.0)]
@@ -255,7 +255,7 @@ class TestLoadCoordinatesTiles:
             utm_zone=32,
         )
 
-        coords = load_coordinates(args)
+        coords, _ = load_coordinates(args)
 
         assert len(coords) == 1
         # Default grid: center at 350500, 5600500
@@ -269,7 +269,7 @@ class TestLoadCoordinatesTiles:
             utm_zone=32,
         )
 
-        coords = load_coordinates(args)
+        coords, _ = load_coordinates(args)
 
         assert len(coords) == 2
         assert coords[0] == (350500.0, 5600500.0)
@@ -303,12 +303,12 @@ class TestLoadCoordinatesPygeon:
         args = Namespace(command="pygeon", dataset_path="/fake/path")
         raw_coords = [(52.5, 13.4, 100.0), (52.6, 13.5, 110.0)]
 
-        with patch("georaffer.inputs.load_from_pygeon") as mock_load:
-            with patch("georaffer.grids.latlon_array_to_utm") as mock_utm:
+        with patch("georaffer.cli.load_from_pygeon") as mock_load:
+            with patch("georaffer.cli.latlon_array_to_utm") as mock_utm:
                 mock_load.return_value = raw_coords
                 mock_utm.return_value = ([1.0, 2.0], [3.0, 4.0])
 
-                coords, source_zone = load_coordinates(args, return_zone=True)
+                coords, source_zone = load_coordinates(args)
 
         assert source_zone == 33
         assert coords == [(1.0, 3.0), (2.0, 4.0)]
