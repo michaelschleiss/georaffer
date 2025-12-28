@@ -8,6 +8,7 @@ import requests
 
 from georaffer.config import FEED_TIMEOUT, NRW_GRID_SIZE, NRW_JP2_PATTERN, NRW_LAZ_PATTERN, Region
 from georaffer.downloaders.base import RegionDownloader
+from georaffer.runtime import parallel_map
 
 
 class NRWDownloader(RegionDownloader):
@@ -242,27 +243,34 @@ class NRWDownloader(RegionDownloader):
         successful_years = []
         failed_years = []
 
-        for hist_year in historic_years:
+        def fetch_year(hist_year: int) -> dict | None:
+            """Fetch a single year's feed. Returns tiles_dict or None on error."""
             feed_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{hist_year}/index.xml"
             base_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{hist_year}/"
-
             try:
-                historic_tiles = self._parse_jp2_feed_with_year(self._session, feed_url, base_url)
-                added = 0
-                for coords, (url, year) in historic_tiles.items():
-                    key = (coords, year)
-                    if key in all_tiles:
-                        # Same coords+year already loaded (from current feed)
-                        duplicates_skipped += 1
-                    else:
-                        all_tiles[key] = url
-                        added += 1
-                total_historic += added
-                successful_years.append(f"{hist_year}:+{added}")
+                return self._parse_jp2_feed_with_year(self._session, feed_url, base_url)
             except Exception:
+                return None
+
+        # Fetch all years in parallel
+        for hist_year, historic_tiles in parallel_map(fetch_year, historic_years, max_workers=8):
+            if historic_tiles is None:
                 failed_years.append(str(hist_year))
+                continue
+            added = 0
+            for coords, (url, year) in historic_tiles.items():
+                key = (coords, year)
+                if key in all_tiles:
+                    duplicates_skipped += 1
+                else:
+                    all_tiles[key] = url
+                    added += 1
+            total_historic += added
+            successful_years.append(f"{hist_year}:+{added}")
 
         if successful_years:
+            # Sort by year for consistent output
+            successful_years.sort(key=lambda s: int(s.split(":")[0]))
             print(f"  Historic: {', '.join(successful_years)}")
         if failed_years:
             print(f"  Skipped (format mismatch): {', '.join(failed_years)}")

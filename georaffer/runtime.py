@@ -9,10 +9,13 @@ import random
 import signal
 import threading
 import time
-from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor
+from collections.abc import Callable, Generator, Iterable
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, Optional, TypeVar
+
+T = TypeVar("T")
+R = TypeVar("R")
 
 
 class InterruptManager:
@@ -201,3 +204,25 @@ def restore_signal_handlers(old_int: Callable | None, old_term: Callable | None)
     if old_term is not None:
         with contextlib.suppress(ValueError, OSError):
             signal.signal(signal.SIGTERM, old_term)
+
+
+def parallel_map(
+    fn: Callable[[T], R],
+    items: Iterable[T],
+    max_workers: int = 4,
+) -> Generator[tuple[T, R], None, None]:
+    """Run fn on each item in parallel, yield (item, result) pairs as they complete.
+
+    Args:
+        fn: Function to apply to each item
+        items: Iterable of items to process
+        max_workers: Maximum number of parallel workers
+
+    Yields:
+        (item, result) tuples in completion order
+    """
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(fn, item): item for item in items}
+        for fut in as_completed(futures):
+            item = futures[fut]
+            yield item, fut.result()
