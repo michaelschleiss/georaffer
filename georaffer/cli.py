@@ -12,8 +12,8 @@ from rasterio.warp import transform_bounds
 from georaffer import __version__
 from georaffer.align import align_to_reference
 from georaffer.config import DEFAULT_WORKERS, METERS_PER_KM, OUTPUT_TILE_SIZE_KM, UTM_ZONE, Region
-from georaffer.grids import dedupe_by_output_tile, latlon_array_to_utm, tile_to_utm_center
-from georaffer.inputs import load_from_bbox, load_from_csv, load_from_geotiff, load_from_pygeon
+from georaffer import grids
+from georaffer import inputs
 from georaffer.pipeline import process_tiles
 from georaffer.runtime import install_interrupt_signal_handlers, restore_signal_handlers
 
@@ -43,7 +43,9 @@ class QuietArgumentParser(argparse.ArgumentParser):
         sys.exit(2)
 
 
-def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]], int]:
+def load_coordinates(
+    args: argparse.Namespace, *, return_zone: bool = False
+) -> list[tuple[float, float]] | tuple[list[tuple[float, float]], int]:
     """Load coordinates based on CLI arguments."""
 
     # Use output tile size consistently for all coordinate loading
@@ -82,7 +84,7 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
                 f"--cols must be two comma-separated column names (e.g. 'lon,lat'), got: '{args.cols}'"
             )
         x_col, y_col = parts
-        raw_coords = load_from_csv(args.file, x_col, y_col)
+        raw_coords = inputs.load_from_csv(args.file, x_col, y_col)
         # Auto-detect lat/lon vs UTM by value ranges (consistent with bbox)
         sample = raw_coords[:100] if len(raw_coords) > 100 else raw_coords
         is_latlon = all(abs(c[0]) < 180 and abs(c[1]) < 90 for c in sample)
@@ -122,10 +124,10 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
             source_zone = _require_utm_zone()
 
         # load_from_bbox returns UTM tile centers directly
-        coords = load_from_bbox(min_x, min_y, max_x, max_y, tile_size_m)
+        coords = inputs.load_from_bbox(min_x, min_y, max_x, max_y, tile_size_m)
 
     elif args.command == "tif":
-        bounds, crs = load_from_geotiff(args.tif)
+        bounds, crs = inputs.load_from_geotiff(args.tif)
         min_x, min_y, max_x, max_y = bounds
 
         epsg = crs.to_epsg()
@@ -155,10 +157,10 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
             )
 
         # load_from_bbox returns UTM tile centers directly
-        coords = load_from_bbox(min_x, min_y, max_x, max_y, tile_size_m)
+        coords = inputs.load_from_bbox(min_x, min_y, max_x, max_y, tile_size_m)
 
     elif args.command == "pygeon":
-        raw_coords = load_from_pygeon(args.dataset_path)
+        raw_coords = inputs.load_from_pygeon(args.dataset_path)
         # pygeon returns (lat, lon, alt) - vectorized UTM conversion
         coords_array = np.array(raw_coords)
         if coords_array.size == 0:
@@ -172,7 +174,7 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
             if len(unique_zones) > 1:
                 raise ValueError("Pygeon dataset spans multiple UTM zones; split input by zone.")
             source_zone = unique_zones.pop()
-            utm_x, utm_y = latlon_array_to_utm(
+            utm_x, utm_y = grids.latlon_array_to_utm(
                 coords_array[:, 0], coords_array[:, 1], force_zone_number=source_zone
             )
             coords = list(zip(utm_x, utm_y))
@@ -182,9 +184,11 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
         # Parse tile coordinates: "350,5600 351,5601" (km indices)
         for tile_str in args.tiles:
             x, y = map(int, tile_str.split(","))
-            coords.append(tile_to_utm_center(x, y, tile_size_m))
+            coords.append(grids.tile_to_utm_center(x, y, tile_size_m))
 
-    return coords, source_zone
+    if return_zone:
+        return coords, source_zone
+    return coords
 
 
 def pixel_size_to_resolution(pixel_size: float, tile_size_km: float) -> int:
@@ -518,7 +522,7 @@ Details:
 
         # Load coordinates
         print(f"Loading coordinates from {args.command}...", flush=True)
-        coords, source_zone = load_coordinates(args)
+        coords, source_zone = load_coordinates(args, return_zone=True)
 
         if not coords:
             print("Error: No coordinates found", file=sys.stderr)
@@ -528,7 +532,7 @@ Details:
 
         # Deduplicate at output tile level
 
-        unique_coords = dedupe_by_output_tile(coords, OUTPUT_TILE_SIZE_KM)
+        unique_coords = grids.dedupe_by_output_tile(coords, OUTPUT_TILE_SIZE_KM)
         print(f"Deduplicated {len(coords)} coordinates to {len(unique_coords)} center tiles")
 
         # Build imagery_from tuple from --from/--to flags
