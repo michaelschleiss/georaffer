@@ -103,11 +103,9 @@ def _fetch_remote_size(downloader: Any, url: str, timeout: int) -> int | None:
     session = getattr(downloader, "session", None)
     if session is None:
         session = requests.Session()
-    verify_ssl = getattr(downloader, "verify_ssl", True)
-
     try:
         with session.head(
-            url, allow_redirects=True, timeout=timeout, verify=verify_ssl
+            url, allow_redirects=True, timeout=timeout
         ) as response:
             if response.ok:
                 size = _parse_content_length(response.headers)
@@ -123,7 +121,6 @@ def _fetch_remote_size(downloader: Any, url: str, timeout: int) -> int | None:
             stream=True,
             allow_redirects=True,
             timeout=timeout,
-            verify=verify_ssl,
         ) as response:
             if response.ok:
                 return _parse_content_length(response.headers)

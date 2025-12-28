@@ -160,12 +160,6 @@ class RegionDownloader(ABC):
         """URL to LAZ tile feed."""
         pass
 
-    @property
-    @abstractmethod
-    def verify_ssl(self) -> bool:
-        """Whether to verify SSL certificates for this region."""
-        pass
-
     def get_available_tiles(self) -> tuple[dict, dict]:
         """Get available JP2 and LAZ tiles from feeds.
 
@@ -208,7 +202,7 @@ class RegionDownloader(ABC):
                 if delay > 0:
                     time.sleep(delay)
 
-                response = self._session.get(feed_url, timeout=FEED_TIMEOUT, verify=self.verify_ssl)
+                response = self._session.get(feed_url, timeout=FEED_TIMEOUT)
                 response.raise_for_status()
                 root = ET.fromstring(response.content)
 
@@ -255,7 +249,7 @@ class RegionDownloader(ABC):
                     time.sleep(delay)
 
                 with self._session.get(
-                    url, timeout=DEFAULT_TIMEOUT, stream=True, verify=self.verify_ssl
+                    url, timeout=DEFAULT_TIMEOUT, stream=True
                 ) as response:
                     response.raise_for_status()
 

@@ -29,10 +29,6 @@ class ConcreteDownloader(RegionDownloader):
     def laz_feed_url(self):
         return "http://example.com/laz_feed.xml"
 
-    @property
-    def verify_ssl(self):
-        return True
-
 
 class TestRegionDownloaderInit:
     """Tests for downloader initialization."""

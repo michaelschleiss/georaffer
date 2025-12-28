@@ -81,10 +81,6 @@ class NRWDownloader(RegionDownloader):
     def laz_feed_url(self) -> str:
         return self._laz_feed_url
 
-    @property
-    def verify_ssl(self) -> bool:
-        return True
-
     def _parse_jp2_feed_with_year(
         self, session: requests.Session, feed_url: str, base_url: str
     ) -> dict[tuple[int, int], tuple[str, int]]:
@@ -100,7 +96,7 @@ class NRWDownloader(RegionDownloader):
             - Key: (grid_x, grid_y) tile coordinates in km
             - Value: (url, year) tuple with download URL and acquisition year
         """
-        response = session.get(feed_url, timeout=FEED_TIMEOUT, verify=self.verify_ssl)
+        response = session.get(feed_url, timeout=FEED_TIMEOUT)
         response.raise_for_status()
         root = ET.fromstring(response.content)
 
@@ -108,7 +104,7 @@ class NRWDownloader(RegionDownloader):
         folders = root.findall(".//folder")
         if folders and any(folder.get("name") == "epsg_25832" for folder in folders):
             epsg_feed_url = feed_url.replace("/index.xml", "/epsg_25832/index.xml")
-            response = session.get(epsg_feed_url, timeout=FEED_TIMEOUT, verify=self.verify_ssl)
+            response = session.get(epsg_feed_url, timeout=FEED_TIMEOUT)
             response.raise_for_status()
             root = ET.fromstring(response.content)
             base_url = base_url + "epsg_25832/"
@@ -133,7 +129,7 @@ class NRWDownloader(RegionDownloader):
     def _available_historic_years(self) -> list[int]:
         try:
             response = self._session.get(
-                self.HISTORIC_INDEX_URL, timeout=FEED_TIMEOUT, verify=self.verify_ssl
+                self.HISTORIC_INDEX_URL, timeout=FEED_TIMEOUT
             )
             response.raise_for_status()
             root = ET.fromstring(response.content)
@@ -159,7 +155,7 @@ class NRWDownloader(RegionDownloader):
         folders = root.findall(".//folder")
         if folders and any(folder.get("name") == "epsg_25832" for folder in folders):
             epsg_feed_url = self._jp2_feed_url.replace("/index.xml", "/epsg_25832/index.xml")
-            response = session.get(epsg_feed_url, timeout=FEED_TIMEOUT, verify=self.verify_ssl)
+            response = session.get(epsg_feed_url, timeout=FEED_TIMEOUT)
             response.raise_for_status()
             root = ET.fromstring(response.content)
             base_url = self.jp2_base_url + "epsg_25832/"

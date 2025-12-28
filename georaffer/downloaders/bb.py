@@ -43,10 +43,6 @@ class BrandenburgDownloader(RegionDownloader):
     def laz_feed_url(self) -> str:
         return self._laz_feed_url
 
-    @property
-    def verify_ssl(self) -> bool:
-        return True
-
     def utm_to_grid_coords(
         self, utm_x: float, utm_y: float
     ) -> tuple[tuple[int, int], tuple[int, int]]:
@@ -77,15 +73,11 @@ class BrandenburgDownloader(RegionDownloader):
                 delay = self._backoff_delay(attempt)
                 if delay > 0:
                     time.sleep(delay)
-                dop_resp = self._session.get(
-                    self.DOP_BASE_URL, timeout=FEED_TIMEOUT, verify=self.verify_ssl
-                )
+                dop_resp = self._session.get(self.DOP_BASE_URL, timeout=FEED_TIMEOUT)
                 dop_resp.raise_for_status()
                 jp2_tiles = self._parse_dop_listing(dop_resp.text)
 
-                bdom_resp = self._session.get(
-                    self.BDOM_BASE_URL, timeout=FEED_TIMEOUT, verify=self.verify_ssl
-                )
+                bdom_resp = self._session.get(self.BDOM_BASE_URL, timeout=FEED_TIMEOUT)
                 bdom_resp.raise_for_status()
                 laz_tiles = self._parse_bdom_listing(bdom_resp.text)
                 return jp2_tiles, laz_tiles

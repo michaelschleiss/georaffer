@@ -25,7 +25,7 @@ from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
 
 import requests
-import urllib3
+import truststore
 
 from georaffer.config import (
     FEED_TIMEOUT,
@@ -40,8 +40,7 @@ from georaffer.config import (
 from georaffer.downloaders.base import RegionDownloader
 from georaffer.downloaders.wms import WMSImagerySource
 
-# Suppress SSL warnings (RLP has certificate issues)
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+truststore.inject_into_ssl()
 
 
 class RLPDownloader(RegionDownloader):
@@ -102,7 +101,6 @@ class RLPDownloader(RegionDownloader):
                 tile_size_m=RLP_GRID_SIZE,
                 resolution_m=0.2,
                 session=self._session,
-                verify_ssl=self.verify_ssl,
             )
         return self._wms
 
@@ -127,10 +125,6 @@ class RLPDownloader(RegionDownloader):
     @property
     def laz_feed_url(self) -> str:
         return self._laz_feed_url
-
-    @property
-    def verify_ssl(self) -> bool:
-        return False  # RLP has SSL certificate issues
 
     @staticmethod
     def _is_wms_getmap(url: str) -> bool:
@@ -322,7 +316,7 @@ class RLPDownloader(RegionDownloader):
                 if delay > 0:
                     time.sleep(delay)
 
-                response = self._session.get(feed_url, timeout=FEED_TIMEOUT, verify=self.verify_ssl)
+                response = self._session.get(feed_url, timeout=FEED_TIMEOUT)
                 response.raise_for_status()
 
                 # Wrap raw <link> elements in a root element for valid XML

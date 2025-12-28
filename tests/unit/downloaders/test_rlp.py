@@ -22,11 +22,6 @@ class TestRLPDownloaderInit:
         assert "geobasis-rlp.de" in downloader.jp2_feed_url
         assert "geobasis-rlp.de" in downloader.laz_feed_url
 
-    def test_verify_ssl_is_false(self, tmp_path):
-        """Test SSL verification is disabled for RLP."""
-        downloader = RLPDownloader(str(tmp_path))
-        assert downloader.verify_ssl is False
-
 
 class TestRLPUtmToGridCoords:
     """Tests for UTM to grid coordinate conversion."""
