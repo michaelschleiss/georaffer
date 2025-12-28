@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from georaffer.config import Region, get_tile_size_km, UTM_ZONE_BY_REGION
+from georaffer.config import UTM_ZONE_BY_REGION, Region, get_tile_size_km
 from georaffer.conversion import convert_tiles
 from georaffer.downloaders import BrandenburgDownloader, NRWDownloader, RLPDownloader
 from georaffer.downloading import DownloadTask, download_parallel_streams

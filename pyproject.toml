@@ -149,3 +149,11 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["georaffer"]
+
+[tool.pyright]
+pythonVersion = "3.10"
+venvPath = ".pixi/envs"
+venv = "default"
+typeCheckingMode = "basic"
+diagnosticMode = "workspace"
+reportUnusedParameter = "none"

@@ -34,8 +34,8 @@ from georaffer.config import (
     RLP_GRID_SIZE,
     RLP_JP2_PATTERN,
     RLP_LAZ_PATTERN,
-    Region,
     WMS_QUERY_WORKERS,
+    Region,
 )
 from georaffer.downloaders.base import RegionDownloader
 from georaffer.downloaders.wms import WMSImagerySource

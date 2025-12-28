@@ -8,8 +8,7 @@ import pytest
 import rasterio
 from rasterio.transform import from_origin
 
-from georaffer.cli import load_coordinates, normalize_regions
-from georaffer.cli import validate_args
+from georaffer.cli import load_coordinates, normalize_regions, validate_args
 from georaffer.config import Region
 
 

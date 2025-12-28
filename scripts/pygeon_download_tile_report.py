@@ -8,8 +8,8 @@ import re
 import sys
 import threading
 import time
-from contextlib import suppress
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import suppress
 from pathlib import Path
 
 import numpy as np
@@ -26,8 +26,8 @@ from georaffer.config import (
     METERS_PER_KM,
     MIN_FILE_SIZE,
     OUTPUT_TILE_SIZE_KM,
-    Region,
     UTM_ZONE_BY_REGION,
+    Region,
 )
 from georaffer.downloaders import BrandenburgDownloader, NRWDownloader, RLPDownloader
 from georaffer.grids import generate_tiles_by_zone, latlon_array_to_utm
