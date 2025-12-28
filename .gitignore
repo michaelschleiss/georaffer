@@ -32,6 +32,7 @@ data/
 tiles/
 test/
 *.tmp
+uv.lock
 
 
 # Local docs (generated or personal notes)
