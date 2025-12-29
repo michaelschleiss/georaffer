@@ -5,6 +5,7 @@ Download source: https://data.geobasis-bb.de/geobasis/daten/
 """
 
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
 from typing import ClassVar
@@ -18,6 +19,10 @@ from georaffer.config import (
     Region,
 )
 from georaffer.downloaders.base import Catalog, RegionDownloader
+
+# OGC API pagination settings
+OGC_PAGE_SIZE = 1000  # Server max per request
+OGC_PARALLEL_WORKERS = 8
 
 OGC_API_BASE = "https://ogc-api.geobasis-bb.de/datasets/aktualitaeten"
 
@@ -137,33 +142,40 @@ class BBDownloader(RegionDownloader):
         return Catalog(image_tiles=tiles, dsm_tiles=dsm_tiles)
 
     def _fetch_ogc_tiles(self) -> list[tuple[str, date]]:
-        """Fetch all DOP tiles from OGC API."""
+        """Fetch all DOP tiles from OGC API using parallel pagination.
+
+        Makes a first request to get total count, then fetches all pages
+        concurrently. Much faster than sequential pagination or bulk download.
+        """
         url = f"{OGC_API_BASE}/collections/dop_single/items"
 
-        # Try bulk download first (faster)
-        try:
-            resp = self._session.get(url, params={"f": "json", "bulk": "true"}, timeout=120)
-            resp.raise_for_status()
-            return self._parse_ogc_features(resp.json().get("features", []))
-        except Exception:
-            pass
+        # Get total count from first page
+        resp = self._session.get(
+            url, params={"f": "json", "limit": 1}, timeout=FEED_TIMEOUT
+        )
+        resp.raise_for_status()
+        total = resp.json().get("numberMatched", 0)
+        if total == 0:
+            return []
 
-        # Fallback to pagination
-        results = []
-        offset = 0
-        while True:
-            resp = self._session.get(
-                url, params={"f": "json", "limit": 1000, "offset": offset}, timeout=FEED_TIMEOUT
+        # Fetch all pages in parallel
+        offsets = range(0, total, OGC_PAGE_SIZE)
+
+        def fetch_page(offset: int) -> list[tuple[str, date]]:
+            page_resp = self._session.get(
+                url,
+                params={"f": "json", "limit": OGC_PAGE_SIZE, "offset": offset},
+                timeout=FEED_TIMEOUT,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            features = data.get("features", [])
-            if not features:
-                break
-            results.extend(self._parse_ogc_features(features))
-            offset += data.get("numberReturned", len(features))
-            if offset >= data.get("numberMatched", 0):
-                break
+            page_resp.raise_for_status()
+            return self._parse_ogc_features(page_resp.json().get("features", []))
+
+        results: list[tuple[str, date]] = []
+        with ThreadPoolExecutor(max_workers=OGC_PARALLEL_WORKERS) as executor:
+            futures = {executor.submit(fetch_page, o): o for o in offsets}
+            for fut in as_completed(futures):
+                results.extend(fut.result())
+
         return results
 
     def _parse_ogc_features(self, features: list[dict]) -> list[tuple[str, date]]:
