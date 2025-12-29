@@ -4,7 +4,6 @@ Catalog source: OGC API Features at ogc-api.geobasis-bb.de
 Download source: https://data.geobasis-bb.de/geobasis/daten/
 """
 
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from pathlib import Path
@@ -83,16 +82,6 @@ class BBDownloader(RegionDownloader):
         }
         return image_tiles, catalog.dsm_tiles
 
-    def _parse_bdom_listing(self, html: str) -> dict[tuple[int, int], str]:
-        """Parse HTML directory listing for bDOM tiles."""
-        tiles: dict[tuple[int, int], str] = {}
-        for match in re.finditer(r'href="(bdom_(\d{5})-(\d{4})\.zip)"', html):
-            filename, east_code, north_code = match.groups()
-            coords = self._parse_coords(east_code, north_code)
-            if coords:
-                tiles[coords] = f"{self.BDOM_BASE_URL}{filename}"
-        return tiles
-
     def _parse_coords(self, east_code: str, north_code: str) -> tuple[int, int] | None:
         """Parse 5-digit easting and 4-digit northing into grid coords."""
         try:
@@ -108,46 +97,43 @@ class BBDownloader(RegionDownloader):
     def _load_catalog(self) -> Catalog:
         """Load BB catalog from OGC API Features.
 
-        Uses bulk download (~2s for 32k tiles) with pagination fallback.
+        Uses parallel pagination for both DOP and bDOM collections.
         The 'creationdate' field is the Bildflugdatum (verified against ZIP metadata).
         """
-        tiles: dict[tuple[int, int], dict[int, str]] = {}
-
+        # DOP tiles (with year tracking)
         if not self.quiet:
             print("  Loading DOP tiles from OGC API...")
-
-        try:
-            for sheetnr, creation_date in self._fetch_ogc_tiles():
-                east, north = sheetnr.split("-")
-                coords = self._parse_coords(east, north)
-                if coords:
-                    year = creation_date.year
-                    tiles.setdefault(coords, {})[year] = f"{self.DOP_BASE_URL}dop_{sheetnr}.zip"
-
-            if not self.quiet:
-                print(f"    {len(tiles)} tiles")
-        except Exception as e:
-            if not self.quiet:
-                print(f"  Warning: Failed to load from OGC API: {e}")
-
-        # bDOM from HTML listing (not in OGC API)
+        image_tiles: dict[tuple[int, int], dict[int, str]] = {}
+        for sheetnr, creation_date in self._fetch_ogc_collection("dop_single"):
+            east, north = sheetnr.split("-")
+            coords = self._parse_coords(east, north)
+            if coords:
+                year = creation_date.year
+                image_tiles.setdefault(coords, {})[year] = f"{self.DOP_BASE_URL}dop_{sheetnr}.zip"
         if not self.quiet:
-            print("  Loading bDOM tiles from HTML listing...")
-        resp = self._session.get(self.BDOM_BASE_URL, timeout=FEED_TIMEOUT)
-        resp.raise_for_status()
-        dsm_tiles = self._parse_bdom_listing(resp.text)
+            print(f"    {len(image_tiles)} tiles")
+
+        # bDOM tiles (latest only, no year tracking needed)
+        if not self.quiet:
+            print("  Loading bDOM tiles from OGC API...")
+        dsm_tiles: dict[tuple[int, int], str] = {}
+        for sheetnr, _ in self._fetch_ogc_collection("bdom_single"):
+            east, north = sheetnr.split("-")
+            coords = self._parse_coords(east, north)
+            if coords:
+                dsm_tiles[coords] = f"{self.BDOM_BASE_URL}bdom_{sheetnr}.zip"
         if not self.quiet:
             print(f"    {len(dsm_tiles)} tiles")
 
-        return Catalog(image_tiles=tiles, dsm_tiles=dsm_tiles)
+        return Catalog(image_tiles=image_tiles, dsm_tiles=dsm_tiles)
 
-    def _fetch_ogc_tiles(self) -> list[tuple[str, date]]:
-        """Fetch all DOP tiles from OGC API using parallel pagination.
+    def _fetch_ogc_collection(self, collection: str) -> list[tuple[str, date]]:
+        """Fetch all tiles from an OGC API collection using parallel pagination.
 
         Makes a first request to get total count, then fetches all pages
         concurrently. Much faster than sequential pagination or bulk download.
         """
-        url = f"{OGC_API_BASE}/collections/dop_single/items"
+        url = f"{OGC_API_BASE}/collections/{collection}/items"
 
         # Get total count from first page
         resp = self._session.get(

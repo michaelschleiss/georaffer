@@ -117,40 +117,6 @@ class TestBBParseCoords:
         assert downloader._parse_coords(east, north) is None
 
 
-class TestBBParseBdomListing:
-    """Tests for bDOM HTML listing parsing."""
-
-    @pytest.fixture
-    def downloader(self, tmp_path):
-        return BBDownloader(str(tmp_path))
-
-    def test_parse_simple_listing(self, downloader):
-        html = """
-        <a href="bdom_33250-5886.zip">bdom_33250-5886.zip</a>
-        <a href="bdom_33251-5886.zip">bdom_33251-5886.zip</a>
-        <a href="bdom_33250-5887.zip">bdom_33250-5887.zip</a>
-        """
-        tiles = downloader._parse_bdom_listing(html)
-        assert len(tiles) == 3
-        assert (250, 5886) in tiles
-        assert (251, 5886) in tiles
-        assert (250, 5887) in tiles
-
-    def test_parse_listing_skips_zone32(self, downloader):
-        html = """
-        <a href="bdom_33250-5886.zip">bdom_33250-5886.zip</a>
-        <a href="bdom_32250-5886.zip">bdom_32250-5886.zip</a>
-        """
-        tiles = downloader._parse_bdom_listing(html)
-        assert len(tiles) == 1
-        assert (250, 5886) in tiles
-
-    def test_parse_listing_generates_correct_urls(self, downloader):
-        html = '<a href="bdom_33250-5886.zip">bdom_33250-5886.zip</a>'
-        tiles = downloader._parse_bdom_listing(html)
-        assert tiles[(250, 5886)] == "https://data.geobasis-bb.de/geobasis/daten/bdom/tif/bdom_33250-5886.zip"
-
-
 class TestBBParseOGCFeatures:
     """Tests for OGC API feature parsing."""
 
