@@ -2,7 +2,6 @@
 
 import os
 import re
-import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -130,28 +129,6 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
 
     # No match - caller should handle None appropriately
     return None
-
-
-def get_rlp_quadrant_splits(half: int, original_x: int, original_y: int):
-    """Get slice definitions for splitting RLP 2km tile into 4x1km quadrants.
-
-    Args:
-        half: Half tile size in pixels
-        original_x, original_y: Original 2km grid coordinates
-
-    Returns:
-        List of (row_slice, col_slice, new_grid_x, new_grid_y) tuples where:
-        - row_slice: Slice object for extracting rows from source array
-        - col_slice: Slice object for extracting columns from source array
-        - new_grid_x, new_grid_y: Grid coordinates for this quadrant (km indices)
-        Order: [SW, SE, NW, NE] quadrants
-    """
-    return [
-        (slice(half, None), slice(None, half), original_x, original_y),  # SW
-        (slice(half, None), slice(half, None), original_x + 1, original_y),  # SE
-        (slice(None, half), slice(None, half), original_x, original_y + 1),  # NW
-        (slice(None, half), slice(half, None), original_x + 1, original_y + 1),  # NE
-    ]
 
 
 def generate_split_output_path(
@@ -284,36 +261,6 @@ def resample_raster(
                 **reproject_kwargs,
             )
     return output_data, output_transform
-
-
-def uniquify_output_path(path: Path) -> Path:
-    """Return a unique path, reserving it atomically to avoid races across processes.
-
-    Uses atomic file creation (O_EXCL) to prevent TOCTOU race conditions when
-    multiple processes try to write to the same path simultaneously. If the path
-    is available, it's reserved by creating an empty file. If taken, generates a
-    unique temporary filename in the same directory.
-
-    Args:
-        path: Desired output file path
-
-    Returns:
-        The original path if available, otherwise a unique temporary path in the
-        same directory with pattern "{prefix}__{random}{suffix}"
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Atomic create - fails if file exists (cross-platform)
-    try:
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
-        return path
-    except FileExistsError:
-        fd, tmp_path = tempfile.mkstemp(
-            prefix=f"{path.stem}__", suffix=path.suffix, dir=path.parent
-        )
-        os.close(fd)
-        return Path(tmp_path)
 
 
 def write_geotiff(

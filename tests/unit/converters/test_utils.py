@@ -14,7 +14,6 @@ from georaffer.converters.utils import (
     parse_rlp_tile_coords,
     parse_tile_coords,
     resample_raster,
-    uniquify_output_path,
 )
 
 
@@ -293,26 +292,3 @@ class TestResampleRaster:
         assert out_data.max() > 0
 
 
-class TestUniquifyOutputPath:
-    """Tests for uniquify_output_path function."""
-
-    def test_returns_original_when_file_doesnt_exist(self, tmp_path):
-        """When target path doesn't exist, return it unchanged."""
-        path = tmp_path / "output.tif"
-        result = uniquify_output_path(path)
-        assert result == path
-        # File should be touched/reserved
-        assert path.exists()
-
-    def test_creates_unique_path_when_file_exists(self, tmp_path):
-        """When target path exists, create unique temp path."""
-        path = tmp_path / "output.tif"
-        # Pre-create the file
-        path.touch()
-
-        result = uniquify_output_path(path)
-        # Should be a different path with temp suffix
-        assert result != path
-        assert "output__" in result.name
-        assert result.suffix == ".tif"
-        assert result.exists()

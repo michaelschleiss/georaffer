@@ -1,17 +1,15 @@
 """Runtime utilities for long-running operations.
 
-Provides interrupt handling, retry policies with jitter, and executor management.
+Provides interrupt handling and executor management.
 """
 
 import contextlib
 import multiprocessing
-import random
 import signal
 import threading
 import time
 from collections.abc import Callable, Generator, Iterable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
 from typing import Any, Optional, TypeVar
 
 T = TypeVar("T")
@@ -60,48 +58,6 @@ class InterruptManager:
     def wait(self, timeout: float | None = None) -> bool:
         """Wait for interrupt signal."""
         return self._event.wait(timeout)
-
-
-@dataclass
-class RetryPolicy:
-    """Configuration for retry behavior with exponential backoff and jitter.
-
-    Attributes:
-        max_retries: Maximum number of retry attempts
-        base_delay: Initial delay in seconds
-        max_delay: Maximum delay cap in seconds
-        jitter_factor: Random jitter range (0.25 = +/-25%)
-    """
-
-    max_retries: int = 5
-    base_delay: float = 1.0
-    max_delay: float = 60.0
-    jitter_factor: float = 0.25
-
-
-# Default retry policy for most operations
-DEFAULT_RETRY_POLICY = RetryPolicy()
-
-
-def calculate_delay(attempt: int, policy: RetryPolicy) -> float:
-    """Calculate delay for retry attempt with exponential backoff and jitter.
-
-    Args:
-        attempt: Current attempt number (0-indexed)
-        policy: Retry policy configuration
-
-    Returns:
-        Delay in seconds before next retry
-    """
-    if attempt <= 0:
-        return 0.0
-
-    # Exponential backoff capped at max_delay
-    base = min(policy.base_delay * (2 ** (attempt - 1)), policy.max_delay)
-
-    # Add jitter to avoid thundering herd
-    jitter = random.uniform(1 - policy.jitter_factor, 1 + policy.jitter_factor)
-    return base * jitter
 
 
 def shutdown_executor(
@@ -165,7 +121,7 @@ def install_signal_handlers(
     old_int = None
     old_term = None
 
-    def handler(signum, frame):
+    def handler(_signum, _frame):
         on_interrupt()
 
     try:

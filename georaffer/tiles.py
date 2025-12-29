@@ -3,7 +3,7 @@
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Any, NamedTuple
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import numpy as np
@@ -52,13 +52,6 @@ def _filename_from_url(url: str) -> str:
     return os.path.basename(url)
 
 
-class TileCoord(NamedTuple):
-    """Immutable tile coordinate."""
-
-    x: int
-    y: int
-
-
 @dataclass
 class RegionCatalog:
     """Catalog for a single region's tiles."""
@@ -101,15 +94,6 @@ class TileSet:
     def laz_count(self, region: str) -> int:
         """LAZ tile count for a specific region."""
         return len(self.laz.get(region, set()))
-
-
-@dataclass
-class DownloadSpec:
-    """Specification for a single tile download."""
-
-    url: str
-    path: str
-    source: str  # '{region}_jp2' or '{region}_laz'
 
 
 def _build_catalog_index(
