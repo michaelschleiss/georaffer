@@ -37,7 +37,7 @@ from georaffer.config import (
     WMS_QUERY_WORKERS,
     Region,
 )
-from georaffer.downloaders.base import RegionDownloader
+from georaffer.downloaders.base import Catalog, RegionDownloader
 from georaffer.downloaders.wms import WMSImagerySource
 
 truststore.inject_into_ssl()
@@ -379,3 +379,7 @@ class RLPDownloader(RegionDownloader):
                 laz_tiles[(grid_x, grid_y)] = url
 
         return laz_tiles
+
+    def _load_catalog(self) -> Catalog:
+        """Load RLP catalog from ATOM + WMS. TODO: implement."""
+        return Catalog()

@@ -3,6 +3,7 @@
 import os
 import re
 from enum import Enum
+from pathlib import Path
 
 # =============================================================================
 # Regions
@@ -73,6 +74,14 @@ RETRY_MAX_WAIT = 300  # 5 minutes max
 WMS_QUERY_WORKERS = 16
 WMS_NRW_BUFFER_M = 500
 WMS_RLP_BUFFER_M = 1000
+
+
+# =============================================================================
+# Catalog Cache
+# =============================================================================
+
+CATALOG_CACHE_DIR = Path("~/.cache/georaffer").expanduser()
+CATALOG_TTL_DAYS = 30
 
 
 # =============================================================================

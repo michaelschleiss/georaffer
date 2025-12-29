@@ -1,5 +1,6 @@
 """Base class for region-specific tile downloaders."""
 
+import json
 import os
 import sys
 import time
@@ -8,6 +9,8 @@ import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -17,6 +20,8 @@ from PIL import Image
 from requests.adapters import HTTPAdapter
 
 from georaffer.config import (
+    CATALOG_CACHE_DIR,
+    CATALOG_TTL_DAYS,
     CHUNK_SIZE,
     DEFAULT_TIMEOUT,
     FEED_TIMEOUT,
@@ -32,6 +37,44 @@ from georaffer.runtime import InterruptManager
 # Suppress PIL decompression bomb warnings for large aerial orthophotos.
 warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
 Image.MAX_IMAGE_PIXELS = None
+
+
+@dataclass
+class Catalog:
+    """Complete tile catalog for a region (all years).
+
+    Stores mapping of (grid_x, grid_y) -> {year: url} for all available tiles.
+    Used for caching tile availability to avoid repeated feed/WMS queries.
+    """
+
+    tiles: dict[tuple[int, int], dict[int, str]] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.now)
+
+    def is_stale(self, ttl_days: int = CATALOG_TTL_DAYS) -> bool:
+        """Check if catalog has exceeded TTL."""
+        return datetime.now() - self.created_at > timedelta(days=ttl_days)
+
+    def to_dict(self) -> dict:
+        """Serialize catalog to JSON-compatible dict."""
+        return {
+            "created_at": self.created_at.isoformat(),
+            "tiles": {
+                f"{x},{y}": {str(year): url for year, url in years.items()}
+                for (x, y), years in self.tiles.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Catalog":
+        """Deserialize catalog from JSON-compatible dict."""
+        tiles = {}
+        for coord_str, years in data.get("tiles", {}).items():
+            x, y = map(int, coord_str.split(","))
+            tiles[(x, y)] = {int(year): url for year, url in years.items()}
+        return cls(
+            tiles=tiles,
+            created_at=datetime.fromisoformat(data["created_at"]),
+        )
 
 
 class RegionDownloader(ABC):
@@ -55,7 +98,7 @@ class RegionDownloader(ABC):
             output_dir: Base directory for output files
             imagery_from: Optional (from_year, to_year) for historic imagery.
                 None = latest only. (2015, None) = all years from 2015. (2015, 2018) = years 2015-2018.
-            session: Optional requests.Session for dependency injection (testability)
+            session: Optional requests.Session for dependency injection; inject a mock for testing
         """
         self.region_name = region_name
         self.output_dir = output_dir
@@ -72,6 +115,10 @@ class RegionDownloader(ABC):
         # Directory structure
         self.raw_dir = Path(output_dir) / "raw"
         self.processed_dir = Path(output_dir) / "processed"
+
+        # Catalog cache (subclass sets _cache_path in its __init__)
+        self._catalog: Catalog | None = None
+        self._cache_path: Path | None = None
 
     @property
     def session(self) -> requests.Session:
@@ -191,6 +238,76 @@ class RegionDownloader(ABC):
             raise
 
         return jp2_tiles, laz_tiles
+
+    # =========================================================================
+    # Catalog caching
+    # =========================================================================
+
+    def fetch_catalog(self, refresh: bool = False) -> Catalog:
+        """Fetch and cache complete tile catalog for this region.
+
+        Checks instance cache first, then disk cache. If both miss (or refresh=True),
+        loads from sources via _load_catalog() and persists to disk.
+
+        Args:
+            refresh: Force reload from sources, ignoring cache
+
+        Returns:
+            Catalog with all available tiles for this region
+        """
+        # Instance cache hit
+        if self._catalog is not None and not refresh:
+            return self._catalog
+
+        # Disk cache hit
+        if not refresh:
+            self._catalog = self._read_cache()
+            if self._catalog is not None:
+                return self._catalog
+
+        # Load from sources and persist
+        self._catalog = self._load_catalog()
+        self._write_cache()
+        return self._catalog
+
+    @abstractmethod
+    def _load_catalog(self) -> Catalog:
+        """Load catalog from sources. Subclass must implement."""
+        pass
+
+    def _read_cache(self) -> Catalog | None:
+        """Read catalog from disk cache if fresh."""
+        if self._cache_path is None:
+            return None
+
+        try:
+            if not self._cache_path.exists():
+                return None
+
+            with open(self._cache_path) as f:
+                data = json.load(f)
+
+            catalog = Catalog.from_dict(data)
+
+            if catalog.is_stale():
+                return None
+
+            return catalog
+
+        except (json.JSONDecodeError, KeyError, ValueError):
+            return None
+
+    def _write_cache(self) -> None:
+        """Write catalog to disk cache."""
+        if self._cache_path is None or self._catalog is None:
+            return
+
+        try:
+            self._cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._cache_path, "w") as f:
+                json.dump(self._catalog.to_dict(), f, indent=2)
+        except OSError:
+            pass  # Cache write failure is not fatal
 
     def _fetch_and_parse_feed(self, feed_url: str, tile_type: str) -> dict[tuple[int, int], str]:
         """Fetch XML feed and parse using region-specific parser."""

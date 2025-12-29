@@ -7,7 +7,7 @@ from typing import ClassVar
 import requests
 
 from georaffer.config import FEED_TIMEOUT, NRW_GRID_SIZE, NRW_JP2_PATTERN, NRW_LAZ_PATTERN, Region
-from georaffer.downloaders.base import RegionDownloader
+from georaffer.downloaders.base import Catalog, RegionDownloader
 from georaffer.runtime import parallel_map
 
 
@@ -323,3 +323,7 @@ class NRWDownloader(RegionDownloader):
                 laz_tiles[(grid_x, grid_y)] = self.laz_base_url + filename
 
         return laz_tiles
+
+    def _load_catalog(self) -> Catalog:
+        """Load NRW catalog from ATOM feeds. TODO: implement."""
+        return Catalog()

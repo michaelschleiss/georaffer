@@ -20,7 +20,7 @@ from georaffer.config import (
     MAX_RETRIES,
     Region,
 )
-from georaffer.downloaders.base import RegionDownloader
+from georaffer.downloaders.base import Catalog, RegionDownloader
 
 
 class BrandenburgDownloader(RegionDownloader):
@@ -129,3 +129,7 @@ class BrandenburgDownloader(RegionDownloader):
         grid_x = int(east_code[2:])
         grid_y = int(match.group(2))
         return grid_x, grid_y
+
+    def _load_catalog(self) -> Catalog:
+        """Load BB catalog from HTML listings. TODO: implement."""
+        return Catalog()

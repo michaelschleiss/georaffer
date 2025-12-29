@@ -1,12 +1,14 @@
 """Tests for base downloader class."""
 
+import json
 import os
+from datetime import datetime, timedelta
 from io import BytesIO
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from georaffer.downloaders.base import RegionDownloader
+from georaffer.downloaders.base import Catalog, RegionDownloader
 
 
 class ConcreteDownloader(RegionDownloader):
@@ -28,6 +30,9 @@ class ConcreteDownloader(RegionDownloader):
     @property
     def laz_feed_url(self):
         return "http://example.com/laz_feed.xml"
+
+    def _load_catalog(self) -> Catalog:
+        return Catalog()
 
 
 class TestRegionDownloaderInit:
@@ -316,3 +321,194 @@ class TestGetAvailableTiles:
             with patch("georaffer.downloaders.base.MAX_RETRIES", 1):
                 with pytest.raises(RuntimeError):
                     downloader.get_available_tiles()
+
+
+class TestCatalog:
+    """Tests for Catalog dataclass."""
+
+    def test_catalog_creation(self):
+        """Test creating a catalog with tiles."""
+        tiles = {
+            (350, 5600): {2020: "http://example.com/2020.jp2", 2021: "http://example.com/2021.jp2"},
+            (351, 5600): {2020: "http://example.com/351_2020.jp2"},
+        }
+        catalog = Catalog(tiles=tiles)
+
+        assert len(catalog.tiles) == 2
+        assert catalog.tiles[(350, 5600)][2020] == "http://example.com/2020.jp2"
+        assert isinstance(catalog.created_at, datetime)
+
+    def test_catalog_is_stale_fresh(self):
+        """Test is_stale returns False for fresh catalog."""
+        catalog = Catalog(tiles={}, created_at=datetime.now())
+
+        assert catalog.is_stale(ttl_days=30) is False
+
+    def test_catalog_is_stale_expired(self):
+        """Test is_stale returns True for expired catalog."""
+        old_time = datetime.now() - timedelta(days=31)
+        catalog = Catalog(tiles={}, created_at=old_time)
+
+        assert catalog.is_stale(ttl_days=30) is True
+
+    def test_catalog_to_dict(self):
+        """Test serialization to JSON-compatible dict."""
+        tiles = {
+            (350, 5600): {2020: "http://example.com/2020.jp2"},
+        }
+        created = datetime(2025, 1, 15, 10, 30, 0)
+        catalog = Catalog(tiles=tiles, created_at=created)
+
+        result = catalog.to_dict()
+
+        assert result["created_at"] == "2025-01-15T10:30:00"
+        assert "350,5600" in result["tiles"]
+        assert result["tiles"]["350,5600"]["2020"] == "http://example.com/2020.jp2"
+
+    def test_catalog_from_dict(self):
+        """Test deserialization from JSON-compatible dict."""
+        data = {
+            "created_at": "2025-01-15T10:30:00",
+            "tiles": {
+                "350,5600": {"2020": "http://example.com/2020.jp2"},
+                "351,5601": {"2019": "http://example.com/2019.jp2", "2020": "http://example.com/2020.jp2"},
+            },
+        }
+
+        catalog = Catalog.from_dict(data)
+
+        assert catalog.created_at == datetime(2025, 1, 15, 10, 30, 0)
+        assert len(catalog.tiles) == 2
+        assert catalog.tiles[(350, 5600)][2020] == "http://example.com/2020.jp2"
+        assert catalog.tiles[(351, 5601)][2019] == "http://example.com/2019.jp2"
+
+    def test_catalog_roundtrip(self):
+        """Test serialization roundtrip preserves data."""
+        tiles = {
+            (350, 5600): {2020: "http://example.com/2020.jp2", 2021: "http://example.com/2021.jp2"},
+            (351, 5601): {2019: "http://example.com/2019.jp2"},
+        }
+        original = Catalog(tiles=tiles, created_at=datetime(2025, 1, 15, 10, 30, 0))
+
+        restored = Catalog.from_dict(original.to_dict())
+
+        assert restored.created_at == original.created_at
+        assert restored.tiles == original.tiles
+
+
+class TestFetchCatalog:
+    """Tests for fetch_catalog and cache methods."""
+
+    @pytest.fixture
+    def downloader(self, tmp_path):
+        mock_session = Mock()
+        dl = ConcreteDownloader("TEST", str(tmp_path), session=mock_session)
+        dl._cache_path = tmp_path / "cache" / "test_catalog.json"
+        return dl
+
+    def test_fetch_catalog_returns_instance_cache(self, downloader):
+        """Test that instance cache is returned without disk access."""
+        cached = Catalog(tiles={(350, 5600): {2020: "http://cached.com"}})
+        downloader._catalog = cached
+
+        result = downloader.fetch_catalog()
+
+        assert result is cached
+
+    def test_fetch_catalog_reads_disk_cache(self, downloader, tmp_path):
+        """Test that fresh disk cache is loaded."""
+        cache_data = {
+            "created_at": datetime.now().isoformat(),
+            "tiles": {"350,5600": {"2020": "http://disk.com"}},
+        }
+        cache_path = tmp_path / "cache" / "test_catalog.json"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "w") as f:
+            json.dump(cache_data, f)
+
+        result = downloader.fetch_catalog()
+
+        assert result.tiles[(350, 5600)][2020] == "http://disk.com"
+
+    def test_fetch_catalog_ignores_stale_disk_cache(self, downloader, tmp_path):
+        """Test that stale disk cache triggers reload."""
+        old_time = datetime.now() - timedelta(days=60)
+        cache_data = {
+            "created_at": old_time.isoformat(),
+            "tiles": {"350,5600": {"2020": "http://stale.com"}},
+        }
+        cache_path = tmp_path / "cache" / "test_catalog.json"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "w") as f:
+            json.dump(cache_data, f)
+
+        result = downloader.fetch_catalog()
+
+        # Default _load_catalog returns empty catalog
+        assert result.tiles == {}
+
+    def test_fetch_catalog_refresh_bypasses_cache(self, downloader, tmp_path):
+        """Test that refresh=True bypasses all caches."""
+        # Set instance cache
+        downloader._catalog = Catalog(tiles={(350, 5600): {2020: "http://instance.com"}})
+
+        # Set disk cache
+        cache_data = {
+            "created_at": datetime.now().isoformat(),
+            "tiles": {"350,5600": {"2020": "http://disk.com"}},
+        }
+        cache_path = tmp_path / "cache" / "test_catalog.json"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "w") as f:
+            json.dump(cache_data, f)
+
+        result = downloader.fetch_catalog(refresh=True)
+
+        # Default _load_catalog returns empty catalog
+        assert result.tiles == {}
+
+    def test_fetch_catalog_writes_to_disk(self, downloader, tmp_path):
+        """Test that loaded catalog is persisted to disk."""
+        result = downloader.fetch_catalog()
+
+        cache_path = tmp_path / "cache" / "test_catalog.json"
+        assert cache_path.exists()
+
+        with open(cache_path) as f:
+            data = json.load(f)
+        assert "created_at" in data
+        assert "tiles" in data
+
+    def test_read_cache_returns_none_for_missing_file(self, downloader):
+        """Test _read_cache returns None when file doesn't exist."""
+        result = downloader._read_cache()
+
+        assert result is None
+
+    def test_read_cache_returns_none_for_invalid_json(self, downloader, tmp_path):
+        """Test _read_cache returns None for corrupted file."""
+        cache_path = tmp_path / "cache" / "test_catalog.json"
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "w") as f:
+            f.write("not valid json")
+
+        result = downloader._read_cache()
+
+        assert result is None
+
+    def test_write_cache_creates_parent_dirs(self, downloader, tmp_path):
+        """Test _write_cache creates parent directories."""
+        downloader._catalog = Catalog(tiles={(350, 5600): {2020: "http://test.com"}})
+        downloader._cache_path = tmp_path / "deep" / "nested" / "cache.json"
+
+        downloader._write_cache()
+
+        assert downloader._cache_path.exists()
+
+    def test_write_cache_noop_without_cache_path(self, downloader):
+        """Test _write_cache does nothing when _cache_path is None."""
+        downloader._cache_path = None
+        downloader._catalog = Catalog(tiles={(350, 5600): {2020: "http://test.com"}})
+
+        # Should not raise
+        downloader._write_cache()
