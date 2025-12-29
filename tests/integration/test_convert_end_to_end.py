@@ -14,9 +14,16 @@ from georaffer.conversion import convert_tiles
 
 @pytest.fixture(autouse=True)
 def disable_network_and_pool(monkeypatch):
-    """Keep tests fast/deterministic: disable WMS and process pool."""
-    monkeypatch.setenv("GEORAFFER_DISABLE_WMS", "1")
+    """Keep tests fast/deterministic: stub WMS and disable process pool."""
+    monkeypatch.delenv("GEORAFFER_DISABLE_WMS", raising=False)
     monkeypatch.setenv("GEORAFFER_DISABLE_PROCESS_POOL", "1")
+
+    def fake_wms_metadata(*_args, **_kwargs):
+        return {"acquisition_date": "2020-01-01", "metadata_source": "test"}
+
+    monkeypatch.setattr("georaffer.metadata.get_wms_metadata_for_region", fake_wms_metadata)
+    monkeypatch.setattr("georaffer.conversion.get_wms_metadata_for_region", fake_wms_metadata)
+    monkeypatch.setattr("georaffer.workers.get_wms_metadata_for_region", fake_wms_metadata)
     yield
 
 

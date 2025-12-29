@@ -1,9 +1,6 @@
 """Tests for JP2 converter."""
 
 import os
-
-# Disable WMS metadata during tests to avoid network calls
-os.environ.setdefault("GEORAFFER_DISABLE_WMS", "1")
 from unittest.mock import MagicMock, Mock, patch
 
 import numpy as np
@@ -17,6 +14,15 @@ from georaffer.converters.utils import resample_raster, write_geotiff
 
 class TestConvertJP2:
     """Tests for main convert_jp2 function."""
+
+    @pytest.fixture(autouse=True)
+    def enable_wms(self):
+        """Ensure WMS lookups are enabled for converter tests."""
+        original = os.environ.get("GEORAFFER_DISABLE_WMS")
+        os.environ.pop("GEORAFFER_DISABLE_WMS", None)
+        yield
+        if original is not None:
+            os.environ["GEORAFFER_DISABLE_WMS"] = original
 
     @pytest.fixture
     def mock_rasterio(self):
@@ -42,9 +48,9 @@ class TestConvertJP2:
 
     @pytest.fixture
     def mock_wms(self):
-        """Mock get_wms_metadata."""
-        with patch("georaffer.metadata.get_wms_metadata") as mock:
-            mock.return_value = {"acquisition_date": "2021-05-15"}
+        """Mock get_wms_metadata_for_region."""
+        with patch("georaffer.metadata.get_wms_metadata_for_region") as mock:
+            mock.return_value = {"acquisition_date": "2021-05-15", "metadata_source": "test"}
             yield mock
 
     def test_convert_single_output_success(
@@ -103,7 +109,7 @@ class TestConvertJP2:
         # Check coordinates are reasonable
         assert call_args[0] > 0  # X coordinate
         assert call_args[1] > 0  # Y coordinate
-        assert call_args[2] == "NRW"
+        assert call_args[2] == "NRW" or call_args[2].value == "NRW"
         # Year should be passed
         assert mock_wms.call_args[0][3] == 2021
 

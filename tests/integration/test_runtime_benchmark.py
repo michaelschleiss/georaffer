@@ -62,8 +62,16 @@ def test_convert_tiles_benchmark_real_data(tmp_path, benchmark, monkeypatch):
     if not jp2_src or not laz_src:
         pytest.skip("No JP2/LAZ files found in real data root")
 
-    # Keep WMS off to avoid network variability
-    monkeypatch.setenv("GEORAFFER_DISABLE_WMS", "1")
+    # Stub WMS to avoid network variability in benchmarks
+    monkeypatch.delenv("GEORAFFER_DISABLE_WMS", raising=False)
+    monkeypatch.setenv("GEORAFFER_DISABLE_PROCESS_POOL", "1")
+
+    def fake_wms_metadata(*_args, **_kwargs):
+        return {"acquisition_date": "2020-01-01", "metadata_source": "test"}
+
+    monkeypatch.setattr("georaffer.metadata.get_wms_metadata_for_region", fake_wms_metadata)
+    monkeypatch.setattr("georaffer.conversion.get_wms_metadata_for_region", fake_wms_metadata)
+    monkeypatch.setattr("georaffer.workers.get_wms_metadata_for_region", fake_wms_metadata)
 
     raw_dir = tmp_path / "raw"
     processed_dir = tmp_path / "processed"

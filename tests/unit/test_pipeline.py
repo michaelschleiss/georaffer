@@ -646,7 +646,16 @@ class TestConvertTiles:
 
         # Use grid_size_km=2.0 to match RLP tile size (no split)
         success, metadata, fname, out_count = workers_mod.convert_dsm_worker(
-            (laz_file.name, str(laz_dir), str(processed_dir), [1000], 1, 2.0, False)
+            (
+                laz_file.name,
+                str(laz_dir),
+                str(processed_dir),
+                [1000],
+                1,
+                2.0,
+                False,
+                {"acquisition_date": "2030-01-01", "metadata_source": "test"},
+            )
         )
 
         assert success is True
@@ -715,6 +724,7 @@ class TestConvertTiles:
                 threads_per_worker,
                 grid_size_km,
                 profiling,
+                precomputed_wms,
             ) = args
             return True, [], filename, len(resolutions)  # no split; outputs == resolutions
 
@@ -749,6 +759,7 @@ class TestConvertTiles:
                 threads_per_worker,
                 grid_size_km,
                 profiling,
+                precomputed_wms,
             ) = args
             return True, [], filename, len(resolutions) * 4  # simulate 2x2 split
 

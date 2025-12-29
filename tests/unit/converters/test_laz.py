@@ -2,9 +2,8 @@
 
 import os
 
-# Disable numba JIT and WMS metadata during tests for speed/determinism
+# Disable numba JIT during tests for speed/determinism
 os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
-os.environ.setdefault("GEORAFFER_DISABLE_WMS", "1")
 
 from unittest.mock import MagicMock, Mock, patch
 
@@ -16,6 +15,14 @@ from rasterio.transform import Affine
 from georaffer.config import DSM_NODATA
 from georaffer.converters.laz import _fill_raster_numba, convert_laz
 from georaffer.converters.utils import resample_raster, write_geotiff
+
+
+# Stub WMS metadata for deterministic conversion tests.
+@pytest.fixture(autouse=True)
+def mock_wms_metadata():
+    with patch("georaffer.metadata.get_wms_metadata_for_region") as mock:
+        mock.return_value = {"acquisition_date": "2021-05-15", "metadata_source": "test"}
+        yield mock
 
 
 # Replace numba JIT with pure Python for tests to avoid compilation dependency
@@ -213,7 +220,7 @@ class TestConvertLaz:
         assert metadata["source_file"] == "bdom50_32350_5600_1_nw_2023.laz"
         assert metadata["source_region"] == "NRW"
         assert metadata["file_type"] == "dsm"
-        assert metadata["acquisition_date"] == "2023"
+        assert metadata["acquisition_date"] == "2021-05-15"
 
     def test_convert_failure_raises_error(self, tmp_path):
         """Test failed conversion raises RuntimeError."""

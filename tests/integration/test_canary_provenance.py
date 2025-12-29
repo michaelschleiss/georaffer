@@ -51,6 +51,7 @@ def _download_tile(downloader, catalog, tile, subdir="image"):
 
 
 @pytest.mark.network
+@pytest.mark.canary
 @pytest.mark.slow
 @pytest.mark.integration
 def test_provenance_comprehensive_ground_truth(tmp_path):

@@ -76,6 +76,27 @@ def mock_requests_session():
         yield mock_session
 
 
+def pytest_addoption(parser):
+    """Add an opt-in flag for canary tests."""
+    parser.addoption(
+        "--run-canary",
+        action="store_true",
+        default=False,
+        help="run canary tests that hit real services",
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip canary tests unless explicitly opted in."""
+    if config.getoption("--run-canary"):
+        return
+
+    skip_canary = pytest.mark.skip(reason="need --run-canary to run")
+    for item in items:
+        if "canary" in item.keywords:
+            item.add_marker(skip_canary)
+
+
 # ============ Parametrized Data ============
 
 NRW_JP2_CASES = [

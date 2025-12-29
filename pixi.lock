@@ -827,7 +827,7 @@ packages:
 - pypi: ./
   name: georaffer
   version: 0.1.0
-  sha256: 8e1fb4fa1a804c3debb0a816c732e965ef2bd5bb61c69330fcb63bc487b94df7
+  sha256: cce9d1f87f983c1de7a1fbe533a6c43a221f7bd9ea7b44711e53632be55815ee
   requires_dist:
   - requests>=2.20
   - truststore>=0.10
