@@ -1,6 +1,7 @@
 """NRW (North Rhine-Westphalia) tile downloader."""
 
 import xml.etree.ElementTree as ET
+from datetime import datetime
 
 import requests
 
@@ -24,8 +25,12 @@ class NRWDownloader(RegionDownloader):
     CURRENT_JP2_FEED_URL = CURRENT_JP2_BASE_URL + "index.xml"
 
     # Historic years range (2014+ only - earlier years use different tiling)
-    HISTORIC_YEARS = range(2014, 2100)
-    HISTORIC_JP2_BASE = "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{year}/"
+    HISTORIC_JP2_BASE = "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{year}/epsg_25832/"
+
+    @property
+    def HISTORIC_YEARS(self) -> range:
+        """Historic years from 2014 to current year."""
+        return range(2014, datetime.now().year + 1)
 
     def __init__(
         self,
@@ -89,26 +94,15 @@ class NRWDownloader(RegionDownloader):
 
         Args:
             session: HTTP session for requests
-            feed_url: URL to XML feed
+            feed_url: URL to XML feed (must point directly to file listing)
             base_url: Base URL for tile downloads
 
         Returns:
-            Dict mapping (grid_x, grid_y) -> (download_url, year) where:
-            - Key: (grid_x, grid_y) tile coordinates in km
-            - Value: (url, year) tuple with download URL and acquisition year
+            Dict mapping (grid_x, grid_y) -> (download_url, year)
         """
         response = session.get(feed_url, timeout=FEED_TIMEOUT)
         response.raise_for_status()
         root = ET.fromstring(response.content)
-
-        # Check for EPSG subdirectory (historic feeds have this)
-        folders = root.findall(".//folder")
-        if folders and any(folder.get("name") == "epsg_25832" for folder in folders):
-            epsg_feed_url = feed_url.replace("/index.xml", "/epsg_25832/index.xml")
-            response = session.get(epsg_feed_url, timeout=FEED_TIMEOUT)
-            response.raise_for_status()
-            root = ET.fromstring(response.content)
-            base_url = base_url + "epsg_25832/"
 
         jp2_tiles = {}
         for file_elem in root.findall(".//file"):
@@ -124,37 +118,6 @@ class NRWDownloader(RegionDownloader):
                 grid_y = int(match.group(2))
                 tile_year = int(match.group(3))
                 jp2_tiles[(grid_x, grid_y)] = (base_url + filename, tile_year)
-
-        return jp2_tiles
-
-    def _parse_jp2_feed(
-        self, session: requests.Session, root: ET.Element
-    ) -> dict[tuple[int, int], str]:
-        """Parse NRW JP2 feed with historical EPSG subdirectory support."""
-        jp2_tiles = {}
-
-        folders = root.findall(".//folder")
-        if folders and any(folder.get("name") == "epsg_25832" for folder in folders):
-            epsg_feed_url = self._jp2_feed_url.replace("/index.xml", "/epsg_25832/index.xml")
-            response = session.get(epsg_feed_url, timeout=FEED_TIMEOUT)
-            response.raise_for_status()
-            root = ET.fromstring(response.content)
-            base_url = self._jp2_base_url + "epsg_25832/"
-        else:
-            base_url = self._jp2_base_url
-
-        for file_elem in root.findall(".//file"):
-            filename = file_elem.get("name")
-            if filename and filename.endswith(".jp2"):
-                match = NRW_JP2_PATTERN.match(filename)
-                if not match:
-                    raise ValueError(
-                        f"NRW JP2 '{filename}' doesn't match pattern. "
-                        f"Expected: dop10rgbi_32_XXX_YYYY_N_nw_YEAR.jp2"
-                    )
-                grid_x = int(match.group(1))
-                grid_y = int(match.group(2))
-                jp2_tiles[(grid_x, grid_y)] = base_url + filename
 
         return jp2_tiles
 

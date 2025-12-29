@@ -155,50 +155,40 @@ class TestNRWParseJP2Feed:
 
     def test_parse_simple_feed(self, downloader):
         """Test parsing simple JP2 feed."""
-        xml = """<index>
+        xml = b"""<index>
             <file name="dop10rgbi_32_350_5600_1_nw_2021.jp2"/>
             <file name="dop10rgbi_32_351_5600_1_nw_2021.jp2"/>
         </index>"""
-        root = ET.fromstring(xml)
+        mock_response = Mock()
+        mock_response.content = xml
+        mock_response.raise_for_status = Mock()
         mock_session = Mock()
+        mock_session.get.return_value = mock_response
 
-        tiles = downloader._parse_jp2_feed(mock_session, root)
+        tiles = downloader._parse_jp2_feed_with_year(
+            mock_session, "https://example.com/index.xml", "https://example.com/"
+        )
 
         assert len(tiles) == 2
         assert (350, 5600) in tiles
         assert (351, 5600) in tiles
-
-    def test_parse_feed_with_epsg_subfolder(self, downloader):
-        """Test parsing feed that has EPSG subfolder."""
-        xml = """<index>
-            <folder name="epsg_25832"/>
-        </index>"""
-        root = ET.fromstring(xml)
-
-        # Mock session to return subfolder content
-        mock_session = Mock()
-        mock_response = Mock()
-        mock_response.content = b"""<index>
-            <file name="dop10rgbi_32_350_5600_1_nw_2015.jp2"/>
-        </index>"""
-        mock_response.raise_for_status = Mock()
-        mock_session.get.return_value = mock_response
-
-        tiles = downloader._parse_jp2_feed(mock_session, root)
-
-        assert len(tiles) == 1
-        assert "epsg_25832" in tiles[(350, 5600)]
+        assert tiles[(350, 5600)][1] == 2021  # Year
 
     def test_parse_feed_raises_on_invalid_filename(self, downloader):
         """Test that invalid filenames raise ValueError."""
-        xml = """<index>
+        xml = b"""<index>
             <file name="invalid_format.jp2"/>
         </index>"""
-        root = ET.fromstring(xml)
+        mock_response = Mock()
+        mock_response.content = xml
+        mock_response.raise_for_status = Mock()
         mock_session = Mock()
+        mock_session.get.return_value = mock_response
 
         with pytest.raises(ValueError, match="doesn't match pattern"):
-            downloader._parse_jp2_feed(mock_session, root)
+            downloader._parse_jp2_feed_with_year(
+                mock_session, "https://example.com/index.xml", "https://example.com/"
+            )
 
 
 class TestNRWParseLAZFeed:
