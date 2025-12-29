@@ -52,7 +52,6 @@ class TestNRWHistoricFiltering:
         downloader = NRWDownloader(str(tmp_path), imagery_from=(2018, 2018))
 
         monkeypatch.setattr(NRWDownloader, "HISTORIC_YEARS", [])
-        monkeypatch.setattr(downloader, "_available_historic_years", lambda: [])
         monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
 
         def fake_parse(_session, _feed_url, _base_url):
@@ -68,42 +67,6 @@ class TestNRWHistoricFiltering:
         assert jp2_tiles == {(350, 5600): "https://example.com/dop10rgbi_32_350_5600_1_nw_2018.jp2"}
         assert laz_tiles == {}
         assert downloader.total_jp2_count == 1
-
-
-class TestNRWHistoricYearsDiscovery:
-    def test_discovers_upper_years_from_provider_index(self, tmp_path, monkeypatch):
-        """Historic year list should be discovered dynamically from the provider index."""
-        downloader = NRWDownloader(str(tmp_path), imagery_from=(2023, None))
-
-        # Fake provider index.xml includes 2024
-        index_xml = b"""<?xml version='1.0' encoding='UTF-8'?>
-<opengeodata>
-  <folders>
-    <folder name='hist_dop_2010'/>
-    <folder name='hist_dop_2014'/>
-    <folder name='hist_dop_2023'/>
-    <folder name='hist_dop_2024'/>
-  </folders>
-</opengeodata>
-"""
-
-        # Mock GET for provider index only; any other GET should not be hit in this unit test.
-        class Resp:
-            def __init__(self, content: bytes):
-                self.content = content
-
-            def raise_for_status(self):
-                return None
-
-        def fake_get(url, *args, **kwargs):
-            if url == downloader.HISTORIC_INDEX_URL:
-                return Resp(index_xml)
-            raise AssertionError(f"Unexpected GET in unit test: {url}")
-
-        downloader._session.get = fake_get  # type: ignore[method-assign]
-
-        years = downloader._available_historic_years()
-        assert years == [2014, 2023, 2024]
 
 
 class TestNRWUtmToGridCoords:

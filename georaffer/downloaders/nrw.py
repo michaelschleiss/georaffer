@@ -2,7 +2,6 @@
 
 import sys
 import xml.etree.ElementTree as ET
-from typing import ClassVar
 
 import requests
 
@@ -21,24 +20,13 @@ from georaffer.runtime import parallel_map
 class NRWDownloader(RegionDownloader):
     """NRW (North Rhine-Westphalia) downloader."""
 
-    # Current feed URL (always the same, used for deduplication in historic mode)
-    CURRENT_JP2_FEED_URL = (
-        "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/akt/dop/dop_jp2_f10/index.xml"
-    )
-    CURRENT_JP2_BASE_URL = (
-        "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/akt/dop/dop_jp2_f10/"
-    )
+    # Current feed URLs (used for deduplication in historic mode)
+    CURRENT_JP2_BASE_URL = "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/akt/dop/dop_jp2_f10/"
+    CURRENT_JP2_FEED_URL = CURRENT_JP2_BASE_URL + "index.xml"
 
-    # Available historic years (UTM era)
-    # NOTE: 2014 is the first year where NRW historic orthophotos are consistently "dop10"
-    # and aligned with the georaffer tiling assumptions; 2010–2013 include "dop20" variants
-    # that cover different areas and are skipped in this pipeline.
-    # The upper bound is discovered dynamically from the provider index when needed.
-    HISTORIC_YEARS: ClassVar[list[int]] = list(range(2014, 2024))  # fallback: 2014-2023
-    HISTORIC_INDEX_URL = (
-        "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/"
-        "hist_dop/hist_dop_jp2_f10/index.xml"
-    )
+    # Historic years range (2014+ only - earlier years use different tiling)
+    HISTORIC_YEARS = range(2014, 2100)
+    HISTORIC_JP2_BASE = "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{year}/"
 
     def __init__(
         self,
@@ -65,8 +53,8 @@ class NRWDownloader(RegionDownloader):
             self._from_year = from_year
             self._to_year = to_year  # None means "to present"
             # Primary feed URL (used for compatibility, actual loading handles all years)
-            self._jp2_feed_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{from_year}/index.xml"
-            self.jp2_base_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{from_year}/"
+            self.jp2_base_url = self.HISTORIC_JP2_BASE.format(year=from_year)
+            self._jp2_feed_url = self.jp2_base_url + "index.xml"
 
         self._laz_feed_url = (
             "https://www.opengeodata.nrw.de/produkte/geobasis/hm/bdom50_las/bdom50_las/index.xml"
@@ -135,24 +123,6 @@ class NRWDownloader(RegionDownloader):
                 jp2_tiles[(grid_x, grid_y)] = (base_url + filename, tile_year)
 
         return jp2_tiles
-
-    def _available_historic_years(self) -> list[int]:
-        try:
-            response = self._session.get(self.HISTORIC_INDEX_URL, timeout=FEED_TIMEOUT)
-            response.raise_for_status()
-            root = ET.fromstring(response.content)
-            years = sorted(
-                {
-                    int((folder.get("name") or "").rsplit("_", 1)[-1])
-                    for folder in root.findall(".//folder")
-                    if (folder.get("name") or "").startswith("hist_dop_")
-                    and (folder.get("name") or "").rsplit("_", 1)[-1].isdigit()
-                    and int((folder.get("name") or "").rsplit("_", 1)[-1]) >= 2014
-                }
-            )
-            return years or self.HISTORIC_YEARS
-        except Exception:
-            return self.HISTORIC_YEARS
 
     def _parse_jp2_feed(
         self, session: requests.Session, root: ET.Element
@@ -243,7 +213,7 @@ class NRWDownloader(RegionDownloader):
         # Determine year range: from_year to to_year (or latest historic if to_year is None)
         historic_years = [
             y
-            for y in self._available_historic_years()
+            for y in self.HISTORIC_YEARS
             if self._year_in_range(y, from_year, to_year)
         ]
 
@@ -254,8 +224,8 @@ class NRWDownloader(RegionDownloader):
 
         def fetch_year(hist_year: int) -> dict | None:
             """Fetch a single year's feed. Returns tiles_dict or None on error."""
-            feed_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{hist_year}/index.xml"
-            base_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{hist_year}/"
+            base_url = self.HISTORIC_JP2_BASE.format(year=hist_year)
+            feed_url = base_url + "index.xml"
             try:
                 return self._parse_jp2_feed_with_year(self._session, feed_url, base_url)
             except Exception:
@@ -356,13 +326,13 @@ class NRWDownloader(RegionDownloader):
             print(f"  Warning: Failed to load current feed: {e}")
 
         # 2. Historic tiles (parallel fetch)
-        historic_years = self._available_historic_years()
+        historic_years = list(self.HISTORIC_YEARS)
         if not self.quiet:
             print(f"  Loading {len(historic_years)} historic feeds...")
 
         def fetch_year(hist_year: int) -> dict | None:
-            feed_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{hist_year}/index.xml"
-            base_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{hist_year}/"
+            base_url = self.HISTORIC_JP2_BASE.format(year=hist_year)
+            feed_url = base_url + "index.xml"
             try:
                 return self._parse_jp2_feed_with_year(self._session, feed_url, base_url)
             except Exception:
