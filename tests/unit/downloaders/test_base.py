@@ -397,7 +397,7 @@ class TestCatalog:
 
 
 class TestFetchCatalog:
-    """Tests for fetch_catalog and cache methods."""
+    """Tests for build_catalog and cache methods."""
 
     @pytest.fixture
     def downloader(self, tmp_path):
@@ -406,16 +406,16 @@ class TestFetchCatalog:
         dl._cache_path = tmp_path / "cache" / "test_catalog.json"
         return dl
 
-    def test_fetch_catalog_returns_instance_cache(self, downloader):
+    def test_build_catalog_returns_instance_cache(self, downloader):
         """Test that instance cache is returned without disk access."""
         cached = Catalog(image_tiles={(350, 5600): {2020: "http://cached.com"}})
         downloader._catalog = cached
 
-        result = downloader.fetch_catalog()
+        result = downloader.build_catalog()
 
         assert result is cached
 
-    def test_fetch_catalog_reads_disk_cache(self, downloader, tmp_path):
+    def test_build_catalog_reads_disk_cache(self, downloader, tmp_path):
         """Test that fresh disk cache is loaded."""
         cache_data = {
             "created_at": datetime.now().isoformat(),
@@ -426,11 +426,11 @@ class TestFetchCatalog:
         with open(cache_path, "w") as f:
             json.dump(cache_data, f)
 
-        result = downloader.fetch_catalog()
+        result = downloader.build_catalog()
 
         assert result.image_tiles[(350, 5600)][2020] == "http://disk.com"
 
-    def test_fetch_catalog_ignores_stale_disk_cache(self, downloader, tmp_path):
+    def test_build_catalog_ignores_stale_disk_cache(self, downloader, tmp_path):
         """Test that stale disk cache triggers reload."""
         old_time = datetime.now() - timedelta(days=60)
         cache_data = {
@@ -442,12 +442,12 @@ class TestFetchCatalog:
         with open(cache_path, "w") as f:
             json.dump(cache_data, f)
 
-        result = downloader.fetch_catalog()
+        result = downloader.build_catalog()
 
         # Default _load_catalog returns empty catalog
         assert result.image_tiles == {}
 
-    def test_fetch_catalog_refresh_bypasses_cache(self, downloader, tmp_path):
+    def test_build_catalog_refresh_bypasses_cache(self, downloader, tmp_path):
         """Test that refresh=True bypasses all caches."""
         # Set instance cache
         downloader._catalog = Catalog(image_tiles={(350, 5600): {2020: "http://instance.com"}})
@@ -462,14 +462,14 @@ class TestFetchCatalog:
         with open(cache_path, "w") as f:
             json.dump(cache_data, f)
 
-        result = downloader.fetch_catalog(refresh=True)
+        result = downloader.build_catalog(refresh=True)
 
         # Default _load_catalog returns empty catalog
         assert result.image_tiles == {}
 
-    def test_fetch_catalog_writes_to_disk(self, downloader, tmp_path):
+    def test_build_catalog_writes_to_disk(self, downloader, tmp_path):
         """Test that loaded catalog is persisted to disk."""
-        result = downloader.fetch_catalog()
+        result = downloader.build_catalog()
 
         cache_path = tmp_path / "cache" / "test_catalog.json"
         assert cache_path.exists()

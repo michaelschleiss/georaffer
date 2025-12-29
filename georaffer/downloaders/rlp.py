@@ -29,8 +29,6 @@ import truststore
 
 from georaffer.config import (
     CATALOG_CACHE_DIR,
-    FEED_TIMEOUT,
-    MAX_RETRIES,
     METERS_PER_KM,
     RLP_GRID_SIZE,
     RLP_JP2_PATTERN,
@@ -39,6 +37,7 @@ from georaffer.config import (
     Region,
 )
 from georaffer.downloaders.base import Catalog, RegionDownloader
+from georaffer.downloaders.feeds import fetch_xml_feed
 from georaffer.downloaders.wms import WMSImagerySource
 
 truststore.inject_into_ssl()
@@ -159,20 +158,18 @@ class RLPDownloader(RegionDownloader):
         Returns:
             Tuple of (jp2_tiles, laz_tiles) dicts mapping coords to URLs.
         """
-        catalog = self.fetch_catalog()
+        catalog = self.build_catalog()
 
         jp2_tiles = {}
-        self._all_jp2_by_coord: dict[tuple[int, int], list[str]] = {}
-
         for coords, years in catalog.image_tiles.items():
             # Filter by year range
-            valid = {y: url for y, url in years.items()
+            valid = {y: tile for y, tile in years.items()
                      if self._year_in_range(y, self._from_year, self._to_year)}
             if valid:
-                jp2_tiles[coords] = valid[max(valid)]  # Latest year for display
-                self._all_jp2_by_coord[coords] = list(valid.values())
+                jp2_tiles[coords] = valid[max(valid)]["url"]
 
-        return jp2_tiles, catalog.dsm_tiles
+        dsm_tiles = {coords: tile["url"] for coords, tile in catalog.dsm_tiles.items()}
+        return jp2_tiles, dsm_tiles
 
     def _extract_year_from_url(self, url: str) -> int | None:
         """Extract year from JP2 URL filename."""
@@ -182,46 +179,9 @@ class RLPDownloader(RegionDownloader):
             return int(match.group(3))
         return None
 
-    def _fetch_and_parse_feed(self, feed_url: str, tile_type: str) -> dict[tuple[int, int], str]:
-        """Fetch XML feed and parse - wraps content in root element.
-
-        The geobasis-rlp.de atomfeed-links.xml files contain raw <link> elements
-        without a root element, so we wrap them before parsing.
-        """
-        last_error = None
-
-        for attempt in range(MAX_RETRIES):
-            try:
-                delay = self._backoff_delay(attempt)
-                if delay > 0:
-                    time.sleep(delay)
-
-                response = self._session.get(feed_url, timeout=FEED_TIMEOUT)
-                response.raise_for_status()
-
-                # Wrap raw <link> elements in a root element for valid XML
-                content = response.content.decode("utf-8")
-                wrapped = f"<root>{content}</root>"
-                root = ET.fromstring(wrapped)
-
-                if tile_type == "jp2":
-                    return self._parse_jp2_feed(self._session, root)
-                else:
-                    return self._parse_laz_feed(self._session, root)
-
-            except Exception as e:
-                last_error = e
-
-        raise RuntimeError(
-            f"Failed to fetch feed {feed_url} after {MAX_RETRIES} retries: {last_error}"
-        )
-
-    def _parse_jp2_feed(
-        self, session: requests.Session, root: ET.Element
-    ) -> dict[tuple[int, int], str]:
-        """Parse RLP JP2 feed from geobasis-rlp.de atomfeed-links.xml."""
+    def _parse_jp2_tiles(self, root: ET.Element) -> dict[tuple[int, int], str]:
+        """Parse JP2 tiles from ATOM feed XML."""
         jp2_tiles = {}
-
         for link_elem in root.findall('.//link[@type="image/jp2"]'):
             url = link_elem.get("href")
             if url and url.endswith(".jp2"):
@@ -235,15 +195,11 @@ class RLPDownloader(RegionDownloader):
                 grid_x = int(match.group(1))
                 grid_y = int(match.group(2))
                 jp2_tiles[(grid_x, grid_y)] = url
-
         return jp2_tiles
 
-    def _parse_laz_feed(
-        self, session: requests.Session, root: ET.Element
-    ) -> dict[tuple[int, int], str]:
-        """Parse RLP LAZ feed from geobasis-rlp.de atomfeed-links.xml."""
+    def _parse_laz_tiles(self, root: ET.Element) -> dict[tuple[int, int], dict]:
+        """Parse LAZ tiles from ATOM feed XML."""
         laz_tiles = {}
-
         for link_elem in root.findall(".//link"):
             url = link_elem.get("href")
             if url and url.endswith(".laz"):
@@ -256,8 +212,7 @@ class RLPDownloader(RegionDownloader):
                     )
                 grid_x = int(match.group(1))
                 grid_y = int(match.group(2))
-                laz_tiles[(grid_x, grid_y)] = url
-
+                laz_tiles[(grid_x, grid_y)] = {"url": url, "acquisition_date": None}
         return laz_tiles
 
     def _load_catalog(self) -> Catalog:
@@ -266,16 +221,17 @@ class RLPDownloader(RegionDownloader):
         Uses ATOM feed to discover valid tile coordinates, then queries WMS
         for historic coverage at each coordinate.
         """
-        tiles: dict[tuple[int, int], dict[int, str]] = {}
+        tiles: dict[tuple[int, int], dict[int, dict]] = {}
 
         # 1. Current tiles from ATOM feed
         if not self.quiet:
             print("  Loading current tiles from ATOM feed...")
-        current_tiles = self._fetch_and_parse_feed(self._jp2_feed_url, "jp2")
+        root = fetch_xml_feed(self._session, self._jp2_feed_url, wrap_content=True)
+        current_tiles = self._parse_jp2_tiles(root)
         for coords, url in current_tiles.items():
             year = self._extract_year_from_url(url)
             if year:
-                tiles.setdefault(coords, {})[year] = url
+                tiles.setdefault(coords, {})[year] = {"url": url, "acquisition_date": None}
         if not self.quiet:
             print(f"  Current: {len(current_tiles)} tiles")
 
@@ -312,11 +268,12 @@ class RLPDownloader(RegionDownloader):
                     failed += 1
                     coverage = {}
 
-                for year in coverage:
+                for year, meta in coverage.items():
                     coords = (grid_x, grid_y)
                     if year not in tiles.get(coords, {}):
                         url = self.wms.get_tile_url(year, grid_x, grid_y)
-                        tiles.setdefault(coords, {})[year] = url
+                        acq_date = meta.get("acquisition_date") if meta else None
+                        tiles.setdefault(coords, {})[year] = {"url": url, "acquisition_date": acq_date}
                         historic_found += 1
 
                 if not self.quiet and (checked % 100 == 0 or checked == len(all_coords)):
@@ -335,7 +292,8 @@ class RLPDownloader(RegionDownloader):
             print(f"  Warning: {failed} WMS queries failed")
 
         # 3. LAZ tiles
-        laz_tiles = self._fetch_and_parse_feed(self.laz_feed_url, "laz")
+        root = fetch_xml_feed(self._session, self._laz_feed_url, wrap_content=True)
+        laz_tiles = self._parse_laz_tiles(root)
         if not self.quiet:
             print(f"  LAZ: {len(laz_tiles)} tiles")
 

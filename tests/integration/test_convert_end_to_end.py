@@ -1,6 +1,5 @@
 """Integration-style checks for full convert pipeline on tiny fixtures."""
 
-import csv
 from pathlib import Path
 
 import laspy
@@ -13,17 +12,9 @@ from georaffer.conversion import convert_tiles
 
 
 @pytest.fixture(autouse=True)
-def disable_network_and_pool(monkeypatch):
-    """Keep tests fast/deterministic: stub WMS and disable process pool."""
-    monkeypatch.delenv("GEORAFFER_DISABLE_WMS", raising=False)
+def disable_process_pool(monkeypatch):
+    """Keep tests fast/deterministic: disable process pool."""
     monkeypatch.setenv("GEORAFFER_DISABLE_PROCESS_POOL", "1")
-
-    def fake_wms_metadata(*_args, **_kwargs):
-        return {"acquisition_date": "2020-01-01", "metadata_source": "test"}
-
-    monkeypatch.setattr("georaffer.metadata.get_wms_metadata_for_region", fake_wms_metadata)
-    monkeypatch.setattr("georaffer.conversion.get_wms_metadata_for_region", fake_wms_metadata)
-    monkeypatch.setattr("georaffer.workers.get_wms_metadata_for_region", fake_wms_metadata)
     yield
 
 
@@ -96,41 +87,3 @@ def test_convert_tiles_end_to_end_laz(tmp_path):
         assert src.width == 10 and src.height == 10
 
 
-@pytest.mark.integration
-def test_provenance_csv_created(tmp_path):
-    """Canary test: provenance.csv is created with valid content."""
-    raw_dir = tmp_path / "raw"
-    processed_dir = tmp_path / "processed"
-
-    # Create both JP2 and LAZ to test mixed provenance
-    jp2_path = raw_dir / "image" / "dop20rgb_32_362_5604_2_rp_2023.jp2"
-    laz_path = raw_dir / "dsm" / "bdom50_32350_5600_1_nw_2025.laz"
-    _write_fake_jp2(jp2_path)
-    _write_fake_laz(laz_path)
-
-    convert_tiles(str(raw_dir), str(processed_dir), resolutions=[10], max_workers=1)
-
-    # Provenance CSV must exist
-    csv_path = processed_dir / "provenance.csv"
-    assert csv_path.exists(), "provenance.csv not created"
-
-    # Read and validate content
-    with open(csv_path) as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-
-    # Should have 5 rows: 4 from RLP JP2 split + 1 from NRW LAZ
-    assert len(rows) == 5, f"Expected 5 provenance rows, got {len(rows)}"
-
-    # Required columns must be present
-    required_cols = {"processed_file", "source_file", "source_region", "grid_x", "grid_y", "year"}
-    assert required_cols <= set(rows[0].keys()), (
-        f"Missing columns: {required_cols - set(rows[0].keys())}"
-    )
-
-    # All rows must have valid coordinates (not empty, not 'None')
-    for row in rows:
-        assert row["grid_x"] and row["grid_x"] != "None", f"Invalid grid_x: {row}"
-        assert row["grid_y"] and row["grid_y"] != "None", f"Invalid grid_y: {row}"
-        assert row["source_region"] in ("NRW", "RLP"), f"Invalid region: {row}"
-        assert row["year"], f"Missing year: {row}"

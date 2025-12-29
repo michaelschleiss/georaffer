@@ -10,9 +10,8 @@ from georaffer.conversion import convert_tiles
 from georaffer.downloading import download_files
 from georaffer.grids import generate_user_grid_tiles, latlon_to_utm
 from georaffer.pipeline import ProcessingStats
-from georaffer.provenance import extract_year_from_filename
 from georaffer.tiles import TileSet
-from georaffer.workers import generate_output_name
+from georaffer.workers import extract_year_from_filename, generate_output_name
 
 
 class TestTileSet:
@@ -350,7 +349,7 @@ def test_process_tiles_passes_imagery_from_to_nrw_and_rlp(tmp_path):
     class DummyNRW:
         def __init__(self, output_dir: str, imagery_from=None, session=None):
             nrw_imagery_from.append(imagery_from)
-            self.total_jp2_count = None
+            self.total_image_count = None
 
         def get_available_tiles(self):
             return {}, {}
@@ -363,7 +362,7 @@ def test_process_tiles_passes_imagery_from_to_nrw_and_rlp(tmp_path):
     class DummyRLP:
         def __init__(self, output_dir: str, imagery_from=None, session=None):
             rlp_imagery_from.append(imagery_from)
-            self.total_jp2_count = None
+            self.total_image_count = None
 
         def get_available_tiles(self, requested_coords=None):
             return {}, {}
@@ -593,7 +592,7 @@ class TestConvertTiles:
         (raw_dir / "image" / "dop10rgbi_32_350_5600_1_nw_2021.jp2").touch()
 
         def fake_jp2_worker(args):
-            return True, [], args[0], 1  # success, metadata, filename, outputs
+            return True, args[0], 1  # success, filename, outputs
 
         monkeypatch.setenv("GEORAFFER_DISABLE_PROCESS_POOL", "1")
         monkeypatch.setattr(convert_mod, "convert_jp2_worker", fake_jp2_worker)
@@ -617,7 +616,7 @@ class TestConvertTiles:
         (raw_dir / "dsm" / "bdom50_32350_5600_1_nw_2025.laz").touch()
 
         def fake_dsm_worker(args):
-            return True, [], args[0], 1  # success, metadata, filename, outputs
+            return True, args[0], 1  # success, filename, outputs
 
         monkeypatch.setenv("GEORAFFER_DISABLE_PROCESS_POOL", "1")
         monkeypatch.setattr(convert_mod, "convert_dsm_worker", fake_dsm_worker)
@@ -628,10 +627,8 @@ class TestConvertTiles:
         assert stats.converted == 1
 
     def test_laz_year_falls_back_to_header(self, tmp_path, monkeypatch):
-        """When filename lacks year (RLP LAZ), use LAS header year for provenance."""
+        """When filename lacks year (RLP LAZ), use LAS header year."""
         import georaffer.workers as workers_mod
-
-        monkeypatch.setenv("GEORAFFER_DISABLE_WMS", "1")
 
         laz_dir = tmp_path / "raw" / "dsm"
         processed_dir = tmp_path / "processed"
@@ -645,7 +642,7 @@ class TestConvertTiles:
         monkeypatch.setattr(workers_mod, "convert_laz", lambda *args, **kwargs: True)
 
         # Use grid_size_km=2.0 to match RLP tile size (no split)
-        success, metadata, fname, out_count = workers_mod.convert_dsm_worker(
+        success, fname, out_count = workers_mod.convert_dsm_worker(
             (
                 laz_file.name,
                 str(laz_dir),
@@ -654,13 +651,12 @@ class TestConvertTiles:
                 1,
                 2.0,
                 False,
-                {"acquisition_date": "2030-01-01", "metadata_source": "test"},
+                None,  # unused
             )
         )
 
         assert success is True
         assert out_count == 1
-        assert metadata[0]["year"] == "2030"
 
     def test_detects_rlp_region(self, tmp_path, monkeypatch):
         """Test RLP region detection from filename."""

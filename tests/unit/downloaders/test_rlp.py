@@ -337,7 +337,7 @@ class TestRLPHistoricalImagery:
             (362, 5604): {2021: "https://example.com/tile_2021.jp2"},
             (363, 5604): {2023: "https://example.com/tile_2023.jp2"},
         })
-        monkeypatch.setattr(downloader, "fetch_catalog", lambda: fake_catalog)
+        monkeypatch.setattr(downloader, "build_catalog", lambda: fake_catalog)
 
         jp2_tiles, _ = downloader.get_available_tiles()
 

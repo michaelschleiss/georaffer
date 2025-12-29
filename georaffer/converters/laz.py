@@ -338,13 +338,6 @@ def convert_laz(
                 t_decode=t_decode,
             )
 
-        # Build provenance metadata
-        metadata = {
-            "source_file": filename,
-            "source_region": region,
-            "file_type": "dsm",
-        }
-
         # Standard conversion
         timings = []
         for target_size in target_sizes:
@@ -371,7 +364,6 @@ def convert_laz(
                 t_res = 0.0
 
             t_write_start = time.perf_counter()
-            year_int = int(year) if year and year.isdigit() else None
             write_geotiff(
                 output_path,
                 out_data,
@@ -381,14 +373,8 @@ def convert_laz(
                 count=1,
                 nodata=DSM_NODATA,
                 area_or_point="Point",
-                metadata=metadata,
-                year_int=year_int,
             )
             t_write = time.perf_counter() - t_write_start
-            # Add provenance tags after write for DSM outputs
-            from georaffer.metadata import add_provenance_to_geotiff
-
-            add_provenance_to_geotiff(output_path, metadata, year=year_int)
             timings.append((target_size, t_res, t_write))
 
         if profiling:
@@ -455,14 +441,6 @@ def _convert_split_laz(
             # Adjust geotransform for sub-tile's pixel offset
             split_transform = transform * Affine.translation(col_start, row_start)
 
-            metadata = {
-                "source_file": source_file,
-                "source_region": region,
-                "file_type": "dsm",
-                "grid_x": new_x,
-                "grid_y": new_y,
-            }
-
             for target_size in target_sizes:
                 base_path = output_paths.get(target_size)
                 if not base_path:
@@ -499,7 +477,6 @@ def _convert_split_laz(
                 total_resample += time.perf_counter() - t_res_start
 
                 t_write_start = time.perf_counter()
-                year_int = int(year) if year and year.isdigit() else None
                 write_geotiff(
                     output_path,
                     out_data,
@@ -509,8 +486,6 @@ def _convert_split_laz(
                     count=1,
                     nodata=DSM_NODATA,
                     area_or_point="Point",
-                    metadata=metadata,
-                    year_int=year_int,
                 )
                 total_write += time.perf_counter() - t_write_start
 

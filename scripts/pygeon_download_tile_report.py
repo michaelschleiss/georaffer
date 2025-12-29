@@ -470,7 +470,7 @@ def main() -> None:
     if Region.NRW in selected_regions:
         nrw_downloader = NRWDownloader(args.output, imagery_from=imagery_from)
         nrw_jp2, nrw_laz = nrw_downloader.get_available_tiles()
-        catalog_rows.append(("NRW", nrw_downloader.total_jp2_count or len(nrw_jp2), len(nrw_laz)))
+        catalog_rows.append(("NRW", nrw_downloader.total_image_count or len(nrw_jp2), len(nrw_laz)))
         region_catalogs.append(RegionCatalog("nrw", nrw_downloader, nrw_jp2, nrw_laz))
         downloaders["nrw"] = nrw_downloader
 
@@ -478,7 +478,7 @@ def main() -> None:
         rlp_downloader = RLPDownloader(args.output, imagery_from=imagery_from)
         rlp_coords = _rlp_native_coords(rlp_downloader, tiles_by_zone, args.grid_size_km)
         rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(requested_coords=rlp_coords)
-        catalog_rows.append(("RLP", rlp_downloader.total_jp2_count or len(rlp_jp2), len(rlp_laz)))
+        catalog_rows.append(("RLP", rlp_downloader.total_image_count or len(rlp_jp2), len(rlp_laz)))
         region_catalogs.append(RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz))
         downloaders["rlp"] = rlp_downloader
 

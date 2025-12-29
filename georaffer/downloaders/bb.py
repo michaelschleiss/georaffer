@@ -33,6 +33,7 @@ class BBDownloader(RegionDownloader):
     DOP_BASE_URL: ClassVar[str] = "https://data.geobasis-bb.de/geobasis/daten/dop/rgbi_tif/"
     UTM_ZONE: ClassVar[int] = 33
 
+
     def __init__(
         self,
         output_dir: str,
@@ -41,16 +42,6 @@ class BBDownloader(RegionDownloader):
     ):
         super().__init__(Region.BB, output_dir, imagery_from=None, session=session, quiet=quiet)
         self._cache_path = CATALOG_CACHE_DIR / "bb_catalog.json"
-        self._jp2_feed_url = self.DOP_BASE_URL
-        self._laz_feed_url = self.BDOM_BASE_URL
-
-    @property
-    def jp2_feed_url(self) -> str:
-        return self._jp2_feed_url
-
-    @property
-    def laz_feed_url(self) -> str:
-        return self._laz_feed_url
 
     def utm_to_grid_coords(
         self, utm_x: float, utm_y: float
@@ -75,12 +66,13 @@ class BBDownloader(RegionDownloader):
 
     def get_available_tiles(self) -> tuple[dict, dict]:
         """Return available DOP and bDOM tiles."""
-        catalog = self.fetch_catalog()
+        catalog = self.build_catalog()
         image_tiles = {
-            coords: years[max(years.keys())]
+            coords: years[max(years.keys())]["url"]
             for coords, years in catalog.image_tiles.items()
         }
-        return image_tiles, catalog.dsm_tiles
+        dsm_tiles = {coords: tile["url"] for coords, tile in catalog.dsm_tiles.items()}
+        return image_tiles, dsm_tiles
 
     def _parse_coords(self, east_code: str, north_code: str) -> tuple[int, int] | None:
         """Parse 5-digit easting and 4-digit northing into grid coords."""
@@ -97,31 +89,38 @@ class BBDownloader(RegionDownloader):
     def _load_catalog(self) -> Catalog:
         """Load BB catalog from OGC API Features.
 
-        Uses parallel pagination for both DOP and bDOM collections.
+        Uses parallel pagination for DOP and bDOM collections.
         The 'creationdate' field is the Bildflugdatum (verified against ZIP metadata).
+        Note: Only current imagery is available for download; historic is WMS-only.
         """
-        # DOP tiles (with year tracking)
+        # DOP tiles (current only - historic requires WMS)
         if not self.quiet:
             print("  Loading DOP tiles from OGC API...")
-        image_tiles: dict[tuple[int, int], dict[int, str]] = {}
+        image_tiles: dict[tuple[int, int], dict[int, dict]] = {}
         for sheetnr, creation_date in self._fetch_ogc_collection("dop_single"):
             east, north = sheetnr.split("-")
             coords = self._parse_coords(east, north)
             if coords:
                 year = creation_date.year
-                image_tiles.setdefault(coords, {})[year] = f"{self.DOP_BASE_URL}dop_{sheetnr}.zip"
+                image_tiles.setdefault(coords, {})[year] = {
+                    "url": f"{self.DOP_BASE_URL}dop_{sheetnr}.zip",
+                    "acquisition_date": creation_date.isoformat(),
+                }
         if not self.quiet:
             print(f"    {len(image_tiles)} tiles")
 
-        # bDOM tiles (latest only, no year tracking needed)
+        # bDOM tiles (current only)
         if not self.quiet:
             print("  Loading bDOM tiles from OGC API...")
-        dsm_tiles: dict[tuple[int, int], str] = {}
-        for sheetnr, _ in self._fetch_ogc_collection("bdom_single"):
+        dsm_tiles: dict[tuple[int, int], dict] = {}
+        for sheetnr, creation_date in self._fetch_ogc_collection("bdom_single"):
             east, north = sheetnr.split("-")
             coords = self._parse_coords(east, north)
             if coords:
-                dsm_tiles[coords] = f"{self.BDOM_BASE_URL}bdom_{sheetnr}.zip"
+                dsm_tiles[coords] = {
+                    "url": f"{self.BDOM_BASE_URL}bdom_{sheetnr}.zip",
+                    "acquisition_date": creation_date.isoformat(),
+                }
         if not self.quiet:
             print(f"    {len(dsm_tiles)} tiles")
 

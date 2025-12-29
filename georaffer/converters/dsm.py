@@ -26,7 +26,6 @@ from georaffer.converters.utils import (
     write_geotiff,
 )
 from georaffer.grids import compute_split_factor
-from georaffer.metadata import add_provenance_to_geotiff
 
 
 def convert_dsm_raster(
@@ -92,14 +91,6 @@ def convert_dsm_raster(
                 t_read=t_read,
             )
 
-        # Build provenance metadata
-        metadata = {
-            "source_file": filename,
-            "source_region": region,
-            "file_type": "dsm",
-            "metadata_source": "bdom_tif",
-        }
-
         timings = []
         for target_size in target_sizes:
             path_str = output_paths.get(target_size)
@@ -125,7 +116,6 @@ def convert_dsm_raster(
                 t_res = 0.0
 
             t_write_start = time.perf_counter()
-            year_int = int(year) if year and year.isdigit() else None
             write_geotiff(
                 output_path,
                 out_data,
@@ -135,11 +125,8 @@ def convert_dsm_raster(
                 count=1,
                 nodata=nodata,
                 area_or_point="Point",
-                metadata=metadata,
-                year_int=year_int,
             )
             t_write = time.perf_counter() - t_write_start
-            add_provenance_to_geotiff(output_path, metadata, year=year_int)
             timings.append((target_size, t_res, t_write))
 
         if profiling:
@@ -199,15 +186,6 @@ def _convert_split_dsm(
             new_y = base_y + (ratio - 1 - r_idx)
             split_transform = transform * Affine.translation(col_start, row_start)
 
-            metadata = {
-                "source_file": source_file,
-                "source_region": region,
-                "file_type": "dsm",
-                "metadata_source": "bdom_tif",
-                "grid_x": new_x,
-                "grid_y": new_y,
-            }
-
             for target_size in target_sizes:
                 base_path = output_paths.get(target_size)
                 if not base_path:
@@ -242,7 +220,6 @@ def _convert_split_dsm(
                 total_resample += time.perf_counter() - t_res_start
 
                 t_write_start = time.perf_counter()
-                year_int = int(year) if year and year.isdigit() else None
                 write_geotiff(
                     output_path,
                     out_data,
@@ -252,10 +229,7 @@ def _convert_split_dsm(
                     count=1,
                     nodata=nodata,
                     area_or_point="Point",
-                    metadata=metadata,
-                    year_int=year_int,
                 )
-                add_provenance_to_geotiff(output_path, metadata, year=year_int)
                 total_write += time.perf_counter() - t_write_start
 
     if profiling:

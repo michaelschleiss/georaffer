@@ -1,8 +1,10 @@
 """WMS imagery source for downloading tiles via OGC Web Map Service."""
 
+import os
 import re
 import time
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 
@@ -14,10 +16,12 @@ from georaffer.config import (
     MAX_RETRIES,
     METERS_PER_KM,
     MIN_FILE_SIZE,
+    NRW_GRID_SIZE,
+    RLP_GRID_SIZE,
     RETRY_BACKOFF_BASE,
     RETRY_MAX_WAIT,
-    RLP_GRID_SIZE,
     WMS_COVERAGE_RETRIES,
+    WMS_NRW_BUFFER_M,
     WMS_RETRY_MAX_WAIT,
     WMS_TIMEOUT,
 )
@@ -467,3 +471,103 @@ class WMSImagerySource:
         """
         # Match RLP JP2 naming convention but with .tif extension
         return f"dop20rgb_32_{grid_x}_{grid_y}_2_rp_{year}.tif"
+
+
+# =============================================================================
+# NRW WMS Date Functions
+# =============================================================================
+
+
+def _normalize_wms_date(date_str: str) -> str | None:
+    """Normalize WMS date string to ISO format (YYYY-MM-DD)."""
+    if not date_str:
+        return None
+    stripped = date_str.strip()
+    if not stripped:
+        return None
+
+    # Try DD.MM.YYYY format
+    match = re.search(r"\d{2}\.\d{2}\.\d{4}", stripped)
+    if match:
+        try:
+            dt = datetime.strptime(match.group(0), "%d.%m.%Y")
+            return dt.strftime("%Y-%m-%d")
+        except ValueError:
+            return None
+
+    # Try YYYY-MM-DD format
+    match = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", stripped)
+    if not match:
+        return None
+    year, month, day = match.groups()
+    normalized = f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    try:
+        datetime.strptime(normalized, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return normalized
+
+
+def fetch_nrw_dates(
+    grid_x: int,
+    grid_y: int,
+    session: requests.Session,
+) -> dict[int, str]:
+    """Fetch all acquisition dates for an NRW tile via WMS.
+
+    Makes two requests (historic + current) and merges results.
+
+    Args:
+        grid_x, grid_y: Grid coordinates (1km grid)
+        session: HTTP session
+
+    Returns:
+        Dict mapping year -> acquisition_date (ISO string)
+    """
+    if os.getenv("GEORAFFER_DISABLE_WMS") == "1":
+        return {}
+
+    # Convert grid to UTM (center of tile)
+    utm_x = grid_x * NRW_GRID_SIZE + NRW_GRID_SIZE / 2
+    utm_y = grid_y * NRW_GRID_SIZE + NRW_GRID_SIZE / 2
+    buffer = WMS_NRW_BUFFER_M
+
+    result: dict[int, str] = {}
+
+    for historic, wms_url, layers in [
+        (True, "https://www.wms.nrw.de/geobasis/wms_nw_hist_dop", "nw_hist_dop_info"),
+        (False, "https://www.wms.nrw.de/geobasis/wms_nw_dop", "nw_dop_utm_info"),
+    ]:
+        params = {
+            "SERVICE": "WMS",
+            "VERSION": "1.3.0",
+            "REQUEST": "GetFeatureInfo",
+            "LAYERS": layers,
+            "QUERY_LAYERS": layers,
+            "CRS": "EPSG:25832",
+            "BBOX": f"{utm_x - buffer},{utm_y - buffer},{utm_x + buffer},{utm_y + buffer}",
+            "WIDTH": "100",
+            "HEIGHT": "100",
+            "I": "50",
+            "J": "50",
+            "INFO_FORMAT": "text/plain",
+            "FEATURE_COUNT": "10",
+        }
+
+        for attempt in range(MAX_RETRIES):
+            try:
+                response = session.get(wms_url, params=params, timeout=WMS_TIMEOUT)
+                response.raise_for_status()
+
+                for date_str in re.findall(r"Bildflugdatum = '([^']+)'", response.text):
+                    normalized = _normalize_wms_date(date_str)
+                    if normalized:
+                        year = datetime.strptime(normalized, "%Y-%m-%d").year
+                        result[year] = normalized
+                break
+
+            except Exception:
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(min(RETRY_BACKOFF_BASE**attempt, RETRY_MAX_WAIT))
+
+    return result

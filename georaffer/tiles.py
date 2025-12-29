@@ -306,12 +306,7 @@ def calculate_required_tiles(
 
             # Multi-year handling: If downloader loaded multiple years of data for the
             # same tile coords, download all of them (e.g., NRW 2020, 2021, 2022 for tile 350,5600)
-            all_urls = None
-            if hasattr(region.downloader, "get_all_urls_for_coord"):
-                result = region.downloader.get_all_urls_for_coord(native)
-                # Only use if it's actually a non-empty list (handles MagicMock in tests)
-                if isinstance(result, list) and result:
-                    all_urls = result
+            all_urls = region.downloader.get_all_urls_for_coord(native) or None
 
             if all_urls:
                 # Multi-year: add ALL URLs for this coord (different years = different files)

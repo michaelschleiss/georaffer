@@ -46,15 +46,8 @@ class TestConvertJP2:
             mock.return_value.__exit__ = Mock(return_value=False)
             yield mock, mock_dst
 
-    @pytest.fixture
-    def mock_wms(self):
-        """Mock get_wms_metadata_for_region."""
-        with patch("georaffer.metadata.get_wms_metadata_for_region") as mock:
-            mock.return_value = {"acquisition_date": "2021-05-15", "metadata_source": "test"}
-            yield mock
-
     def test_convert_single_output_success(
-        self, mock_rasterio, mock_atomic_write, mock_wms, tmp_path
+        self, mock_rasterio, mock_atomic_write, tmp_path
     ):
         """Test basic JP2 to GeoTIFF conversion."""
         mock_open, mock_src = mock_rasterio
@@ -70,51 +63,8 @@ class TestConvertJP2:
         assert kwargs.get("USE_TILE_AS_BLOCK") == "YES"
         mock_write.assert_called_once()
 
-    def test_convert_adds_provenance_metadata(
-        self, mock_rasterio, mock_atomic_write, mock_wms, tmp_path
-    ):
-        """Test that conversion adds correct provenance metadata tags."""
-        mock_open, mock_src = mock_rasterio
-        mock_write, mock_dst = mock_atomic_write
-
-        output_path = str(tmp_path / "output" / "test.tif")
-        convert_jp2(
-            "/fake/dop10rgbi_32_350_5600_1_nw_2021.jp2", output_path, region="NRW", year="2021"
-        )
-
-        # Check that tags were set with metadata
-        mock_dst.update_tags.assert_called_once()
-        tags = mock_dst.update_tags.call_args[1]
-        assert tags["SOURCE_FILE"] == "dop10rgbi_32_350_5600_1_nw_2021.jp2"
-        assert tags["SOURCE_REGION"] == "NRW"
-        assert tags["SOURCE_TYPE"] == "orthophoto"
-        assert "PROCESSING_DATE" in tags
-        assert tags["AREA_OR_POINT"] == "Area"
-
-    def test_convert_passes_utm_center_for_wms(
-        self, mock_rasterio, mock_atomic_write, mock_wms, tmp_path
-    ):
-        """Test that conversion queries WMS for NRW tiles."""
-        mock_open, mock_src = mock_rasterio
-
-        output_path = str(tmp_path / "output" / "test.tif")
-        convert_jp2(
-            "/fake/dop10rgbi_32_350_5600_1_nw_2021.jp2", output_path, region="NRW", year="2021"
-        )
-
-        # Verify WMS was queried for NRW
-        mock_wms.assert_called_once()
-        call_args = mock_wms.call_args[0]
-        assert len(call_args) >= 3
-        # Check coordinates are reasonable
-        assert call_args[0] > 0  # X coordinate
-        assert call_args[1] > 0  # Y coordinate
-        assert call_args[2] == "NRW" or call_args[2].value == "NRW"
-        # Year should be passed
-        assert mock_wms.call_args[0][3] == 2021
-
     def test_convert_dict_output_multiple_resolutions(
-        self, mock_rasterio, mock_atomic_write, mock_wms, tmp_path
+        self, mock_rasterio, mock_atomic_write, tmp_path
     ):
         """Test conversion to multiple resolutions."""
         mock_open, mock_src = mock_rasterio

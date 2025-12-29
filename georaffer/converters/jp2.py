@@ -207,14 +207,6 @@ def convert_jp2(
                         t_read=t_read,
                     )
 
-                # Build provenance metadata
-                metadata = {
-                    "source_file": filename,
-                    "source_region": region,
-                    "file_type": "orthophoto",
-                    "metadata_source": "jp2",
-                }
-
                 # Standard conversion (no splitting)
                 timing = []
                 for resolution in resolutions:
@@ -245,8 +237,6 @@ def convert_jp2(
                         out_data,
                         out_transform,
                         crs,
-                        metadata=metadata,
-                        year_int=year_int_val,
                     )
                     t_write = time.perf_counter() - t_write_start
                     timing.append((resolution, t_res, t_write))
@@ -323,14 +313,6 @@ def _convert_split_jp2(
             # Adjust geotransform for this sub-tile's pixel offset within source image
             split_transform = transform * Affine.translation(col_start, row_start)
 
-            metadata = {
-                "source_file": source_file,
-                "source_region": region,
-                "file_type": "orthophoto",
-                "grid_x": new_x,
-                "grid_y": new_y,
-            }
-
             for resolution in resolutions:
                 base_path = output_paths.get(resolution)
                 if not base_path:
@@ -371,10 +353,7 @@ def _convert_split_jp2(
                 total_resample += time.perf_counter() - t_res_start
 
                 t_write_start = time.perf_counter()
-                year_int = int(year) if year and year.isdigit() else None
-                write_geotiff(
-                    output_path, out_data, out_transform, crs, metadata=metadata, year_int=year_int
-                )
+                write_geotiff(output_path, out_data, out_transform, crs)
                 total_write += time.perf_counter() - t_write_start
 
     if profiling:

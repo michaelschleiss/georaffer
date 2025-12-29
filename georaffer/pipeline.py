@@ -199,11 +199,11 @@ def process_tiles(
 
     if nrw_downloader is not None:
         nrw_jp2, nrw_laz = nrw_downloader.get_available_tiles()
-        catalog_rows.append(("NRW", nrw_downloader.total_jp2_count or len(nrw_jp2), len(nrw_laz)))
+        catalog_rows.append(("NRW", nrw_downloader.total_image_count or len(nrw_jp2), len(nrw_laz)))
         region_catalogs.append(RegionCatalog("nrw", nrw_downloader, nrw_jp2, nrw_laz))
     if rlp_downloader is not None:
         rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(requested_coords=rlp_native_coords)
-        catalog_rows.append(("RLP", rlp_downloader.total_jp2_count or len(rlp_jp2), len(rlp_laz)))
+        catalog_rows.append(("RLP", rlp_downloader.total_image_count or len(rlp_jp2), len(rlp_laz)))
         region_catalogs.append(RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz))
     if bb_downloader is not None:
         bb_jp2, bb_laz = bb_downloader.get_available_tiles()

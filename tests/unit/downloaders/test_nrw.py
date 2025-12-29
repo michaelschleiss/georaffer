@@ -59,14 +59,14 @@ class TestNRWHistoricFiltering:
             (350, 5600): {2018: "https://example.com/tile_2018.jp2"},
             (351, 5600): {2021: "https://example.com/tile_2021.jp2"},
         })
-        monkeypatch.setattr(downloader, "fetch_catalog", lambda: fake_catalog)
+        monkeypatch.setattr(downloader, "build_catalog", lambda: fake_catalog)
 
         jp2_tiles, laz_tiles = downloader.get_available_tiles()
 
         # Only 2018 tile should be included (2021 outside range)
         assert jp2_tiles == {(350, 5600): "https://example.com/tile_2018.jp2"}
         assert laz_tiles == {}
-        assert downloader.total_jp2_count == 1
+        assert downloader.total_image_count == 1
 
 
 class TestNRWUtmToGridCoords:

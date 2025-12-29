@@ -2,10 +2,8 @@
 
 import json
 import os
-import sys
 import time
 import warnings
-import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import suppress
@@ -24,7 +22,6 @@ from georaffer.config import (
     CATALOG_TTL_DAYS,
     CHUNK_SIZE,
     DEFAULT_TIMEOUT,
-    FEED_TIMEOUT,
     HTTP_POOL_MAXSIZE,
     LAZ_SAMPLE_SIZE,
     MAX_RETRIES,
@@ -43,13 +40,16 @@ Image.MAX_IMAGE_PIXELS = None
 class Catalog:
     """Complete tile catalog for a region (all years).
 
-    Stores mapping of (grid_x, grid_y) -> {year: url} for image tiles,
-    and (grid_x, grid_y) -> url for DSM tiles (current year only).
-    Used for caching tile availability to avoid repeated feed/WMS queries.
+    Stores mapping of (grid_x, grid_y) -> {year: tile_info} for image tiles,
+    and (grid_x, grid_y) -> tile_info for DSM tiles (current year only).
+
+    tile_info is a dict with keys:
+        - "url": str (download URL)
+        - "acquisition_date": str | None (ISO format, e.g. "2023-05-27")
     """
 
-    image_tiles: dict[tuple[int, int], dict[int, str]] = field(default_factory=dict)
-    dsm_tiles: dict[tuple[int, int], str] = field(default_factory=dict)
+    image_tiles: dict[tuple[int, int], dict[int, dict]] = field(default_factory=dict)
+    dsm_tiles: dict[tuple[int, int], dict] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
 
     def is_stale(self, ttl_days: int = CATALOG_TTL_DAYS) -> bool:
@@ -61,25 +61,27 @@ class Catalog:
         return {
             "created_at": self.created_at.isoformat(),
             "image_tiles": {
-                f"{x},{y}": {str(year): url for year, url in years.items()}
+                f"{x},{y}": {str(year): tile for year, tile in years.items()}
                 for (x, y), years in self.image_tiles.items()
             },
             "dsm_tiles": {
-                f"{x},{y}": url for (x, y), url in self.dsm_tiles.items()
+                f"{x},{y}": tile for (x, y), tile in self.dsm_tiles.items()
             },
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Catalog":
         """Deserialize catalog from JSON-compatible dict."""
-        image_tiles = {}
-        for coord_str, years in data.get("image_tiles", data.get("tiles", {})).items():
+        image_tiles: dict[tuple[int, int], dict[int, dict]] = {}
+        for coord_str, years in data["image_tiles"].items():
             x, y = map(int, coord_str.split(","))
-            image_tiles[(x, y)] = {int(year): url for year, url in years.items()}
-        dsm_tiles = {}
-        for coord_str, url in data.get("dsm_tiles", data.get("laz_tiles", {})).items():
+            image_tiles[(x, y)] = {int(year): tile for year, tile in years.items()}
+
+        dsm_tiles: dict[tuple[int, int], dict] = {}
+        for coord_str, tile in data["dsm_tiles"].items():
             x, y = map(int, coord_str.split(","))
-            dsm_tiles[(x, y)] = url
+            dsm_tiles[(x, y)] = tile
+
         return cls(
             image_tiles=image_tiles,
             dsm_tiles=dsm_tiles,
@@ -118,7 +120,6 @@ class RegionDownloader(ABC):
         self.quiet = quiet
         self._session = session or requests.Session()
 
-        # Increase pool size so concurrent downloads reuse connections efficiently.
         adapter = HTTPAdapter(
             pool_connections=HTTP_POOL_MAXSIZE, pool_maxsize=HTTP_POOL_MAXSIZE, max_retries=0
         )
@@ -188,75 +189,22 @@ class RegionDownloader(ABC):
         """
         pass
 
-    def _parse_jp2_feed(
-        self, session: requests.Session, root: ET.Element
-    ) -> dict[tuple[int, int], str]:
-        """Parse JP2 feed XML and return dict mapping (grid_x, grid_y) -> URL.
-
-        Default implementation returns empty dict. Override for XML feed parsing.
-        Subclasses using non-XML sources (e.g., HTML scraping) can skip this.
-        """
-        return {}
-
-    def _parse_laz_feed(
-        self, session: requests.Session, root: ET.Element
-    ) -> dict[tuple[int, int], str]:
-        """Parse LAZ feed XML and return dict mapping (grid_x, grid_y) -> URL.
-
-        Default implementation returns empty dict. Override for XML feed parsing.
-        Subclasses using non-XML sources (e.g., HTML scraping) can skip this.
-        """
-        return {}
-
-    @property
     @abstractmethod
-    def jp2_feed_url(self) -> str:
-        """URL to JP2 tile feed."""
-        pass
-
-    @property
-    @abstractmethod
-    def laz_feed_url(self) -> str:
-        """URL to LAZ tile feed."""
-        pass
-
     def get_available_tiles(self) -> tuple[dict, dict]:
-        """Get available JP2 and LAZ tiles from feeds.
-
-        Fetches and parses the region's feed URLs to build catalogs of available
-        tiles. Tile coordinates are extracted from filenames using region-specific
-        patterns.
+        """Get available image and DSM tiles.
 
         Returns:
-            Tuple of (jp2_tiles, laz_tiles) where each dict maps:
-            - Key: (grid_x, grid_y) tuple of tile coordinates in km
+            Tuple of (image_tiles, dsm_tiles) where each dict maps:
+            - Key: (grid_x, grid_y) tuple of tile coordinates
             - Value: Download URL for that tile
-
-        Raises:
-            Exception: If feed parsing fails for either JP2 or LAZ feeds
         """
-        jp2_tiles = {}
-        laz_tiles = {}
-
-        try:
-            jp2_tiles = self._fetch_and_parse_feed(self.jp2_feed_url, "jp2")
-        except Exception as e:
-            print(f"Failed to fetch {self.region_name} JP2 tiles: {e}", file=sys.stderr)
-            raise
-
-        try:
-            laz_tiles = self._fetch_and_parse_feed(self.laz_feed_url, "laz")
-        except Exception as e:
-            print(f"Failed to fetch {self.region_name} LAZ tiles: {e}", file=sys.stderr)
-            raise
-
-        return jp2_tiles, laz_tiles
+        pass
 
     # =========================================================================
     # Catalog caching
     # =========================================================================
 
-    def fetch_catalog(self, refresh: bool = False) -> Catalog:
+    def build_catalog(self, refresh: bool = False) -> Catalog:
         """Fetch and cache complete tile catalog for this region.
 
         Checks instance cache first, then disk cache. If both miss (or refresh=True),
@@ -343,32 +291,6 @@ class RegionDownloader(ABC):
                 json.dump(self._catalog.to_dict(), f, indent=2)
         except OSError:
             pass  # Cache write failure is not fatal
-
-    def _fetch_and_parse_feed(self, feed_url: str, tile_type: str) -> dict[tuple[int, int], str]:
-        """Fetch XML feed and parse using region-specific parser."""
-        last_error = None
-
-        for attempt in range(MAX_RETRIES):
-            try:
-                delay = self._backoff_delay(attempt)
-                if delay > 0:
-                    time.sleep(delay)
-
-                response = self._session.get(feed_url, timeout=FEED_TIMEOUT)
-                response.raise_for_status()
-                root = ET.fromstring(response.content)
-
-                if tile_type == "jp2":
-                    return self._parse_jp2_feed(self._session, root)
-                else:
-                    return self._parse_laz_feed(self._session, root)
-
-            except Exception as e:
-                last_error = e
-
-        raise RuntimeError(
-            f"Failed to fetch feed {feed_url} after {MAX_RETRIES} retries: {last_error}"
-        )
 
     def download_file(
         self, url: str, output_path: str, on_progress: Callable | None = None
@@ -483,14 +405,35 @@ class RegionDownloader(ABC):
             return False
 
     def get_all_urls_for_coord(self, coords: tuple[int, int]) -> list[str]:
-        """Get all URLs (all years) for a coordinate. For multi-year mode."""
-        if hasattr(self, "_all_jp2_by_coord"):
-            return self._all_jp2_by_coord.get(coords, [])
-        return []
+        """Get all image URLs for a coordinate, filtered by year range.
+
+        Uses the catalog and filters by imagery_from if set.
+        """
+        catalog = self.build_catalog()
+        years = catalog.image_tiles.get(coords, {})
+        if not years:
+            return []
+
+        from_year, to_year = None, None
+        if self.imagery_from:
+            from_year, to_year = self.imagery_from
+
+        return [
+            tile["url"] for year, tile in years.items()
+            if self._year_in_range(year, from_year, to_year)
+        ]
 
     @property
-    def total_jp2_count(self) -> int:
-        """Total JP2 files including all historical years."""
-        if hasattr(self, "_all_jp2_by_coord"):
-            return sum(len(urls) for urls in self._all_jp2_by_coord.values())
-        return 0
+    def total_image_count(self) -> int:
+        """Total image tiles including all historical years (filtered by imagery_from)."""
+        catalog = self.build_catalog()
+
+        from_year, to_year = None, None
+        if self.imagery_from:
+            from_year, to_year = self.imagery_from
+
+        return sum(
+            1 for years in catalog.image_tiles.values()
+            for year in years
+            if self._year_in_range(year, from_year, to_year)
+        )

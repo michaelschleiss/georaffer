@@ -272,10 +272,8 @@ def write_geotiff(
     count: int = 3,
     nodata: float | None = None,
     area_or_point: str = "Area",
-    metadata: dict | None = None,
-    year_int: int | None = None,
 ) -> None:
-    """Write data to GeoTIFF with optional provenance metadata.
+    """Write data to GeoTIFF.
 
     Supports two data types with different conventions:
 
@@ -301,24 +299,15 @@ def write_geotiff(
         count: Number of bands (default: 3)
         nodata: NoData value (optional)
         area_or_point: 'Area' for imagery, 'Point' for DSM
-        metadata: Provenance metadata dict (optional)
-        year_int: Year for WMS lookup (optional)
 
     Example:
         >>> # RGB orthophoto (data shape: (3, 1000, 1000))
-        >>> write_geotiff(Path('out.tif'), rgb_data, transform, 'EPSG:25832',
-        ...               dtype='uint8', count=3, metadata={'source_region': 'NRW'})
+        >>> write_geotiff(Path('out.tif'), rgb_data, transform, 'EPSG:25832')
 
         >>> # DSM with nodata (data shape: (2000, 2000))
         >>> write_geotiff(Path('dsm.tif'), elevation_data, transform, 'EPSG:25832',
         ...               dtype='float32', count=1, nodata=-9999.0, area_or_point='Point')
     """
-    # Import here to avoid circular dependency
-    from datetime import datetime
-
-    from georaffer.config import Region
-    from georaffer.metadata import get_wms_metadata_for_region
-
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Handle shape for single vs multi-band
@@ -328,49 +317,7 @@ def write_geotiff(
     else:
         actual_count, height, width = data.shape
 
-    # Prepare all metadata tags BEFORE atomic write (WMS lookup done here)
     tags = {"AREA_OR_POINT": area_or_point}
-    if metadata:
-        center_x = transform.c + (width / 2) * transform.a
-        center_y = transform.f + (height / 2) * transform.e
-
-        # Query WMS for precise acquisition date if region provided
-        source_region = metadata.get("source_region")
-        region_enum = None
-        if source_region:
-            # Handle both Region enum and string values
-            if isinstance(source_region, Region):
-                region_enum = source_region
-            elif source_region == "NRW":
-                region_enum = Region.NRW
-            elif source_region == "RLP":
-                region_enum = Region.RLP
-            else:
-                region_enum = None
-
-            if region_enum in (Region.NRW, Region.RLP) and not metadata.get("acquisition_date"):
-                wms_metadata = get_wms_metadata_for_region(
-                    center_x, center_y, region_enum, year_int
-                )
-                if wms_metadata:
-                    metadata.update(wms_metadata)
-                if not metadata.get("acquisition_date"):
-                    source_file = metadata.get("source_file", "unknown source")
-                    raise RuntimeError(f"Missing acquisition_date from WMS for {source_file}.")
-
-        # Build tags dict
-        if metadata.get("acquisition_date"):
-            tags["ACQUISITION_DATE"] = str(metadata["acquisition_date"])
-        if metadata.get("source_region"):
-            tags["SOURCE_REGION"] = metadata["source_region"]
-        if metadata.get("source_file"):
-            tags["SOURCE_FILE"] = metadata["source_file"]
-        if metadata.get("file_type"):
-            tags["SOURCE_TYPE"] = metadata["file_type"]
-        if metadata.get("metadata_source"):
-            tags["METADATA_SOURCE"] = metadata["metadata_source"]
-
-        tags["PROCESSING_DATE"] = datetime.now().strftime("%Y-%m-%d")
 
     # Use actual band count from data, not default parameter
     profile = {

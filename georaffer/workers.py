@@ -53,12 +53,12 @@ from georaffer.config import (
 from georaffer.converters import convert_dsm_raster, convert_jp2, convert_laz, get_laz_year
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
-from georaffer.metadata import get_wms_metadata_for_region
-from georaffer.provenance import (
-    build_metadata_rows,
-    extract_year_from_filename,
-    get_tile_center_utm,
-)
+
+
+def extract_year_from_filename(filename: str) -> str | None:
+    """Extract 4-digit year from filename (e.g., 'tile_2021.jp2' -> '2021')."""
+    match = re.search(r"_(\d{4})\.", filename)
+    return match.group(1) if match else None
 
 
 def detect_region(filename: str) -> Region:
@@ -117,7 +117,7 @@ def generate_output_name(
     return f"{region.value.lower()}_{utm_zone}_{int(easting)}_{int(northing)}_{year_str}.tif"
 
 
-def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
+def convert_jp2_worker(args: tuple) -> tuple[bool, str, int]:
     """Worker function to convert a single JP2 file with all its resolutions.
 
     Args:
@@ -125,9 +125,8 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
               num_threads, grid_size_km, profiling)
 
     Returns:
-        Tuple of (success, metadata_rows, filename, outputs_count) where:
+        Tuple of (success, filename, outputs_count) where:
         - success: True if conversion succeeded, False otherwise
-        - metadata_rows: List of dict with provenance metadata for each output tile
         - filename: Original JP2 filename (for logging/tracking)
         - outputs_count: Number of GeoTIFF files created (accounts for splits and resolutions)
 
@@ -142,7 +141,7 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
         num_threads,
         grid_size_km,
         profiling,
-        precomputed_wms,
+        _,  # precomputed_wms (unused)
     ) = args
 
     input_path = Path(jp2_dir) / filename
@@ -183,53 +182,12 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
                 profiling=profiling,
             )
 
-        # Get acquisition date for provenance
-        acquisition_date = None
-        metadata_source = None
-        if precomputed_wms:
-            acquisition_date = precomputed_wms.get("acquisition_date")
-            metadata_source = precomputed_wms.get("metadata_source")
-        coords = parse_tile_coords(filename)
-        if coords:
-            base_x, base_y = coords
-            tile_km = get_tile_size_km(region)
-            center_x, center_y = get_tile_center_utm(base_x, base_y, tile_km)
-            try:
-                if not acquisition_date:
-                    wms_meta = get_wms_metadata_for_region(
-                        center_x, center_y, region, int(year) if year.isdigit() else None
-                    )
-                    if wms_meta:
-                        acquisition_date = wms_meta.get("acquisition_date")
-                        metadata_source = wms_meta.get("metadata_source")
-            except Exception:
-                pass  # WMS failures are not fatal
-        if not acquisition_date and region == Region.BB:
-            acquisition_date = _extract_bb_meta_date(input_path)
-            if acquisition_date and not metadata_source:
-                metadata_source = "BB metadata"
-        if not acquisition_date:
-            raise RuntimeError(f"Missing acquisition_date for {filename}.")
-
-        # Build metadata rows using representative output path
-        rep_path = next(iter(output_paths.values()))
-        metadata = build_metadata_rows(
-            filename=filename,
-            output_path=rep_path,
-            region=region,
-            year=year,
-            file_type="orthophoto",
-            grid_size_km=grid_size_km,
-            acquisition_date=acquisition_date,
-            metadata_source=metadata_source,
-        )
-
         # Calculate output count: resolutions × split tiles
         tile_km = get_tile_size_km(region)
         split_factor = compute_split_factor(tile_km, grid_size_km)
         outputs_count = len(resolutions) * split_factor
 
-        return (True, metadata, filename, outputs_count)
+        return (True, filename, outputs_count)
 
     except Exception as e:
         raise RuntimeError(
@@ -238,7 +196,7 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
         ) from e
 
 
-def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
+def convert_dsm_worker(args: tuple) -> tuple[bool, str, int]:
     """Worker function to convert a single DSM file (.laz or raster) with resolutions.
 
     Args:
@@ -246,9 +204,8 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
               num_threads, grid_size_km, profiling)
 
     Returns:
-        Tuple of (success, metadata_rows, filename, outputs_count) where:
+        Tuple of (success, filename, outputs_count) where:
         - success: True if conversion succeeded, False otherwise
-        - metadata_rows: List of dict with provenance metadata for each output tile
         - filename: Original DSM filename (for logging/tracking)
         - outputs_count: Number of DSM GeoTIFF files created (accounts for splits and resolutions)
 
@@ -263,7 +220,7 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
         num_threads,
         grid_size_km,
         profiling,
-        precomputed_wms,
+        _,  # precomputed_wms (unused)
     ) = args
 
     input_path = Path(laz_dir) / filename
@@ -304,38 +261,18 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
                     profiling=profiling,
                 )
 
-            acquisition_date = None
-            metadata_source = None
-            if region == Region.BB:
-                acquisition_date = _extract_bb_meta_date(input_path)
-                if acquisition_date:
-                    metadata_source = "BB metadata"
-            if not acquisition_date:
-                raise RuntimeError(f"Missing acquisition_date for {filename}.")
-
-            metadata = build_metadata_rows(
-                filename=filename,
-                output_path=next(iter(output_paths.values())),
-                region=region,
-                year=year,
-                file_type="dsm",
-                grid_size_km=grid_size_km,
-                acquisition_date=acquisition_date,
-                metadata_source=metadata_source,
-            )
-
             tile_km = get_tile_size_km(region)
             split_factor = compute_split_factor(tile_km, grid_size_km)
             outputs_count = len(resolutions) * split_factor
 
-            return (True, metadata, filename, outputs_count)
+            return (True, filename, outputs_count)
         except Exception as e:
             raise RuntimeError(
                 f"DSM conversion failed for {filename} "
                 f"(region={region}, year={year}, resolutions={resolutions})"
             ) from e
 
-    # Setup output paths for each resolution
+    # LAZ file path
     output_paths: dict[int | None, str] = {}
     for res in resolutions:
         output_name = generate_output_name(filename, region, year, "dsm")
@@ -354,53 +291,11 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
             profiling=profiling,
         )
 
-        # Get acquisition date for provenance
-        acquisition_date = None
-        metadata_source = None
-        if precomputed_wms:
-            acquisition_date = precomputed_wms.get("acquisition_date")
-            metadata_source = precomputed_wms.get("metadata_source")
-        coords = parse_tile_coords(filename)
-        if coords:
-            base_x, base_y = coords
-            tile_km = get_tile_size_km(region)
-            center_x, center_y = get_tile_center_utm(base_x, base_y, tile_km)
-            try:
-                if not acquisition_date:
-                    wms_meta = get_wms_metadata_for_region(
-                        center_x, center_y, region, int(year) if year.isdigit() else None
-                    )
-                    if wms_meta:
-                        acquisition_date = wms_meta.get("acquisition_date")
-                        metadata_source = wms_meta.get("metadata_source")
-            except Exception:
-                pass  # WMS failures are not fatal
-        if not acquisition_date and region == Region.BB:
-            acquisition_date = _extract_bb_meta_date(input_path)
-            if acquisition_date and not metadata_source:
-                metadata_source = "BB metadata"
-        if not acquisition_date:
-            raise RuntimeError(f"Missing acquisition_date for {filename}.")
-
-        # Build metadata rows using representative output path
-        rep_path = next(iter(output_paths.values()))
-        metadata = build_metadata_rows(
-            filename=filename,
-            output_path=rep_path,
-            region=region,
-            year=year,
-            file_type="dsm",
-            grid_size_km=grid_size_km,
-            acquisition_date=acquisition_date,
-            metadata_source=metadata_source,
-        )
-
-        # Calculate output count: resolutions × split tiles
         tile_km = get_tile_size_km(region)
         split_factor = compute_split_factor(tile_km, grid_size_km)
         outputs_count = len(resolutions) * split_factor
 
-        return (True, metadata, filename, outputs_count)
+        return (True, filename, outputs_count)
 
     except Exception as e:
         raise RuntimeError(
@@ -427,8 +322,8 @@ def resolve_source_year(
         raise ValueError(f"Invalid year '{value}' for {filename}.")
 
     region = region or detect_region(filename)
-    year = extract_year_from_filename(filename, require=False)
-    normalized = _normalize_year(None if year == "latest" else year)
+    year = extract_year_from_filename(filename)
+    normalized = _normalize_year(year)
     if normalized:
         return normalized
 

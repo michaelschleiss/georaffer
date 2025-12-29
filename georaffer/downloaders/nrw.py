@@ -1,6 +1,8 @@
 """NRW (North Rhine-Westphalia) tile downloader."""
 
+import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 import requests
@@ -11,9 +13,11 @@ from georaffer.config import (
     NRW_GRID_SIZE,
     NRW_JP2_PATTERN,
     NRW_LAZ_PATTERN,
+    WMS_QUERY_WORKERS,
     Region,
 )
 from georaffer.downloaders.base import Catalog, RegionDownloader
+from georaffer.downloaders.feeds import fetch_xml_feed
 from georaffer.runtime import parallel_map
 
 
@@ -129,41 +133,18 @@ class NRWDownloader(RegionDownloader):
         Returns:
             Tuple of (jp2_tiles, laz_tiles) dicts mapping coords to URLs.
         """
-        catalog = self.fetch_catalog()
+        catalog = self.build_catalog()
 
         jp2_tiles = {}
-        self._all_jp2_by_coord: dict[tuple[int, int], list[str]] = {}
-
         for coords, years in catalog.image_tiles.items():
             # Filter by year range
-            valid = {y: url for y, url in years.items()
+            valid = {y: tile for y, tile in years.items()
                      if self._year_in_range(y, self._from_year, self._to_year)}
             if valid:
-                jp2_tiles[coords] = valid[max(valid)]  # Latest year for display
-                self._all_jp2_by_coord[coords] = list(valid.values())
+                jp2_tiles[coords] = valid[max(valid)]["url"]
 
-        return jp2_tiles, catalog.dsm_tiles
-
-    def _parse_laz_feed(
-        self, session: requests.Session, root: ET.Element
-    ) -> dict[tuple[int, int], str]:
-        """Parse NRW LAZ feed."""
-        laz_tiles = {}
-
-        for file_elem in root.findall(".//file"):
-            filename = file_elem.get("name")
-            if filename and filename.endswith(".laz"):
-                match = NRW_LAZ_PATTERN.match(filename)
-                if not match:
-                    raise ValueError(
-                        f"NRW LAZ '{filename}' doesn't match pattern. "
-                        f"Expected: bdom50_32XXX_YYYY_N_nw_YEAR.laz"
-                    )
-                grid_x = int(match.group(1))
-                grid_y = int(match.group(2))
-                laz_tiles[(grid_x, grid_y)] = self._laz_base_url + filename
-
-        return laz_tiles
+        dsm_tiles = {coords: tile["url"] for coords, tile in catalog.dsm_tiles.items()}
+        return jp2_tiles, dsm_tiles
 
     def _load_catalog(self) -> Catalog:
         """Load NRW catalog from ATOM feeds (current + historic).
@@ -171,7 +152,7 @@ class NRWDownloader(RegionDownloader):
         Fetches current feed and all historic year feeds in parallel,
         combining them into a single catalog.
         """
-        tiles: dict[tuple[int, int], dict[int, str]] = {}
+        tiles: dict[tuple[int, int], dict[int, dict]] = {}
 
         # 1. Current tiles
         if not self.quiet:
@@ -181,7 +162,7 @@ class NRWDownloader(RegionDownloader):
                 self._session, self.CURRENT_JP2_FEED_URL, self.CURRENT_JP2_BASE_URL
             )
             for coords, (url, year) in current_tiles.items():
-                tiles.setdefault(coords, {})[year] = url
+                tiles.setdefault(coords, {})[year] = {"url": url, "acquisition_date": None}
             if not self.quiet:
                 print(f"  Current: {len(current_tiles)} tiles")
         except Exception as e:
@@ -213,7 +194,7 @@ class NRWDownloader(RegionDownloader):
             added = 0
             for coords, (url, year) in historic_tiles.items():
                 if year not in tiles.get(coords, {}):
-                    tiles.setdefault(coords, {})[year] = url
+                    tiles.setdefault(coords, {})[year] = {"url": url, "acquisition_date": None}
                     added += 1
             successful_years.append(f"{hist_year}:+{added}")
 
@@ -224,8 +205,26 @@ class NRWDownloader(RegionDownloader):
             print(f"  Skipped: {sorted(failed_years)}")
 
         # 3. LAZ tiles
-        laz_tiles = self._fetch_and_parse_feed(self.laz_feed_url, "laz")
+        root = fetch_xml_feed(self._session, self._laz_feed_url)
+        laz_tiles = self._parse_laz_tiles(root)
         if not self.quiet:
             print(f"  LAZ: {len(laz_tiles)} tiles")
 
         return Catalog(image_tiles=tiles, dsm_tiles=laz_tiles)
+
+    def _parse_laz_tiles(self, root: ET.Element) -> dict[tuple[int, int], dict]:
+        """Parse LAZ tiles from XML feed."""
+        laz_tiles = {}
+        for file_elem in root.findall(".//file"):
+            filename = file_elem.get("name")
+            if filename and filename.endswith(".laz"):
+                match = NRW_LAZ_PATTERN.match(filename)
+                if not match:
+                    raise ValueError(
+                        f"NRW LAZ '{filename}' doesn't match pattern. "
+                        f"Expected: bdom50_32XXX_YYYY_N_nw_YEAR.laz"
+                    )
+                grid_x = int(match.group(1))
+                grid_y = int(match.group(2))
+                laz_tiles[(grid_x, grid_y)] = {"url": self._laz_base_url + filename, "acquisition_date": None}
+        return laz_tiles

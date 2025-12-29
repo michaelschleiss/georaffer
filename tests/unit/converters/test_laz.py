@@ -17,14 +17,6 @@ from georaffer.converters.laz import _fill_raster_numba, convert_laz
 from georaffer.converters.utils import resample_raster, write_geotiff
 
 
-# Stub WMS metadata for deterministic conversion tests.
-@pytest.fixture(autouse=True)
-def mock_wms_metadata():
-    with patch("georaffer.metadata.get_wms_metadata_for_region") as mock:
-        mock.return_value = {"acquisition_date": "2021-05-15", "metadata_source": "test"}
-        yield mock
-
-
 # Replace numba JIT with pure Python for tests to avoid compilation dependency
 def _fill_raster_python(
     raster,
@@ -187,15 +179,8 @@ class TestConvertLaz:
             mock.return_value.__exit__ = Mock(return_value=False)
             yield mock, mock_dst
 
-    @pytest.fixture
-    def mock_provenance(self):
-        """Mock add_provenance_to_geotiff."""
-        with patch("georaffer.metadata.add_provenance_to_geotiff") as mock:
-            mock.return_value = True
-            yield mock
-
     def test_convert_success_returns_true(
-        self, mock_laspy, mock_atomic_write, mock_provenance, tmp_path
+        self, mock_laspy, mock_atomic_write, tmp_path
     ):
         """Test successful conversion returns True."""
         mock_read, mock_las = mock_laspy
@@ -206,22 +191,6 @@ class TestConvertLaz:
 
         assert result is True
 
-    def test_convert_adds_provenance_metadata(
-        self, mock_laspy, mock_atomic_write, mock_provenance, tmp_path
-    ):
-        """Test that conversion adds correct provenance metadata."""
-        output_path = str(tmp_path / "output" / "test.tif")
-        convert_laz(
-            "/fake/bdom50_32350_5600_1_nw_2023.laz", output_path, region="NRW", resolution=0.5
-        )
-
-        mock_provenance.assert_called_once()
-        metadata = mock_provenance.call_args[0][1]
-        assert metadata["source_file"] == "bdom50_32350_5600_1_nw_2023.laz"
-        assert metadata["source_region"] == "NRW"
-        assert metadata["file_type"] == "dsm"
-        assert metadata["acquisition_date"] == "2021-05-15"
-
     def test_convert_failure_raises_error(self, tmp_path):
         """Test failed conversion raises RuntimeError."""
         with patch("georaffer.converters.laz.laspy.open") as mock_open:
@@ -231,7 +200,7 @@ class TestConvertLaz:
                 convert_laz("/nonexistent/input.laz", str(tmp_path / "output.tif"), region="NRW")
 
     def test_convert_handles_missing_year(
-        self, mock_laspy, mock_atomic_write, mock_provenance, tmp_path
+        self, mock_laspy, mock_atomic_write, tmp_path
     ):
         """Test graceful handling when year is missing in header."""
         mock_read, mock_las = mock_laspy

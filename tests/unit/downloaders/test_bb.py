@@ -14,9 +14,9 @@ class TestBBDownloaderInit:
     def test_init(self, tmp_path):
         downloader = BBDownloader(str(tmp_path))
         assert downloader.region_name == "BB"
-        assert "data.geobasis-bb.de" in downloader.jp2_feed_url
-        assert "dop/rgbi_tif" in downloader.jp2_feed_url
-        assert "bdom/tif" in downloader.laz_feed_url
+        assert "data.geobasis-bb.de" in BBDownloader.DOP_BASE_URL
+        assert "dop/rgbi_tif" in BBDownloader.DOP_BASE_URL
+        assert "bdom/tif" in BBDownloader.BDOM_BASE_URL
 
     def test_utm_zone(self, tmp_path):
         downloader = BBDownloader(str(tmp_path))
