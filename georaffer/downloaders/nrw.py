@@ -1,6 +1,5 @@
 """NRW (North Rhine-Westphalia) tile downloader."""
 
-import sys
 import xml.etree.ElementTree as ET
 
 import requests
@@ -40,7 +39,7 @@ class NRWDownloader(RegionDownloader):
 
         if imagery_from is None:
             self._jp2_feed_url = self.CURRENT_JP2_FEED_URL
-            self.jp2_base_url = self.CURRENT_JP2_BASE_URL
+            self._jp2_base_url = self.CURRENT_JP2_BASE_URL
             self._from_year = None
             self._to_year = None
         else:
@@ -53,13 +52,13 @@ class NRWDownloader(RegionDownloader):
             self._from_year = from_year
             self._to_year = to_year  # None means "to present"
             # Primary feed URL (used for compatibility, actual loading handles all years)
-            self.jp2_base_url = self.HISTORIC_JP2_BASE.format(year=from_year)
-            self._jp2_feed_url = self.jp2_base_url + "index.xml"
+            self._jp2_base_url = self.HISTORIC_JP2_BASE.format(year=from_year)
+            self._jp2_feed_url = self._jp2_base_url + "index.xml"
 
         self._laz_feed_url = (
             "https://www.opengeodata.nrw.de/produkte/geobasis/hm/bdom50_las/bdom50_las/index.xml"
         )
-        self.laz_base_url = (
+        self._laz_base_url = (
             "https://www.opengeodata.nrw.de/produkte/geobasis/hm/bdom50_las/bdom50_las/"
         )
 
@@ -74,6 +73,10 @@ class NRWDownloader(RegionDownloader):
     @property
     def jp2_feed_url(self) -> str:
         return self._jp2_feed_url
+
+    @property
+    def jp2_base_url(self) -> str:
+        return self._jp2_base_url
 
     @property
     def laz_feed_url(self) -> str:
@@ -136,9 +139,9 @@ class NRWDownloader(RegionDownloader):
             response = session.get(epsg_feed_url, timeout=FEED_TIMEOUT)
             response.raise_for_status()
             root = ET.fromstring(response.content)
-            base_url = self.jp2_base_url + "epsg_25832/"
+            base_url = self._jp2_base_url + "epsg_25832/"
         else:
-            base_url = self.jp2_base_url
+            base_url = self._jp2_base_url
 
         for file_elem in root.findall(".//file"):
             filename = file_elem.get("name")
@@ -156,129 +159,26 @@ class NRWDownloader(RegionDownloader):
         return jp2_tiles
 
     def get_available_tiles(self) -> tuple[dict, dict]:
-        """Get available JP2 and LAZ tiles, loading multiple years if --imagery-from is set.
+        """Get available JP2 and LAZ tiles.
 
-        When imagery_from is set, loads years in the specified range (from_year to to_year,
-        or from_year to present if to_year is None). Returns all available tile versions.
-        Tiles with the same coords+year are deduplicated (current feed takes precedence).
+        Uses cached catalog. Filters by year range if --imagery-from is set.
 
         Returns:
             Tuple of (jp2_tiles, laz_tiles) dicts mapping coords to URLs.
-            In multi-year mode, returns ALL tile versions (unique filenames).
         """
-        # LAZ tiles use base class method (no historic LAZ feeds exist)
         laz_tiles = self._fetch_and_parse_feed(self.laz_feed_url, "laz")
+        catalog = self.fetch_catalog()
 
-        # If not in historic mode, use standard parsing
-        if self._from_year is None:
-            jp2_tiles = self._fetch_and_parse_feed(self.jp2_feed_url, "jp2")
-            # Set _all_jp2_by_coord for base class total_jp2_count property
-            self._all_jp2_by_coord = {coords: [url] for coords, url in jp2_tiles.items()}
-            return jp2_tiles, laz_tiles
-
-        # Multi-year historic mode: load feeds for the requested year range
-        # This allows downloading orthophotos from multiple years for the same location
-        from_year = self._from_year
-        to_year = self._to_year
-
-        # Collect tiles from all years: (coords, year) -> url
-        # Key is (coords, year) because same coords can appear in multiple years
-        all_tiles: dict[tuple[tuple[int, int], int], str] = {}
-
-        # Load current feed first (takes precedence for duplicates)
-        # Current feed may have updated versions of historic tiles - use these when available
-        try:
-            current_tiles = self._parse_jp2_feed_with_year(
-                self._session, self.CURRENT_JP2_FEED_URL, self.CURRENT_JP2_BASE_URL
-            )
-            kept_current = 0
-            skipped_current = 0
-            for coords, (url, year) in current_tiles.items():
-                if self._year_in_range(year, from_year, to_year):
-                    all_tiles[(coords, year)] = url
-                    kept_current += 1
-                else:
-                    skipped_current += 1
-            if skipped_current:
-                print(
-                    f"  Current feed: {len(current_tiles)} tiles "
-                    f"({kept_current} in range, {skipped_current} skipped)"
-                )
-            else:
-                print(f"  Current feed: {len(current_tiles)} tiles")
-        except Exception as e:
-            print(f"Failed to fetch current JP2 feed: {e}", file=sys.stderr)
-            raise
-
-        # Determine year range: from_year to to_year (or latest historic if to_year is None)
-        historic_years = [
-            y
-            for y in self.HISTORIC_YEARS
-            if self._year_in_range(y, from_year, to_year)
-        ]
-
-        total_historic = 0
-        duplicates_skipped = 0
-        successful_years = []
-        failed_years = []
-
-        def fetch_year(hist_year: int) -> dict | None:
-            """Fetch a single year's feed. Returns tiles_dict or None on error."""
-            base_url = self.HISTORIC_JP2_BASE.format(year=hist_year)
-            feed_url = base_url + "index.xml"
-            try:
-                return self._parse_jp2_feed_with_year(self._session, feed_url, base_url)
-            except Exception:
-                return None
-
-        # Fetch all years in parallel
-        for hist_year, historic_tiles in parallel_map(fetch_year, historic_years, max_workers=8):
-            if historic_tiles is None:
-                failed_years.append(str(hist_year))
-                continue
-            added = 0
-            for coords, (url, year) in historic_tiles.items():
-                key = (coords, year)
-                if key in all_tiles:
-                    duplicates_skipped += 1
-                else:
-                    all_tiles[key] = url
-                    added += 1
-            total_historic += added
-            successful_years.append(f"{hist_year}:+{added}")
-
-        if successful_years:
-            # Sort by year for consistent output
-            successful_years.sort(key=lambda s: int(s.split(":")[0]))
-            print(f"  Historic: {', '.join(successful_years)}")
-        if failed_years:
-            print(f"  Skipped (format mismatch): {', '.join(failed_years)}")
-
-        # Flatten all_tiles to match the expected return interface
-        # Challenge: base interface expects dict[coords -> url] (single URL per location)
-        # but we have multiple years per location that we want to download
-        #
-        # Solution: Return one URL per coords in jp2_tiles (for catalog/display purposes),
-        # but store ALL URLs in instance variables so tiles.py can retrieve them via
-        # get_all_urls_for_coord() when building download lists
         jp2_tiles = {}
-        for (coords, _year), url in all_tiles.items():
-            jp2_tiles[coords] = url  # Last year wins for display, but doesn't matter
-
-        # Store complete mapping for multi-year downloads
-        # tiles.py checks for this attribute to enable multi-year mode
         self._all_jp2_by_coord: dict[tuple[int, int], list[str]] = {}
-        for (coords, _year), url in all_tiles.items():
-            if coords not in self._all_jp2_by_coord:
-                self._all_jp2_by_coord[coords] = []
-            self._all_jp2_by_coord[coords].append(url)
 
-        total_tiles = len(all_tiles)
-        unique_coords = len(jp2_tiles)
-        year_range_str = f"{from_year}-{to_year}" if to_year else f"{from_year}-present"
-        print(
-            f"  Total: {total_tiles} tiles across {unique_coords} locations ({year_range_str}), {duplicates_skipped} duplicates skipped"
-        )
+        for coords, years in catalog.tiles.items():
+            # Filter by year range
+            valid = {y: url for y, url in years.items()
+                     if self._year_in_range(y, self._from_year, self._to_year)}
+            if valid:
+                jp2_tiles[coords] = valid[max(valid)]  # Latest year for display
+                self._all_jp2_by_coord[coords] = list(valid.values())
 
         return jp2_tiles, laz_tiles
 
@@ -299,7 +199,7 @@ class NRWDownloader(RegionDownloader):
                     )
                 grid_x = int(match.group(1))
                 grid_y = int(match.group(2))
-                laz_tiles[(grid_x, grid_y)] = self.laz_base_url + filename
+                laz_tiles[(grid_x, grid_y)] = self._laz_base_url + filename
 
         return laz_tiles
 
@@ -335,8 +235,10 @@ class NRWDownloader(RegionDownloader):
             feed_url = base_url + "index.xml"
             try:
                 return self._parse_jp2_feed_with_year(self._session, feed_url, base_url)
-            except Exception:
-                return None
+            except requests.HTTPError as e:
+                if e.response.status_code == 404:
+                    return None
+                raise
 
         successful_years = []
         failed_years: list[int] = []

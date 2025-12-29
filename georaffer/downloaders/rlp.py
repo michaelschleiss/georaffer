@@ -150,158 +150,30 @@ class RLPDownloader(RegionDownloader):
 
     def get_available_tiles(
         self,
-        requested_coords: set[tuple[int, int]] | None = None,
+        requested_coords: set[tuple[int, int]] | None = None,  # Unused, kept for API compat
     ) -> tuple[dict, dict]:
         """Get available JP2 and LAZ tiles.
 
-        Args:
-            requested_coords: For WMS historical mode only - tiles to query.
-                            Ignored for ATOM mode (returns full catalog).
+        Uses cached catalog. Filters by year range if --imagery-from is set.
 
         Returns:
             Tuple of (jp2_tiles, laz_tiles) dicts mapping coords to URLs.
         """
-        # LAZ always from ATOM (no historical LAZ via WMS)
         laz_tiles = self._fetch_and_parse_feed(self.laz_feed_url, "laz")
+        catalog = self.fetch_catalog()
 
-        # Current mode: use ATOM feed
-        if self._from_year is None:
-            jp2_tiles = self._fetch_and_parse_feed(self.jp2_feed_url, "jp2")
-            # Set _all_jp2_by_coord for total_jp2_count property
-            self._all_jp2_by_coord = {coords: [url] for coords, url in jp2_tiles.items()}
-            return jp2_tiles, laz_tiles
-
-        # Historical mode: use WMS
-        if not requested_coords:
-            if not self.quiet:
-                print("  WMS mode requires requested_coords, returning empty catalog")
-            return {}, laz_tiles
-
-        return self._get_wms_tiles(requested_coords), laz_tiles
-
-    def _get_wms_tiles(
-        self,
-        requested_coords: set[tuple[int, int]],
-    ) -> dict[tuple[int, int], str]:
-        """Query WMS for historical tiles (NRW-style multi-year).
-
-        Args:
-            requested_coords: Set of (grid_x, grid_y) coordinates to check
-
-        Returns:
-            Dict mapping coords to URLs (last year wins for display)
-        """
-        from_year = self._from_year
-        to_year = self._to_year
-
-        # from_year is guaranteed non-None here (called only when _from_year is set)
-        assert from_year is not None
-
-        # Determine year range
-        historic_years = [
-            y for y in self.HISTORIC_YEARS if self._year_in_range(y, from_year, to_year)
-        ]
-        if not historic_years:
-            year_str = f"{from_year}-{to_year}" if to_year else f"{from_year}-present"
-            if not self.quiet:
-                print(f"  Historic: none (no RLP WMS years in range {year_str})")
-            return {}
-
-        # Collect tiles: (coords, year) -> url
-        all_tiles: dict[tuple[tuple[int, int], int], str] = {}
-
-        # Load current ATOM feed first (takes precedence, like NRW)
-        current_tiles = self._fetch_and_parse_feed(self._jp2_feed_url, "jp2")
-        kept_current = 0
-        skipped_current = 0
-        for coords, url in current_tiles.items():
-            year = self._extract_year_from_url(url)
-            if year and self._year_in_range(year, from_year, to_year):
-                all_tiles[(coords, year)] = url
-                kept_current += 1
-            else:
-                skipped_current += 1
-        if not self.quiet:
-            if skipped_current:
-                print(
-                    f"  Current feed: {len(current_tiles)} tiles "
-                    f"({kept_current} in range, {skipped_current} skipped)"
-                )
-            else:
-                print(f"  Current feed: {len(current_tiles)} tiles")
-
-        # Query WMS for all years in one request per tile (much faster than year×tile).
-        total_tiles = len(requested_coords)
-        total_years = len(historic_years)
-        if not self.quiet:
-            print(
-                f"  WMS coverage: {total_tiles} tiles × {total_years} years "
-                f"({total_tiles} requests, {WMS_QUERY_WORKERS} workers)"
-            )
-
-        year_added: dict[int, int] = {}
-        checked = 0
-        failed = 0
-        started = time.perf_counter()
-
-        with ThreadPoolExecutor(max_workers=WMS_QUERY_WORKERS) as executor:
-            futures = {
-                executor.submit(self.wms.check_coverage_multi, historic_years, grid_x, grid_y): (
-                    grid_x,
-                    grid_y,
-                )
-                for grid_x, grid_y in requested_coords
-            }
-
-            for i, fut in enumerate(as_completed(futures), start=1):
-                checked = i
-                grid_x, grid_y = futures[fut]
-                try:
-                    coverage_by_year = fut.result()
-                except Exception:
-                    coverage_by_year = {}
-                    failed += 1
-
-                for hist_year in coverage_by_year:
-                    key = ((grid_x, grid_y), hist_year)
-                    if key in all_tiles:
-                        continue
-                    url = self.wms.get_tile_url(hist_year, grid_x, grid_y)
-                    all_tiles[key] = url
-                    year_added[hist_year] = year_added.get(hist_year, 0) + 1
-
-                if not self.quiet and (checked % 50 == 0 or checked == total_tiles):
-                    elapsed = time.perf_counter() - started
-                    rate = checked / elapsed if elapsed > 0 else 0.0
-                    print(
-                        f"\r    {checked}/{total_tiles} tiles checked, {failed} failed ({rate:.1f} req/s)",
-                        end="",
-                        flush=True,
-                    )
-
-        if not self.quiet:
-            print()
-
-        successful_years = [f"{y}:+{year_added[y]}" for y in sorted(year_added)]
-        if successful_years and not self.quiet:
-            print(f"  Historic: {', '.join(successful_years)}")
-
-        # Flatten for interface (same as NRW)
         jp2_tiles = {}
         self._all_jp2_by_coord: dict[tuple[int, int], list[str]] = {}
 
-        for (coords, _year), url in all_tiles.items():
-            jp2_tiles[coords] = url  # Last year wins for display
-            if coords not in self._all_jp2_by_coord:
-                self._all_jp2_by_coord[coords] = []
-            self._all_jp2_by_coord[coords].append(url)
+        for coords, years in catalog.tiles.items():
+            # Filter by year range
+            valid = {y: url for y, url in years.items()
+                     if self._year_in_range(y, self._from_year, self._to_year)}
+            if valid:
+                jp2_tiles[coords] = valid[max(valid)]  # Latest year for display
+                self._all_jp2_by_coord[coords] = list(valid.values())
 
-        # Summary
-        if not self.quiet:
-            year_str = f"{from_year}-{to_year}" if to_year else f"{from_year}-present"
-            print(f"  Total: {len(all_tiles)} tiles across {len(jp2_tiles)} locations ({year_str})")
-
-        return jp2_tiles
+        return jp2_tiles, laz_tiles
 
     def _extract_year_from_url(self, url: str) -> int | None:
         """Extract year from JP2 URL filename."""

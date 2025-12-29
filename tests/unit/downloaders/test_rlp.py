@@ -327,33 +327,24 @@ class TestRLPHistoricalImagery:
 
     def test_filters_current_feed_by_year_range(self, tmp_path, monkeypatch):
         """Current feed tiles outside the requested range should be skipped."""
+        from georaffer.downloaders.base import Catalog
+
         downloader = RLPDownloader(str(tmp_path), imagery_from=(2020, 2021))
+        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
 
-        current_tiles = {
-            (362, 5604): "https://example.com/dop20rgb_32_362_5604_2_rp_2021.jp2",
-            (363, 5604): "https://example.com/dop20rgb_32_363_5604_2_rp_2023.jp2",
-        }
-        monkeypatch.setattr(
-            downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: current_tiles
-        )
+        # Mock catalog with tiles from different years
+        fake_catalog = Catalog(tiles={
+            (362, 5604): {2021: "https://example.com/tile_2021.jp2"},
+            (363, 5604): {2023: "https://example.com/tile_2023.jp2"},
+        })
+        monkeypatch.setattr(downloader, "fetch_catalog", lambda: fake_catalog)
 
-        class FakeWMS:
-            def check_coverage(self, _year, _grid_x, _grid_y):
-                return None
+        jp2_tiles, _ = downloader.get_available_tiles()
 
-            def check_coverage_multi(self, _years, _grid_x, _grid_y):
-                return {}
-
-            def get_tile_url(self, _year, _grid_x, _grid_y):
-                return ""
-
-        downloader._wms = FakeWMS()
-
-        tiles = downloader._get_wms_tiles({(362, 5604), (363, 5604)})
-
-        assert tiles == {(362, 5604): "https://example.com/dop20rgb_32_362_5604_2_rp_2021.jp2"}
+        # Only 2021 tile should be included (2023 outside range 2020-2021)
+        assert jp2_tiles == {(362, 5604): "https://example.com/tile_2021.jp2"}
         assert downloader.get_all_urls_for_coord((362, 5604)) == [
-            "https://example.com/dop20rgb_32_362_5604_2_rp_2021.jp2"
+            "https://example.com/tile_2021.jp2"
         ]
         assert downloader.get_all_urls_for_coord((363, 5604)) == []
 
