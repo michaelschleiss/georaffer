@@ -6,7 +6,14 @@ from typing import ClassVar
 
 import requests
 
-from georaffer.config import FEED_TIMEOUT, NRW_GRID_SIZE, NRW_JP2_PATTERN, NRW_LAZ_PATTERN, Region
+from georaffer.config import (
+    CATALOG_CACHE_DIR,
+    FEED_TIMEOUT,
+    NRW_GRID_SIZE,
+    NRW_JP2_PATTERN,
+    NRW_LAZ_PATTERN,
+    Region,
+)
 from georaffer.downloaders.base import Catalog, RegionDownloader
 from georaffer.runtime import parallel_map
 
@@ -38,8 +45,10 @@ class NRWDownloader(RegionDownloader):
         output_dir: str,
         imagery_from: tuple[int, int | None] | None = None,
         session: requests.Session | None = None,
+        quiet: bool = False,
     ):
-        super().__init__(Region.NRW, output_dir, imagery_from=imagery_from, session=session)
+        super().__init__(Region.NRW, output_dir, imagery_from=imagery_from, session=session, quiet=quiet)
+        self._cache_path = CATALOG_CACHE_DIR / "nrw_catalog.json"
 
         if imagery_from is None:
             self._jp2_feed_url = self.CURRENT_JP2_FEED_URL
@@ -325,5 +334,59 @@ class NRWDownloader(RegionDownloader):
         return laz_tiles
 
     def _load_catalog(self) -> Catalog:
-        """Load NRW catalog from ATOM feeds. TODO: implement."""
-        return Catalog()
+        """Load NRW catalog from ATOM feeds (current + historic).
+
+        Fetches current feed and all historic year feeds in parallel,
+        combining them into a single catalog.
+        """
+        tiles: dict[tuple[int, int], dict[int, str]] = {}
+
+        # 1. Current tiles
+        if not self.quiet:
+            print("  Loading current tiles from ATOM feed...")
+        try:
+            current_tiles = self._parse_jp2_feed_with_year(
+                self._session, self.CURRENT_JP2_FEED_URL, self.CURRENT_JP2_BASE_URL
+            )
+            for coords, (url, year) in current_tiles.items():
+                tiles.setdefault(coords, {})[year] = url
+            if not self.quiet:
+                print(f"  Current: {len(current_tiles)} tiles")
+        except Exception as e:
+            print(f"  Warning: Failed to load current feed: {e}")
+
+        # 2. Historic tiles (parallel fetch)
+        historic_years = self._available_historic_years()
+        if not self.quiet:
+            print(f"  Loading {len(historic_years)} historic feeds...")
+
+        def fetch_year(hist_year: int) -> dict | None:
+            feed_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{hist_year}/index.xml"
+            base_url = f"https://www.opengeodata.nrw.de/produkte/geobasis/lusat/hist/hist_dop/hist_dop_jp2_f10/hist_dop_{hist_year}/"
+            try:
+                return self._parse_jp2_feed_with_year(self._session, feed_url, base_url)
+            except Exception:
+                return None
+
+        successful_years = []
+        failed_years: list[int] = []
+
+        for hist_year, historic_tiles in parallel_map(fetch_year, historic_years, max_workers=8):
+            if historic_tiles is None:
+                failed_years.append(hist_year)
+                continue
+
+            added = 0
+            for coords, (url, year) in historic_tiles.items():
+                if year not in tiles.get(coords, {}):
+                    tiles.setdefault(coords, {})[year] = url
+                    added += 1
+            successful_years.append(f"{hist_year}:+{added}")
+
+        if successful_years and not self.quiet:
+            successful_years.sort(key=lambda s: int(s.split(":")[0]))
+            print(f"  Historic: {', '.join(successful_years)}")
+        if failed_years and not self.quiet:
+            print(f"  Skipped: {sorted(failed_years)}")
+
+        return Catalog(tiles=tiles)

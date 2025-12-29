@@ -14,7 +14,7 @@ import numpy as np
 
 from georaffer.config import UTM_ZONE_BY_REGION, Region, get_tile_size_km
 from georaffer.conversion import convert_tiles
-from georaffer.downloaders import BrandenburgDownloader, NRWDownloader, RLPDownloader
+from georaffer.downloaders import BBDownloader, NRWDownloader, RLPDownloader
 from georaffer.downloading import DownloadTask, download_parallel_streams
 from georaffer.grids import compute_split_factor, generate_tiles_by_zone
 from georaffer.reporting import (
@@ -69,43 +69,6 @@ class ProcessingStats:
     laz_split_performed: bool = False
 
 
-def _estimate_outputs(
-    tile_set: TileSet, resolutions: list[int], grid_size_km: float
-) -> tuple[int, int]:
-    """Estimate number of outputs for JP2 and LAZ given grid size and splits.
-
-    Args:
-        tile_set: TileSet with tiles grouped by region
-        resolutions: List of target resolutions
-        grid_size_km: User grid size for split calculation
-
-    Returns:
-        Tuple of (jp2_output_count, laz_output_count) where each count includes:
-        - Split factor (e.g., 2km RLP tile -> four 1km outputs)
-        - Resolution multiplier (e.g., 3 resolutions = 3x outputs)
-    """
-    res_factor = len(resolutions)
-
-    # Region native tile sizes in km
-    region_tile_km = {
-        "nrw": get_tile_size_km(Region.NRW),
-        "rlp": get_tile_size_km(Region.RLP),
-        "bb": get_tile_size_km(Region.BB),
-    }
-
-    def _count(tiles_by_region: dict, tile_type: str) -> int:
-        total = 0
-        for region, tiles in tiles_by_region.items():
-            tile_km = region_tile_km.get(region, 1.0)
-            split = compute_split_factor(tile_km, grid_size_km)
-            total += len(tiles) * split * res_factor
-        return total
-
-    jp2_est = _count(tile_set.jp2, "jp2")
-    laz_est = _count(tile_set.laz, "laz")
-    return jp2_est, laz_est
-
-
 def process_tiles(
     coords: list[tuple[float, float]],
     output_dir: str,
@@ -121,6 +84,7 @@ def process_tiles(
     reprocess: bool = False,
     source_zone: int = 32,
     regions: list[Region] | None = None,
+    refresh_catalog: bool = False,
 ) -> ProcessingStats:
     """Main entry point: download and process tiles for given coordinates.
 
@@ -141,6 +105,7 @@ def process_tiles(
             By default (False), skip files where outputs already exist.
         source_zone: UTM zone of input coordinates (default: 32 for NRW/RLP)
         regions: Optional list of regions to include (default: all)
+        refresh_catalog: Force refresh of tile catalog cache
 
     Returns:
         ProcessingStats with processing results
@@ -185,7 +150,7 @@ def process_tiles(
         if Region.RLP in selected_regions
         else None
     )
-    bb_downloader = BrandenburgDownloader(output_dir) if Region.BB in selected_regions else None
+    bb_downloader = BBDownloader(output_dir) if Region.BB in selected_regions else None
 
     # Create output directories
     for subdir in ["raw/image", "raw/dsm", "processed/image", "processed/dsm"]:

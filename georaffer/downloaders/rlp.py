@@ -28,6 +28,7 @@ import requests
 import truststore
 
 from georaffer.config import (
+    CATALOG_CACHE_DIR,
     FEED_TIMEOUT,
     MAX_RETRIES,
     METERS_PER_KM,
@@ -63,8 +64,10 @@ class RLPDownloader(RegionDownloader):
         output_dir: str,
         imagery_from: tuple[int, int | None] | None = None,
         session: requests.Session | None = None,
+        quiet: bool = False,
     ):
-        super().__init__(Region.RLP, output_dir, imagery_from=imagery_from, session=session)
+        super().__init__(Region.RLP, output_dir, imagery_from=imagery_from, session=session, quiet=quiet)
+        self._cache_path = CATALOG_CACHE_DIR / "rlp_catalog.json"
 
         # GeoBasis-RLP ATOM feeds (replaced deprecated geoportal feeds April 2025)
         self._jp2_feed_url = (
@@ -170,7 +173,8 @@ class RLPDownloader(RegionDownloader):
 
         # Historical mode: use WMS
         if not requested_coords:
-            print("  WMS mode requires requested_coords, returning empty catalog")
+            if not self.quiet:
+                print("  WMS mode requires requested_coords, returning empty catalog")
             return {}, laz_tiles
 
         return self._get_wms_tiles(requested_coords), laz_tiles
@@ -199,7 +203,8 @@ class RLPDownloader(RegionDownloader):
         ]
         if not historic_years:
             year_str = f"{from_year}-{to_year}" if to_year else f"{from_year}-present"
-            print(f"  Historic: none (no RLP WMS years in range {year_str})")
+            if not self.quiet:
+                print(f"  Historic: none (no RLP WMS years in range {year_str})")
             return {}
 
         # Collect tiles: (coords, year) -> url
@@ -216,21 +221,23 @@ class RLPDownloader(RegionDownloader):
                 kept_current += 1
             else:
                 skipped_current += 1
-        if skipped_current:
-            print(
-                f"  Current feed: {len(current_tiles)} tiles "
-                f"({kept_current} in range, {skipped_current} skipped)"
-            )
-        else:
-            print(f"  Current feed: {len(current_tiles)} tiles")
+        if not self.quiet:
+            if skipped_current:
+                print(
+                    f"  Current feed: {len(current_tiles)} tiles "
+                    f"({kept_current} in range, {skipped_current} skipped)"
+                )
+            else:
+                print(f"  Current feed: {len(current_tiles)} tiles")
 
         # Query WMS for all years in one request per tile (much faster than year×tile).
         total_tiles = len(requested_coords)
         total_years = len(historic_years)
-        print(
-            f"  WMS coverage: {total_tiles} tiles × {total_years} years "
-            f"({total_tiles} requests, {WMS_QUERY_WORKERS} workers)"
-        )
+        if not self.quiet:
+            print(
+                f"  WMS coverage: {total_tiles} tiles × {total_years} years "
+                f"({total_tiles} requests, {WMS_QUERY_WORKERS} workers)"
+            )
 
         year_added: dict[int, int] = {}
         checked = 0
@@ -263,7 +270,7 @@ class RLPDownloader(RegionDownloader):
                     all_tiles[key] = url
                     year_added[hist_year] = year_added.get(hist_year, 0) + 1
 
-                if checked % 50 == 0 or checked == total_tiles:
+                if not self.quiet and (checked % 50 == 0 or checked == total_tiles):
                     elapsed = time.perf_counter() - started
                     rate = checked / elapsed if elapsed > 0 else 0.0
                     print(
@@ -272,10 +279,11 @@ class RLPDownloader(RegionDownloader):
                         flush=True,
                     )
 
-        print()
+        if not self.quiet:
+            print()
 
         successful_years = [f"{y}:+{year_added[y]}" for y in sorted(year_added)]
-        if successful_years:
+        if successful_years and not self.quiet:
             print(f"  Historic: {', '.join(successful_years)}")
 
         # Flatten for interface (same as NRW)
@@ -289,8 +297,9 @@ class RLPDownloader(RegionDownloader):
             self._all_jp2_by_coord[coords].append(url)
 
         # Summary
-        year_str = f"{from_year}-{to_year}" if to_year else f"{from_year}-present"
-        print(f"  Total: {len(all_tiles)} tiles across {len(jp2_tiles)} locations ({year_str})")
+        if not self.quiet:
+            year_str = f"{from_year}-{to_year}" if to_year else f"{from_year}-present"
+            print(f"  Total: {len(all_tiles)} tiles across {len(jp2_tiles)} locations ({year_str})")
 
         return jp2_tiles
 
@@ -381,5 +390,76 @@ class RLPDownloader(RegionDownloader):
         return laz_tiles
 
     def _load_catalog(self) -> Catalog:
-        """Load RLP catalog from ATOM + WMS. TODO: implement."""
-        return Catalog()
+        """Load RLP catalog from ATOM feed (current) + WMS (historic).
+
+        Uses ATOM feed to discover valid tile coordinates, then queries WMS
+        for historic coverage at each coordinate.
+        """
+        tiles: dict[tuple[int, int], dict[int, str]] = {}
+
+        # 1. Current tiles from ATOM feed
+        if not self.quiet:
+            print("  Loading current tiles from ATOM feed...")
+        current_tiles = self._fetch_and_parse_feed(self._jp2_feed_url, "jp2")
+        for coords, url in current_tiles.items():
+            year = self._extract_year_from_url(url)
+            if year:
+                tiles.setdefault(coords, {})[year] = url
+        if not self.quiet:
+            print(f"  Current: {len(current_tiles)} tiles")
+
+        # 2. Historic tiles from WMS (query each ATOM coordinate)
+        all_coords = set(current_tiles.keys())
+        historic_years = self.HISTORIC_YEARS
+
+        if not self.quiet:
+            print(
+                f"  Querying WMS for {len(all_coords)} tiles × {len(historic_years)} years "
+                f"({WMS_QUERY_WORKERS} workers)..."
+            )
+
+        checked = 0
+        failed = 0
+        historic_found = 0
+        started = time.perf_counter()
+
+        with ThreadPoolExecutor(max_workers=WMS_QUERY_WORKERS) as executor:
+            futures = {
+                executor.submit(
+                    self.wms.check_coverage_multi, historic_years, grid_x, grid_y
+                ): (grid_x, grid_y)
+                for grid_x, grid_y in all_coords
+            }
+
+            for fut in as_completed(futures):
+                checked += 1
+                grid_x, grid_y = futures[fut]
+                try:
+                    coverage = fut.result()
+                except Exception:
+                    failed += 1
+                    coverage = {}
+
+                for year in coverage:
+                    coords = (grid_x, grid_y)
+                    if year not in tiles.get(coords, {}):
+                        url = self.wms.get_tile_url(year, grid_x, grid_y)
+                        tiles.setdefault(coords, {})[year] = url
+                        historic_found += 1
+
+                if not self.quiet and (checked % 100 == 0 or checked == len(all_coords)):
+                    elapsed = time.perf_counter() - started
+                    rate = checked / elapsed if elapsed > 0 else 0
+                    print(
+                        f"\r  {checked}/{len(all_coords)} checked, "
+                        f"{historic_found} historic found ({rate:.1f} req/s)",
+                        end="",
+                        flush=True,
+                    )
+
+        if not self.quiet:
+            print()
+        if failed and not self.quiet:
+            print(f"  Warning: {failed} WMS queries failed")
+
+        return Catalog(tiles=tiles)

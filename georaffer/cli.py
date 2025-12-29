@@ -11,7 +11,7 @@ from rasterio.warp import transform_bounds
 
 from georaffer import __version__
 from georaffer.align import align_to_reference
-from georaffer.config import DEFAULT_WORKERS, METERS_PER_KM, OUTPUT_TILE_SIZE_KM, UTM_ZONE, Region
+from georaffer.config import DEFAULT_PIXEL_SIZE, DEFAULT_WORKERS, METERS_PER_KM, OUTPUT_TILE_SIZE_KM, UTM_ZONE, Region
 from georaffer.grids import dedupe_by_output_tile, latlon_array_to_utm, tile_to_utm_center
 from georaffer.inputs import load_from_bbox, load_from_csv, load_from_geotiff, load_from_pygeon
 from georaffer.pipeline import process_tiles
@@ -352,9 +352,9 @@ Details:
         "--pixel-size",
         type=float,
         nargs="+",
-        default=[0.5],
+        default=[DEFAULT_PIXEL_SIZE],
         metavar="FLOAT",
-        help="Output resolution in meters per pixel (default: 0.5)",
+        help=f"Output pixel size in meters (default: {DEFAULT_PIXEL_SIZE})",
     )
     shared.add_argument(
         "--workers",
@@ -414,6 +414,11 @@ Details:
         default=["nrw", "rlp"],
         metavar="REGION",
         help="Regions to include: nrw rlp bb (default: nrw rlp)",
+    )
+    shared.add_argument(
+        "--refresh-catalog",
+        action="store_true",
+        help="Force refresh of tile catalog cache",
     )
 
     # bbox subcommand
@@ -568,6 +573,7 @@ Details:
             reprocess=args.reprocess,
             source_zone=source_zone,
             regions=regions,
+            refresh_catalog=args.refresh_catalog,
         )
 
         if args.command == "tif":

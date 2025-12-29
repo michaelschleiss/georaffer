@@ -33,7 +33,6 @@ class Region(str, Enum):
 # =============================================================================
 
 UTM_ZONE = 32
-UTM_ZONE_STR = "32"
 METERS_PER_KM = 1000
 
 # Native tile sizes from data providers (meters)
@@ -99,8 +98,7 @@ THREADS_PER_WORKER = "auto"
 # Raster output
 DSM_DTYPE = "float32"  # 0.06mm precision, 50% smaller than float64
 DSM_NODATA = -9999.0
-DEFAULT_RESOLUTION = 0.5  # meters
-GDAL_CACHEMAX_MB = 512
+DEFAULT_PIXEL_SIZE = 0.5  # meters per pixel
 
 # LAZ point spacing by region (meters)
 LAZ_SPACING_BY_REGION = {
@@ -145,15 +143,6 @@ def get_tile_size_km(region: Region) -> float:
     else:
         tile_size_m = NRW_GRID_SIZE
     return tile_size_m / METERS_PER_KM
-
-
-def get_tile_size_m(region: Region) -> int:
-    """Native tile size in meters."""
-    if region == Region.RLP:
-        return RLP_GRID_SIZE
-    if region == Region.BB:
-        return BB_GRID_SIZE
-    return NRW_GRID_SIZE
 
 
 UTM_ZONE_BY_REGION = {

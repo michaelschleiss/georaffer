@@ -90,6 +90,7 @@ class RegionDownloader(ABC):
         output_dir: str,
         imagery_from: tuple[int, int | None] | None = None,
         session: requests.Session | None = None,
+        quiet: bool = False,
     ):
         """Initialize downloader.
 
@@ -99,10 +100,12 @@ class RegionDownloader(ABC):
             imagery_from: Optional (from_year, to_year) for historic imagery.
                 None = latest only. (2015, None) = all years from 2015. (2015, 2018) = years 2015-2018.
             session: Optional requests.Session for dependency injection; inject a mock for testing
+            quiet: Suppress progress output
         """
         self.region_name = region_name
         self.output_dir = output_dir
         self.imagery_from = imagery_from
+        self.quiet = quiet
         self._session = session or requests.Session()
 
         # Increase pool size so concurrent downloads reuse connections efficiently.
@@ -255,20 +258,42 @@ class RegionDownloader(ABC):
         Returns:
             Catalog with all available tiles for this region
         """
+        start = time.perf_counter()
+
         # Instance cache hit
         if self._catalog is not None and not refresh:
+            self._print_catalog_summary("memory")
             return self._catalog
 
         # Disk cache hit
         if not refresh:
             self._catalog = self._read_cache()
             if self._catalog is not None:
+                self._print_catalog_summary("cache")
                 return self._catalog
 
         # Load from sources and persist
+        if not self.quiet:
+            print(f"{self.region_name}: Building catalog...")
         self._catalog = self._load_catalog()
         self._write_cache()
+        elapsed = time.perf_counter() - start
+        self._print_catalog_summary("built", elapsed)
         return self._catalog
+
+    def _print_catalog_summary(self, source: str, elapsed: float | None = None) -> None:
+        """Print catalog summary line."""
+        if self._catalog is None or self.quiet:
+            return
+        tiles = len(self._catalog.tiles)
+        images = sum(len(years) for years in self._catalog.tiles.values())
+        if source == "memory":
+            print(f"{self.region_name}: Catalog ready ({tiles:,} tiles, {images:,} images)")
+        elif source == "cache":
+            print(f"{self.region_name}: Loaded from cache ({tiles:,} tiles, {images:,} images)")
+        else:
+            time_str = f", {elapsed:.1f}s" if elapsed else ""
+            print(f"  Catalog built ({tiles:,} tiles, {images:,} images{time_str})")
 
     @abstractmethod
     def _load_catalog(self) -> Catalog:
