@@ -29,7 +29,7 @@ from georaffer.config import (
     UTM_ZONE_BY_REGION,
     Region,
 )
-from georaffer.downloaders import BrandenburgDownloader, NRWDownloader, RLPDownloader
+from georaffer.downloaders import BBDownloader, NRWDownloader, RLPDownloader
 from georaffer.grids import generate_tiles_by_zone, latlon_array_to_utm
 from georaffer.inputs import load_from_pygeon
 from georaffer.reporting import print_catalog_summary, print_table
@@ -483,7 +483,7 @@ def main() -> None:
         downloaders["rlp"] = rlp_downloader
 
     if Region.BB in selected_regions:
-        bb_downloader = BrandenburgDownloader(args.output)
+        bb_downloader = BBDownloader(args.output)
         bb_jp2, bb_laz = bb_downloader.get_available_tiles()
         catalog_rows.append(("BB", len(bb_jp2), len(bb_laz)))
         region_catalogs.append(RegionCatalog("bb", bb_downloader, bb_jp2, bb_laz))
