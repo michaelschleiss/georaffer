@@ -89,6 +89,8 @@ python = "3.10.*"
 tbb = ">=2021.6"
 libgdal-jp2openjpeg = "*"
 lazrs-python = ">=0.7,<0.8"
+orjson = ">=3.11.5,<4"
+msgpack-python = ">=1.1.2,<2"
 
 [tool.pixi.pypi-dependencies]
 georaffer = { path = ".", editable = true }
@@ -99,6 +101,7 @@ pytest-cov = "*"
 pytest-benchmark = "*"
 pyinstrument = ">=4.6"
 ruff = ">=0.14.6,<0.15"
+vulture = ">=2.14,<3"
 
 [tool.pixi.environments]
 default = { features = ["dev"] }
