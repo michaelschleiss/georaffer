@@ -71,19 +71,12 @@ class BBDownloader(RegionDownloader):
 
     def get_available_tiles(self) -> tuple[dict, dict]:
         """Return available DOP and bDOM tiles."""
-        # DOP from catalog (OGC API) - fetch_catalog handles retries
         catalog = self.fetch_catalog()
-        jp2_tiles = {
+        image_tiles = {
             coords: years[max(years.keys())]
-            for coords, years in catalog.tiles.items()
+            for coords, years in catalog.image_tiles.items()
         }
-
-        # bDOM from HTML listing (not in OGC API)
-        resp = self._session.get(self.BDOM_BASE_URL, timeout=FEED_TIMEOUT)
-        resp.raise_for_status()
-        laz_tiles = self._parse_bdom_listing(resp.text)
-
-        return jp2_tiles, laz_tiles
+        return image_tiles, catalog.dsm_tiles
 
     def _parse_bdom_listing(self, html: str) -> dict[tuple[int, int], str]:
         """Parse HTML directory listing for bDOM tiles."""
@@ -132,7 +125,16 @@ class BBDownloader(RegionDownloader):
             if not self.quiet:
                 print(f"  Warning: Failed to load from OGC API: {e}")
 
-        return Catalog(tiles=tiles)
+        # bDOM from HTML listing (not in OGC API)
+        if not self.quiet:
+            print("  Loading bDOM tiles from HTML listing...")
+        resp = self._session.get(self.BDOM_BASE_URL, timeout=FEED_TIMEOUT)
+        resp.raise_for_status()
+        dsm_tiles = self._parse_bdom_listing(resp.text)
+        if not self.quiet:
+            print(f"    {len(dsm_tiles)} tiles")
+
+        return Catalog(image_tiles=tiles, dsm_tiles=dsm_tiles)
 
     def _fetch_ogc_tiles(self) -> list[tuple[str, date]]:
         """Fetch all DOP tiles from OGC API."""

@@ -159,13 +159,12 @@ class RLPDownloader(RegionDownloader):
         Returns:
             Tuple of (jp2_tiles, laz_tiles) dicts mapping coords to URLs.
         """
-        laz_tiles = self._fetch_and_parse_feed(self.laz_feed_url, "laz")
         catalog = self.fetch_catalog()
 
         jp2_tiles = {}
         self._all_jp2_by_coord: dict[tuple[int, int], list[str]] = {}
 
-        for coords, years in catalog.tiles.items():
+        for coords, years in catalog.image_tiles.items():
             # Filter by year range
             valid = {y: url for y, url in years.items()
                      if self._year_in_range(y, self._from_year, self._to_year)}
@@ -173,7 +172,7 @@ class RLPDownloader(RegionDownloader):
                 jp2_tiles[coords] = valid[max(valid)]  # Latest year for display
                 self._all_jp2_by_coord[coords] = list(valid.values())
 
-        return jp2_tiles, laz_tiles
+        return jp2_tiles, catalog.dsm_tiles
 
     def _extract_year_from_url(self, url: str) -> int | None:
         """Extract year from JP2 URL filename."""
@@ -334,4 +333,9 @@ class RLPDownloader(RegionDownloader):
         if failed and not self.quiet:
             print(f"  Warning: {failed} WMS queries failed")
 
-        return Catalog(tiles=tiles)
+        # 3. LAZ tiles
+        laz_tiles = self._fetch_and_parse_feed(self.laz_feed_url, "laz")
+        if not self.quiet:
+            print(f"  LAZ: {len(laz_tiles)} tiles")
+
+        return Catalog(image_tiles=tiles, dsm_tiles=laz_tiles)

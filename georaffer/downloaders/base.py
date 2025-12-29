@@ -43,11 +43,13 @@ Image.MAX_IMAGE_PIXELS = None
 class Catalog:
     """Complete tile catalog for a region (all years).
 
-    Stores mapping of (grid_x, grid_y) -> {year: url} for all available tiles.
+    Stores mapping of (grid_x, grid_y) -> {year: url} for image tiles,
+    and (grid_x, grid_y) -> url for DSM tiles (current year only).
     Used for caching tile availability to avoid repeated feed/WMS queries.
     """
 
-    tiles: dict[tuple[int, int], dict[int, str]] = field(default_factory=dict)
+    image_tiles: dict[tuple[int, int], dict[int, str]] = field(default_factory=dict)
+    dsm_tiles: dict[tuple[int, int], str] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
 
     def is_stale(self, ttl_days: int = CATALOG_TTL_DAYS) -> bool:
@@ -58,21 +60,29 @@ class Catalog:
         """Serialize catalog to JSON-compatible dict."""
         return {
             "created_at": self.created_at.isoformat(),
-            "tiles": {
+            "image_tiles": {
                 f"{x},{y}": {str(year): url for year, url in years.items()}
-                for (x, y), years in self.tiles.items()
+                for (x, y), years in self.image_tiles.items()
+            },
+            "dsm_tiles": {
+                f"{x},{y}": url for (x, y), url in self.dsm_tiles.items()
             },
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "Catalog":
         """Deserialize catalog from JSON-compatible dict."""
-        tiles = {}
-        for coord_str, years in data.get("tiles", {}).items():
+        image_tiles = {}
+        for coord_str, years in data.get("image_tiles", data.get("tiles", {})).items():
             x, y = map(int, coord_str.split(","))
-            tiles[(x, y)] = {int(year): url for year, url in years.items()}
+            image_tiles[(x, y)] = {int(year): url for year, url in years.items()}
+        dsm_tiles = {}
+        for coord_str, url in data.get("dsm_tiles", data.get("laz_tiles", {})).items():
+            x, y = map(int, coord_str.split(","))
+            dsm_tiles[(x, y)] = url
         return cls(
-            tiles=tiles,
+            image_tiles=image_tiles,
+            dsm_tiles=dsm_tiles,
             created_at=datetime.fromisoformat(data["created_at"]),
         )
 
@@ -285,8 +295,8 @@ class RegionDownloader(ABC):
         """Print catalog summary line."""
         if self._catalog is None or self.quiet:
             return
-        tiles = len(self._catalog.tiles)
-        images = sum(len(years) for years in self._catalog.tiles.values())
+        tiles = len(self._catalog.image_tiles)
+        images = sum(len(years) for years in self._catalog.image_tiles.values())
         if source == "memory":
             print(f"{self.region_name}: Catalog ready ({tiles:,} tiles, {images:,} images)")
         elif source == "cache":

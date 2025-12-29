@@ -333,7 +333,7 @@ class TestRLPHistoricalImagery:
         monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
 
         # Mock catalog with tiles from different years
-        fake_catalog = Catalog(tiles={
+        fake_catalog = Catalog(image_tiles={
             (362, 5604): {2021: "https://example.com/tile_2021.jp2"},
             (363, 5604): {2023: "https://example.com/tile_2023.jp2"},
         })

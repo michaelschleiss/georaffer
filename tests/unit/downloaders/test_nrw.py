@@ -55,7 +55,7 @@ class TestNRWHistoricFiltering:
         monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
 
         # Mock catalog with tiles from different years
-        fake_catalog = Catalog(tiles={
+        fake_catalog = Catalog(image_tiles={
             (350, 5600): {2018: "https://example.com/tile_2018.jp2"},
             (351, 5600): {2021: "https://example.com/tile_2021.jp2"},
         })
