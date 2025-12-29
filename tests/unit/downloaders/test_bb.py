@@ -1,17 +1,20 @@
 """Tests for BB (Brandenburg) downloader."""
 
+from datetime import date
+from unittest.mock import Mock, patch
+
 import pytest
 
 from georaffer.config import BB_BDOM_PATTERN, BB_DOP_PATTERN
-from georaffer.downloaders.bb import BrandenburgDownloader
+from georaffer.downloaders.bb import BBDownloader
 
 
-class TestBrandenburgDownloaderInit:
+class TestBBDownloaderInit:
     """Tests for Brandenburg downloader initialization."""
 
     def test_init(self, tmp_path):
         """Test basic initialization."""
-        downloader = BrandenburgDownloader(str(tmp_path))
+        downloader = BBDownloader(str(tmp_path))
 
         assert downloader.region_name == "BB"
         assert "data.geobasis-bb.de" in downloader.jp2_feed_url
@@ -20,16 +23,16 @@ class TestBrandenburgDownloaderInit:
 
     def test_utm_zone(self, tmp_path):
         """Test that BB uses UTM Zone 33."""
-        downloader = BrandenburgDownloader(str(tmp_path))
+        downloader = BBDownloader(str(tmp_path))
         assert downloader.UTM_ZONE == 33
 
 
-class TestBrandenburgUtmToGridCoords:
+class TestBBUtmToGridCoords:
     """Tests for UTM to grid coordinate conversion."""
 
     @pytest.fixture
     def downloader(self, tmp_path):
-        return BrandenburgDownloader(str(tmp_path))
+        return BBDownloader(str(tmp_path))
 
     def test_simple_conversion(self, downloader):
         """Test basic UTM to grid conversion."""
@@ -51,7 +54,7 @@ class TestBrandenburgUtmToGridCoords:
         assert jp2_coords == laz_coords
 
 
-class TestBrandenburgFilenamePatterns:
+class TestBBFilenamePatterns:
     """Tests for BB bDOM and DOP filename regex patterns."""
 
     @pytest.mark.parametrize(
@@ -66,9 +69,8 @@ class TestBrandenburgFilenamePatterns:
         """Test bDOM pattern matches valid filenames."""
         match = BB_BDOM_PATTERN.match(filename)
         assert match is not None
-        # Extract grid_x from 5-digit code: first 2 = zone, last 3 = easting
         east_code = match.group(1)
-        grid_x = int(east_code[2:])  # Skip zone prefix
+        grid_x = int(east_code[2:])
         grid_y = int(match.group(2))
         assert grid_x == expected[0]
         assert grid_y == expected[1]
@@ -76,10 +78,10 @@ class TestBrandenburgFilenamePatterns:
     @pytest.mark.parametrize(
         "filename",
         [
-            "bdom_3325-5886.zip",  # Wrong easting format (4 digits)
-            "bdom_332500-5886.zip",  # Wrong easting format (6 digits)
+            "bdom_3325-5886.zip",
+            "bdom_332500-5886.zip",
             "random.zip",
-            "dop_33250-5886.zip",  # Wrong prefix
+            "dop_33250-5886.zip",
         ],
     )
     def test_bdom_pattern_invalid(self, filename):
@@ -120,40 +122,52 @@ class TestBrandenburgFilenamePatterns:
         assert match is None
 
 
-class TestBrandenburgParseFilename:
-    """Tests for filename parsing."""
+class TestBBParseSheetnr:
+    """Tests for sheetnr parsing (OGC API format)."""
 
     @pytest.fixture
     def downloader(self, tmp_path):
-        return BrandenburgDownloader(str(tmp_path))
+        return BBDownloader(str(tmp_path))
 
-    def test_parse_valid_zone33(self, downloader):
-        """Test parsing filename with correct UTM zone 33."""
-        result = downloader._parse_filename("bdom_33250-5886.zip", BB_BDOM_PATTERN)
-        assert result == (250, 5886)
+    @pytest.mark.parametrize(
+        "sheetnr,expected",
+        [
+            ("33250-5886", (250, 5886)),
+            ("33350-5700", (350, 5700)),
+            ("33400-5900", (400, 5900)),
+        ],
+    )
+    def test_parse_valid_zone33(self, downloader, sheetnr, expected):
+        """Test parsing sheetnr with correct UTM zone 33."""
+        result = downloader._parse_sheetnr(sheetnr)
+        assert result == expected
 
     def test_parse_rejects_zone32(self, downloader):
-        """Test that zone 32 files are rejected (wrong zone for BB)."""
-        result = downloader._parse_filename("bdom_32250-5886.zip", BB_BDOM_PATTERN)
+        """Test that zone 32 sheetnr is rejected."""
+        result = downloader._parse_sheetnr("32250-5886")
         assert result is None
 
-    def test_parse_invalid_format(self, downloader):
-        """Test that invalid format returns None."""
-        result = downloader._parse_filename("invalid.zip", BB_BDOM_PATTERN)
+    @pytest.mark.parametrize(
+        "sheetnr",
+        [
+            "invalid",
+            "3325-5886",  # Too short
+            "332500-5886",  # Too long
+            "",
+        ],
+    )
+    def test_parse_invalid_format(self, downloader, sheetnr):
+        """Test that invalid formats return None."""
+        result = downloader._parse_sheetnr(sheetnr)
         assert result is None
 
-    def test_parse_dop_valid(self, downloader):
-        """Test parsing DOP filename with correct UTM zone 33."""
-        result = downloader._parse_filename("dop_33250-5886.zip", BB_DOP_PATTERN)
-        assert result == (250, 5886)
 
-
-class TestBrandenburgParseBdomListing:
-    """Tests for HTML listing parsing."""
+class TestBBParseBdomListing:
+    """Tests for bDOM HTML listing parsing."""
 
     @pytest.fixture
     def downloader(self, tmp_path):
-        return BrandenburgDownloader(str(tmp_path))
+        return BBDownloader(str(tmp_path))
 
     def test_parse_simple_listing(self, downloader):
         """Test parsing simple HTML listing."""
@@ -208,57 +222,54 @@ class TestBrandenburgParseBdomListing:
         assert url == "https://data.geobasis-bb.de/geobasis/daten/bdom/tif/bdom_33250-5886.zip"
 
 
-class TestBrandenburgParseDopListing:
-    """Tests for DOP HTML listing parsing."""
+class TestBBParseOGCFeatures:
+    """Tests for OGC API feature parsing."""
 
     @pytest.fixture
     def downloader(self, tmp_path):
-        return BrandenburgDownloader(str(tmp_path))
+        return BBDownloader(str(tmp_path))
 
-    def test_parse_simple_listing(self, downloader):
-        """Test parsing simple DOP HTML listing."""
-        html = """
-        <html>
-        <body>
-        <a href="dop_33250-5886.zip">dop_33250-5886.zip</a>
-        <a href="dop_33251-5886.zip">dop_33251-5886.zip</a>
-        </body>
-        </html>
-        """
-        tiles = downloader._parse_dop_listing(html)
+    def test_parse_valid_features(self, downloader):
+        """Test parsing valid OGC features."""
+        features = [
+            {"properties": {"sheetnr": "33250-5886", "creationdate": "2025-05-13"}},
+            {"properties": {"sheetnr": "33251-5886", "creationdate": "2024-04-30"}},
+        ]
+        result = downloader._parse_ogc_features(features)
 
-        assert len(tiles) == 2
-        assert (250, 5886) in tiles
-        assert (251, 5886) in tiles
+        assert len(result) == 2
+        assert result[0] == ("33250-5886", date(2025, 5, 13))
+        assert result[1] == ("33251-5886", date(2024, 4, 30))
 
-    def test_parse_listing_skips_zone32(self, downloader):
-        """Test that zone 32 tiles are skipped for DOP."""
-        html = """
-        <html>
-        <a href="dop_33250-5886.zip">dop_33250-5886.zip</a>
-        <a href="dop_32250-5886.zip">dop_32250-5886.zip</a>
-        </html>
-        """
-        tiles = downloader._parse_dop_listing(html)
+    def test_parse_skips_invalid_dates(self, downloader):
+        """Test that features with invalid dates are skipped."""
+        features = [
+            {"properties": {"sheetnr": "33250-5886", "creationdate": "invalid"}},
+            {"properties": {"sheetnr": "33251-5886", "creationdate": "2024-04-30"}},
+        ]
+        result = downloader._parse_ogc_features(features)
 
-        assert len(tiles) == 1
-        assert (250, 5886) in tiles
+        assert len(result) == 1
+        assert result[0][0] == "33251-5886"
 
-    def test_parse_listing_generates_correct_urls(self, downloader):
-        """Test that parsed DOP tiles have correct download URLs."""
-        html = '<a href="dop_33250-5886.zip">dop_33250-5886.zip</a>'
-        tiles = downloader._parse_dop_listing(html)
+    def test_parse_skips_missing_fields(self, downloader):
+        """Test that features with missing fields are skipped."""
+        features = [
+            {"properties": {"sheetnr": "33250-5886"}},  # Missing creationdate
+            {"properties": {"creationdate": "2024-04-30"}},  # Missing sheetnr
+            {"properties": {"sheetnr": "33251-5886", "creationdate": "2024-04-30"}},
+        ]
+        result = downloader._parse_ogc_features(features)
 
-        url = tiles[(250, 5886)]
-        assert url == "https://data.geobasis-bb.de/geobasis/daten/dop/rgbi_tif/dop_33250-5886.zip"
+        assert len(result) == 1
 
 
-class TestBrandenburgDsmFilename:
+class TestBBDsmFilename:
     """Tests for DSM filename extraction."""
 
     @pytest.fixture
     def downloader(self, tmp_path):
-        return BrandenburgDownloader(str(tmp_path))
+        return BBDownloader(str(tmp_path))
 
     def test_dsm_filename_from_zip_url(self, downloader):
         """Test keeping zip name from zip URL."""
@@ -267,12 +278,12 @@ class TestBrandenburgDsmFilename:
         assert result == "bdom_33250-5886.zip"
 
 
-class TestBrandenburgImageFilename:
+class TestBBImageFilename:
     """Tests for DOP filename extraction."""
 
     @pytest.fixture
     def downloader(self, tmp_path):
-        return BrandenburgDownloader(str(tmp_path))
+        return BBDownloader(str(tmp_path))
 
     def test_image_filename_from_zip_url(self, downloader):
         """Test keeping zip name from zip URL."""
