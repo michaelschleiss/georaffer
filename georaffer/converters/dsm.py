@@ -99,8 +99,6 @@ def convert_dsm_raster(
             "file_type": "dsm",
             "metadata_source": "bdom_tif",
         }
-        if year and year.isdigit():
-            metadata["acquisition_date"] = year
 
         timings = []
         for target_size in target_sizes:
@@ -209,8 +207,6 @@ def _convert_split_dsm(
                 "grid_x": new_x,
                 "grid_y": new_y,
             }
-            if year and year.isdigit():
-                metadata["acquisition_date"] = year
 
             for target_size in target_sizes:
                 base_path = output_paths.get(target_size)

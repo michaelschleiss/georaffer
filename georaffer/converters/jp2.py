@@ -330,8 +330,6 @@ def _convert_split_jp2(
                 "grid_x": new_x,
                 "grid_y": new_y,
             }
-            if year:
-                metadata["acquisition_date"] = year
 
             for resolution in resolutions:
                 base_path = output_paths.get(resolution)

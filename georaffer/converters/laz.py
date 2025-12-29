@@ -344,8 +344,6 @@ def convert_laz(
             "source_region": region,
             "file_type": "dsm",
         }
-        if year:
-            metadata["acquisition_date"] = year
 
         # Standard conversion
         timings = []
@@ -464,8 +462,6 @@ def _convert_split_laz(
                 "grid_x": new_x,
                 "grid_y": new_y,
             }
-            if year:
-                metadata["acquisition_date"] = year
 
             for target_size in target_sizes:
                 base_path = output_paths.get(target_size)

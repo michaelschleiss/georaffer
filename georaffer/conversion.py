@@ -16,12 +16,13 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from georaffer.config import get_tile_size_km
+from georaffer.config import Region, WMS_QUERY_WORKERS, get_tile_size_km
 from georaffer.converters import convert_jp2, convert_laz
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
-from georaffer.metadata import create_provenance_csv
-from georaffer.runtime import InterruptManager, shutdown_executor
+from georaffer.metadata import create_provenance_csv, get_wms_metadata_for_region
+from georaffer.provenance import extract_year_from_filename, get_tile_center_utm
+from georaffer.runtime import InterruptManager, parallel_map, shutdown_executor
 from georaffer.workers import (
     convert_dsm_worker,
     convert_jp2_worker,
@@ -139,6 +140,52 @@ def _outputs_exist(
     return True
 
 
+def _prefetch_nrw_wms_metadata(
+    jp2_files: list[str],
+    laz_files: list[str],
+) -> dict[str, dict | None]:
+    if os.getenv("GEORAFFER_DISABLE_WMS") == "1":
+        return {}
+
+    items = jp2_files + laz_files
+    if not items:
+        return {}
+
+    def _fetch(filename: str) -> dict | None:
+        try:
+            region = detect_region(filename)
+        except Exception:
+            return None
+        if region != Region.NRW:
+            return None
+
+        coords = parse_tile_coords(filename)
+        if not coords:
+            return None
+        base_x, base_y = coords
+
+        year = None
+        try:
+            year_str = extract_year_from_filename(filename, require=False)
+            year = int(year_str) if year_str.isdigit() else None
+        except Exception:
+            year = None
+
+        tile_km = get_tile_size_km(region)
+        center_x, center_y = get_tile_center_utm(base_x, base_y, tile_km)
+        try:
+            return get_wms_metadata_for_region(center_x, center_y, region, year)
+        except Exception:
+            return None
+
+    results: dict[str, dict | None] = {}
+    max_workers = max(1, min(WMS_QUERY_WORKERS, len(items)))
+    for filename, result in parallel_map(_fetch, items, max_workers=max_workers):
+        if result:
+            results[filename] = result
+    return results
+
+
 def convert_tiles(
     raw_dir: str,
     processed_dir: str,
@@ -193,6 +240,8 @@ def convert_tiles(
     total_files = len(jp2_files) + len(laz_files)
     if total_files == 0:
         return stats
+
+    wms_metadata_by_file = _prefetch_nrw_wms_metadata(jp2_files, laz_files)
 
     jp2_start = time.perf_counter()
     laz_start: float | None = None
@@ -281,18 +330,20 @@ def convert_tiles(
         ) as pbar:
             # Convert JP2 files first (fail fast on missing GDAL driver)
             if jp2_files:
-                jp2_args = [
-                    (
-                        f,
-                        jp2_dir,
-                        processed_dir,
-                        resolutions,
-                        threads_per_worker,
-                        grid_size_km,
-                        profiling,
+                jp2_args = []
+                for f in jp2_files:
+                    jp2_args.append(
+                        (
+                            f,
+                            jp2_dir,
+                            processed_dir,
+                            resolutions,
+                            threads_per_worker,
+                            grid_size_km,
+                            profiling,
+                            wms_metadata_by_file.get(f),
+                        )
                     )
-                    for f in jp2_files
-                ]
 
                 jp2_futures = []
                 for args in jp2_args:
@@ -341,18 +392,20 @@ def convert_tiles(
             if laz_files:
                 laz_start = time.perf_counter()
 
-                laz_args = [
-                    (
-                        f,
-                        laz_dir,
-                        processed_dir,
-                        resolutions,
-                        threads_per_worker,
-                        grid_size_km,
-                        profiling,
+                laz_args = []
+                for f in laz_files:
+                    laz_args.append(
+                        (
+                            f,
+                            laz_dir,
+                            processed_dir,
+                            resolutions,
+                            threads_per_worker,
+                            grid_size_km,
+                            profiling,
+                            wms_metadata_by_file.get(f),
+                        )
                     )
-                    for f in laz_files
-                ]
 
                 laz_futures = []
                 for args in laz_args:

@@ -10,6 +10,7 @@ import re
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 
@@ -133,7 +134,16 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
     Raises:
         RuntimeError: If conversion fails
     """
-    filename, jp2_dir, processed_dir, resolutions, num_threads, grid_size_km, profiling = args
+    (
+        filename,
+        jp2_dir,
+        processed_dir,
+        resolutions,
+        num_threads,
+        grid_size_km,
+        profiling,
+        precomputed_wms,
+    ) = args
 
     input_path = Path(jp2_dir) / filename
     region = detect_region(filename)
@@ -173,23 +183,33 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
                 profiling=profiling,
             )
 
-        # Get acquisition date from WMS for provenance
+        # Get acquisition date for provenance
         acquisition_date = None
         metadata_source = None
+        if precomputed_wms:
+            acquisition_date = precomputed_wms.get("acquisition_date")
+            metadata_source = precomputed_wms.get("metadata_source")
         coords = parse_tile_coords(filename)
         if coords:
             base_x, base_y = coords
             tile_km = get_tile_size_km(region)
             center_x, center_y = get_tile_center_utm(base_x, base_y, tile_km)
             try:
-                wms_meta = get_wms_metadata_for_region(
-                    center_x, center_y, region, int(year) if year.isdigit() else None
-                )
-                if wms_meta:
-                    acquisition_date = wms_meta.get("acquisition_date")
-                    metadata_source = wms_meta.get("metadata_source")
+                if not acquisition_date:
+                    wms_meta = get_wms_metadata_for_region(
+                        center_x, center_y, region, int(year) if year.isdigit() else None
+                    )
+                    if wms_meta:
+                        acquisition_date = wms_meta.get("acquisition_date")
+                        metadata_source = wms_meta.get("metadata_source")
             except Exception:
                 pass  # WMS failures are not fatal
+        if not acquisition_date and region == Region.BB:
+            acquisition_date = _extract_bb_meta_date(input_path)
+            if acquisition_date and not metadata_source:
+                metadata_source = "BB metadata"
+        if not acquisition_date:
+            raise RuntimeError(f"Missing acquisition_date for {filename}.")
 
         # Build metadata rows using representative output path
         rep_path = next(iter(output_paths.values()))
@@ -235,7 +255,16 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
     Raises:
         RuntimeError: If conversion fails
     """
-    filename, laz_dir, processed_dir, resolutions, num_threads, grid_size_km, profiling = args
+    (
+        filename,
+        laz_dir,
+        processed_dir,
+        resolutions,
+        num_threads,
+        grid_size_km,
+        profiling,
+        precomputed_wms,
+    ) = args
 
     input_path = Path(laz_dir) / filename
     region = detect_region(filename)
@@ -275,6 +304,15 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
                     profiling=profiling,
                 )
 
+            acquisition_date = None
+            metadata_source = None
+            if region == Region.BB:
+                acquisition_date = _extract_bb_meta_date(input_path)
+                if acquisition_date:
+                    metadata_source = "BB metadata"
+            if not acquisition_date:
+                raise RuntimeError(f"Missing acquisition_date for {filename}.")
+
             metadata = build_metadata_rows(
                 filename=filename,
                 output_path=next(iter(output_paths.values())),
@@ -282,6 +320,8 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
                 year=year,
                 file_type="dsm",
                 grid_size_km=grid_size_km,
+                acquisition_date=acquisition_date,
+                metadata_source=metadata_source,
             )
 
             tile_km = get_tile_size_km(region)
@@ -314,23 +354,33 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, list[dict], str, int]:
             profiling=profiling,
         )
 
-        # Get acquisition date from WMS for provenance
+        # Get acquisition date for provenance
         acquisition_date = None
         metadata_source = None
+        if precomputed_wms:
+            acquisition_date = precomputed_wms.get("acquisition_date")
+            metadata_source = precomputed_wms.get("metadata_source")
         coords = parse_tile_coords(filename)
         if coords:
             base_x, base_y = coords
             tile_km = get_tile_size_km(region)
             center_x, center_y = get_tile_center_utm(base_x, base_y, tile_km)
             try:
-                wms_meta = get_wms_metadata_for_region(
-                    center_x, center_y, region, int(year) if year.isdigit() else None
-                )
-                if wms_meta:
-                    acquisition_date = wms_meta.get("acquisition_date")
-                    metadata_source = wms_meta.get("metadata_source")
+                if not acquisition_date:
+                    wms_meta = get_wms_metadata_for_region(
+                        center_x, center_y, region, int(year) if year.isdigit() else None
+                    )
+                    if wms_meta:
+                        acquisition_date = wms_meta.get("acquisition_date")
+                        metadata_source = wms_meta.get("metadata_source")
             except Exception:
                 pass  # WMS failures are not fatal
+        if not acquisition_date and region == Region.BB:
+            acquisition_date = _extract_bb_meta_date(input_path)
+            if acquisition_date and not metadata_source:
+                metadata_source = "BB metadata"
+        if not acquisition_date:
+            raise RuntimeError(f"Missing acquisition_date for {filename}.")
 
         # Build metadata rows using representative output path
         rep_path = next(iter(output_paths.values()))
@@ -433,6 +483,30 @@ def _extract_bb_meta_year(input_path: Path) -> str | None:
     return None
 
 
+def _extract_bb_meta_date(input_path: Path) -> str | None:
+    if input_path.suffix.lower() != ".zip":
+        return None
+
+    texts: list[str] = []
+    try:
+        with zipfile.ZipFile(input_path) as zf:
+            meta_name = (
+                _find_zip_member(zf, "_meta.xml")
+                or _find_zip_member(zf, ".xml")
+                or _find_zip_member(zf, ".html")
+            )
+            if meta_name:
+                texts.append(zf.read(meta_name).decode("utf-8", errors="ignore"))
+    except Exception:
+        return None
+
+    for text in texts:
+        date = _extract_bb_date_from_text(text)
+        if date:
+            return date
+    return None
+
+
 def _extract_bb_year_from_text(text: str) -> str | None:
     # Legacy XML format: <file_creation_day_year>123/2024</file_creation_day_year>
     match = re.search(r"<file_creation_day_year>\d{1,3}/(\d{4})</file_creation_day_year>", text)
@@ -447,6 +521,33 @@ def _extract_bb_year_from_text(text: str) -> str | None:
     year = _extract_iso_metadata_year(text, "creation")
     if year:
         return year
+    return None
+
+
+def _extract_bb_date_from_text(text: str) -> str | None:
+    match = re.search(
+        r"Bildflugdatum[^0-9]*(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4})",
+        text,
+        re.IGNORECASE,
+    )
+    if match:
+        normalized = _normalize_metadata_date(match.group(1))
+        if normalized:
+            return normalized
+
+    match = re.search(
+        r"erstellung[^0-9]*(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4})",
+        text,
+        re.IGNORECASE,
+    )
+    if match:
+        normalized = _normalize_metadata_date(match.group(1))
+        if normalized:
+            return normalized
+
+    date = _extract_iso_metadata_date(text, "creation")
+    if date:
+        return date
     return None
 
 
@@ -475,6 +576,62 @@ def _extract_iso_metadata_year(text: str, date_type: str) -> str | None:
         match = re.match(r"(19\d{2}|20\d{2})", date_el.text.strip())
         if match:
             return match.group(1)
+    return None
+
+
+def _extract_iso_metadata_date(text: str, date_type: str) -> str | None:
+    try:
+        root = ET.fromstring(text)
+    except Exception:
+        return None
+
+    ns = {
+        "gmd": "http://www.isotc211.org/2005/gmd",
+        "gco": "http://www.isotc211.org/2005/gco",
+    }
+
+    for ci_date in root.findall(".//gmd:CI_Date", ns):
+        type_el = ci_date.find("gmd:dateType/gmd:CI_DateTypeCode", ns)
+        if type_el is None or not type_el.text:
+            continue
+        if type_el.text.strip() != date_type:
+            continue
+        date_el = ci_date.find("gmd:date/gco:DateTime", ns)
+        if date_el is None:
+            date_el = ci_date.find("gmd:date/gco:Date", ns)
+        if date_el is None or not date_el.text:
+            continue
+        normalized = _normalize_metadata_date(date_el.text.strip())
+        if normalized:
+            return normalized
+    return None
+
+
+def _normalize_metadata_date(value: str) -> str | None:
+    if not value:
+        return None
+    stripped = value.strip()
+
+    match = re.match(r"(\d{4})-(\d{1,2})-(\d{1,2})", stripped)
+    if match:
+        year, month, day = match.groups()
+        normalized = f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+        try:
+            datetime.strptime(normalized, "%Y-%m-%d")
+        except ValueError:
+            return None
+        return normalized
+
+    match = re.match(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", stripped)
+    if match:
+        day, month, year = match.groups()
+        normalized = f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+        try:
+            datetime.strptime(normalized, "%Y-%m-%d")
+        except ValueError:
+            return None
+        return normalized
+
     return None
 
 

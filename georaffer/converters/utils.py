@@ -389,6 +389,7 @@ def write_geotiff(
 
         # Query WMS for precise acquisition date if region provided
         source_region = metadata.get("source_region")
+        region_enum = None
         if source_region:
             # Handle both Region enum and string values
             if isinstance(source_region, Region):
@@ -400,12 +401,15 @@ def write_geotiff(
             else:
                 region_enum = None
 
-            if region_enum:
+            if region_enum in (Region.NRW, Region.RLP) and not metadata.get("acquisition_date"):
                 wms_metadata = get_wms_metadata_for_region(
                     center_x, center_y, region_enum, year_int
                 )
                 if wms_metadata:
                     metadata.update(wms_metadata)
+                if not metadata.get("acquisition_date"):
+                    source_file = metadata.get("source_file", "unknown source")
+                    raise RuntimeError(f"Missing acquisition_date from WMS for {source_file}.")
 
         # Build tags dict
         if metadata.get("acquisition_date"):

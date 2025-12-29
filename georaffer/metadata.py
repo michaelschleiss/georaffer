@@ -51,37 +51,25 @@ def _normalize_wms_date(date_str: str) -> str | None:
     return normalized
 
 
-def get_wms_metadata(
+def _fetch_nrw_wms_dates(
     utm_x: float,
     utm_y: float,
-    region: str = "NRW",
-    year: int | None = None,
-    session: requests.Session | None = None,
-) -> dict | None:
-    """Query WMS GetFeatureInfo for tile acquisition date.
+    historic: bool,
+    session: requests.Session,
+) -> dict[int, dict] | None:
+    """Fetch all acquisition dates from NRW WMS in one request.
 
     Args:
         utm_x, utm_y: UTM coordinates
-        region: Region (currently only 'NRW' supported)
-        year: Optional year for historical vs current layer
-        session: Optional requests.Session for dependency injection (testability)
+        historic: If True, use historic WMS endpoint; otherwise current
+        session: requests.Session for HTTP requests
 
     Returns:
-        Dictionary with acquisition_date and metadata_source, or None
-
-    Raises:
-        RuntimeError: If all retries fail
+        Dict mapping year -> {acquisition_date, metadata_source}, or None
     """
-    if os.getenv("GEORAFFER_DISABLE_WMS") == "1":
-        return None
-
-    session = session or _wms_session
-    if region != "NRW":
-        return None
-
     buffer = WMS_NRW_BUFFER_M
 
-    if year and year < 2024:
+    if historic:
         wms_url = "https://www.wms.nrw.de/geobasis/wms_nw_hist_dop"
         layers = "nw_hist_dop_info"
     else:
@@ -127,24 +115,95 @@ def get_wms_metadata(
                     "metadata_source": "WMS GetFeatureInfo",
                 }
 
-            if not found_dates:
-                return None
-
-            if year is None or year not in found_dates:
-                return found_dates[max(found_dates.keys())]
-
-            return found_dates[year]
+            return found_dates if found_dates else None
 
         except Exception as e:
             last_error = e
             if attempt < MAX_RETRIES - 1:
                 wait_time = min(RETRY_BACKOFF_BASE**attempt, RETRY_MAX_WAIT)
-                # Sleep in 0.1s increments to allow interruption
                 for _ in range(int(wait_time * 10)):
                     time.sleep(0.1)
 
-    # Exhausted retries
     raise RuntimeError(f"Failed to get WMS metadata after {MAX_RETRIES} attempts: {last_error}")
+
+
+def get_wms_metadata_all_years(
+    utm_x: float,
+    utm_y: float,
+    session: requests.Session | None = None,
+) -> dict[int, dict]:
+    """Query NRW WMS for all available acquisition dates at a location.
+
+    Makes two requests (historic + current) and merges results.
+
+    Args:
+        utm_x, utm_y: UTM coordinates
+        session: Optional requests.Session for dependency injection
+
+    Returns:
+        Dict mapping year -> {acquisition_date, metadata_source}
+        Empty dict if no dates found or WMS disabled.
+
+    Raises:
+        RuntimeError: If all retries fail
+    """
+    if os.getenv("GEORAFFER_DISABLE_WMS") == "1":
+        return {}
+
+    session = session or _wms_session
+    result: dict[int, dict] = {}
+
+    # Fetch historic dates
+    historic = _fetch_nrw_wms_dates(utm_x, utm_y, historic=True, session=session)
+    if historic:
+        result.update(historic)
+
+    # Fetch current dates (may overlap with historic for recent years)
+    current = _fetch_nrw_wms_dates(utm_x, utm_y, historic=False, session=session)
+    if current:
+        result.update(current)
+
+    return result
+
+
+def get_wms_metadata(
+    utm_x: float,
+    utm_y: float,
+    region: str = "NRW",
+    year: int | None = None,
+    session: requests.Session | None = None,
+) -> dict | None:
+    """Query WMS GetFeatureInfo for tile acquisition date.
+
+    Args:
+        utm_x, utm_y: UTM coordinates
+        region: Region (currently only 'NRW' supported)
+        year: Optional year for historical vs current layer
+        session: Optional requests.Session for dependency injection (testability)
+
+    Returns:
+        Dictionary with acquisition_date and metadata_source, or None
+
+    Raises:
+        RuntimeError: If all retries fail
+    """
+    if os.getenv("GEORAFFER_DISABLE_WMS") == "1":
+        return None
+
+    session = session or _wms_session
+    if region != "NRW":
+        return None
+
+    historic = year is not None and year < 2024
+    found_dates = _fetch_nrw_wms_dates(utm_x, utm_y, historic=historic, session=session)
+
+    if not found_dates:
+        return None
+
+    if year is None or year not in found_dates:
+        return found_dates[max(found_dates.keys())]
+
+    return found_dates[year]
 
 
 def get_wms_metadata_rlp(
