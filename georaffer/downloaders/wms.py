@@ -418,8 +418,7 @@ class WMSImagerySource:
                 # Check content type - WMS may return XML error
                 content_type = response.headers.get("Content-Type", "")
                 if "xml" in content_type.lower():
-                    # WMS error response
-                    error_text = response.text[:500]
+                    # WMS error response - retry or fail
                     if attempt < MAX_RETRIES - 1:
                         wait = min(RETRY_BACKOFF_BASE**attempt, RETRY_MAX_WAIT)
                         time.sleep(wait)

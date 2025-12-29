@@ -77,16 +77,6 @@ class TileSet:
     missing_jp2: set[tuple[int, int, int]] = field(default_factory=set)
     missing_laz: set[tuple[int, int, int]] = field(default_factory=set)
 
-    @property
-    def total_jp2(self) -> int:
-        """Total JP2 tiles to download."""
-        return sum(len(tiles) for tiles in self.jp2.values())
-
-    @property
-    def total_laz(self) -> int:
-        """Total LAZ tiles to download."""
-        return sum(len(tiles) for tiles in self.laz.values())
-
     def jp2_count(self, region: str) -> int:
         """JP2 tile count for a specific region."""
         return len(self.jp2.get(region, set()))
