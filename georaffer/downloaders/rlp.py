@@ -307,7 +307,8 @@ class RLPDownloader(RegionDownloader):
                 grid_x, grid_y = futures[fut]
                 try:
                     coverage = fut.result()
-                except Exception:
+                except RuntimeError:
+                    # WMS retries exhausted for this tile - count and continue
                     failed += 1
                     coverage = {}
 

@@ -237,3 +237,80 @@ class TestNRWParseLAZFeed:
         tiles = downloader._parse_laz_feed(mock_session, root)
 
         assert len(tiles) == 1
+
+
+class TestNRWLoadCatalog:
+    """Tests for _load_catalog parallel execution."""
+
+    def test_parallel_execution_processes_all_years(self, tmp_path, monkeypatch):
+        """Verify parallel_map processes all historic years without dropping any."""
+        downloader = NRWDownloader(str(tmp_path), quiet=True)
+
+        # Track which years were processed
+        processed_years = []
+
+        def mock_parse(session, feed_url, base_url):
+            # Extract year from URL
+            import re
+            match = re.search(r"hist_dop_(\d{4})", feed_url)
+            if match:
+                year = int(match.group(1))
+                processed_years.append(year)
+                return {(350, 5600): (f"http://example.com/{year}.jp2", year)}
+            # Current feed
+            return {(350, 5600): ("http://example.com/current.jp2", 2025)}
+
+        monkeypatch.setattr(downloader, "_parse_jp2_feed_with_year", mock_parse)
+        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
+
+        catalog = downloader._load_catalog()
+
+        # Verify all historic years were processed
+        expected_years = list(downloader.HISTORIC_YEARS)
+        assert sorted(processed_years) == sorted(expected_years), (
+            f"Missing years: {set(expected_years) - set(processed_years)}"
+        )
+
+    def test_404_errors_counted_not_raised(self, tmp_path, monkeypatch):
+        """Verify 404 errors are counted but don't abort catalog build."""
+        import requests
+        downloader = NRWDownloader(str(tmp_path), quiet=True)
+
+        call_count = {"total": 0, "errors": 0}
+
+        def mock_parse(session, feed_url, base_url):
+            call_count["total"] += 1
+            if "2015" in feed_url or "2016" in feed_url:
+                call_count["errors"] += 1
+                resp = Mock()
+                resp.status_code = 404
+                raise requests.HTTPError(response=resp)
+            return {(350, 5600): ("http://example.com/tile.jp2", 2020)}
+
+        monkeypatch.setattr(downloader, "_parse_jp2_feed_with_year", mock_parse)
+        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
+
+        # Should not raise despite 404 errors
+        catalog = downloader._load_catalog()
+
+        # Should have processed all years (including failed ones)
+        assert call_count["total"] > 0
+        assert call_count["errors"] == 2
+
+    def test_non_404_errors_propagate(self, tmp_path, monkeypatch):
+        """Verify non-404 HTTP errors are not silently swallowed."""
+        import requests
+        downloader = NRWDownloader(str(tmp_path), quiet=True)
+
+        def mock_parse(session, feed_url, base_url):
+            if "2015" in feed_url:
+                resp = Mock()
+                resp.status_code = 500
+                raise requests.HTTPError(response=resp)
+            return {(350, 5600): ("http://example.com/tile.jp2", 2020)}
+
+        monkeypatch.setattr(downloader, "_parse_jp2_feed_with_year", mock_parse)
+        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
+
+        with pytest.raises(requests.HTTPError):
+            downloader._load_catalog()

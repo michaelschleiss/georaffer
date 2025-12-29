@@ -367,3 +367,88 @@ class TestRLPHistoricalImagery:
         url = "https://example.com/invalid.jp2"
         year = downloader._extract_year_from_url(url)
         assert year is None
+
+
+class TestRLPLoadCatalog:
+    """Tests for _load_catalog parallel execution."""
+
+    def test_parallel_execution_processes_all_coords(self, tmp_path, monkeypatch):
+        """Verify ThreadPoolExecutor processes all coordinates without dropping any."""
+        downloader = RLPDownloader(str(tmp_path), quiet=True)
+
+        # Mock current tiles from ATOM feed
+        current_tiles = {
+            (362, 5604): "http://example.com/tile1.jp2",
+            (364, 5606): "http://example.com/tile2.jp2",
+            (366, 5608): "http://example.com/tile3.jp2",
+        }
+        monkeypatch.setattr(
+            downloader, "_fetch_and_parse_feed",
+            lambda url, typ: current_tiles if typ == "jp2" else {}
+        )
+
+        # Track which coords were queried
+        queried_coords = []
+
+        def mock_check_coverage(years, grid_x, grid_y):
+            queried_coords.append((grid_x, grid_y))
+            return {2020: {"acquisition_date": "2020-06-01"}}
+
+        monkeypatch.setattr(downloader.wms, "check_coverage_multi", mock_check_coverage)
+        monkeypatch.setattr(downloader.wms, "get_tile_url", lambda y, x, g: f"http://wms/{y}/{x}/{g}")
+
+        catalog = downloader._load_catalog()
+
+        # Verify all coordinates were queried
+        assert sorted(queried_coords) == sorted(current_tiles.keys()), (
+            f"Missing coords: {set(current_tiles.keys()) - set(queried_coords)}"
+        )
+
+    def test_runtime_errors_counted_not_raised(self, tmp_path, monkeypatch):
+        """Verify RuntimeError from WMS retries is counted but doesn't abort build."""
+        downloader = RLPDownloader(str(tmp_path), quiet=True)
+
+        current_tiles = {
+            (362, 5604): "http://example.com/tile1.jp2",
+            (364, 5606): "http://example.com/tile2.jp2",
+        }
+        monkeypatch.setattr(
+            downloader, "_fetch_and_parse_feed",
+            lambda url, typ: current_tiles if typ == "jp2" else {}
+        )
+
+        call_count = {"total": 0, "errors": 0}
+
+        def mock_check_coverage(years, grid_x, grid_y):
+            call_count["total"] += 1
+            if grid_x == 362:
+                call_count["errors"] += 1
+                raise RuntimeError("WMS failed after retries")
+            return {2020: {"acquisition_date": "2020-06-01"}}
+
+        monkeypatch.setattr(downloader.wms, "check_coverage_multi", mock_check_coverage)
+        monkeypatch.setattr(downloader.wms, "get_tile_url", lambda y, x, g: f"http://wms/{y}/{x}/{g}")
+
+        # Should not raise despite RuntimeError
+        catalog = downloader._load_catalog()
+
+        assert call_count["total"] == 2
+        assert call_count["errors"] == 1
+
+    def test_unexpected_errors_propagate(self, tmp_path, monkeypatch):
+        """Verify unexpected exceptions are not silently swallowed."""
+        downloader = RLPDownloader(str(tmp_path), quiet=True)
+
+        current_tiles = {(362, 5604): "http://example.com/tile1.jp2"}
+        monkeypatch.setattr(
+            downloader, "_fetch_and_parse_feed",
+            lambda url, typ: current_tiles if typ == "jp2" else {}
+        )
+
+        def mock_check_coverage(years, grid_x, grid_y):
+            raise ValueError("Unexpected parse error")
+
+        monkeypatch.setattr(downloader.wms, "check_coverage_multi", mock_check_coverage)
+
+        with pytest.raises(ValueError, match="Unexpected parse error"):
+            downloader._load_catalog()
