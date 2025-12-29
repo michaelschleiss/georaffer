@@ -110,6 +110,18 @@ Subclass `BaseDownloader` and implement:
 
 See `georaffer/downloaders/nrw.py` as reference.
 
+## Data Sources and Licensing
+
+German states publish orthophotos and elevation models as open data—free for commercial and non-commercial use—under [EU High-Value Datasets Regulation 2023/138](https://eur-lex.europa.eu/eli/reg_impl/2023/138) and the [INSPIRE Directive](https://inspire.ec.europa.eu/), coordinated nationally by the [AdV](https://www.adv-online.de/) (Arbeitsgemeinschaft der Vermessungsverwaltungen).
+
+| Region | Provider | License |
+|--------|----------|---------|
+| NRW | [Geobasis NRW](https://www.opengeodata.nrw.de) | [dl-de/zero-2-0](https://www.govdata.de/dl-de/zero-2-0) |
+| RLP | [LVermGeo RLP](https://lvermgeo.rlp.de) | [dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0) ¹ |
+| BB | [LGB Brandenburg](https://geobasis-bb.de) | [dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0) ¹ |
+
+¹ Attribution required: `©GeoBasis-DE/<provider> (<year>), dl-de/by-2-0`
+
 ## License
 
 MIT
