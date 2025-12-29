@@ -70,7 +70,7 @@ RETRY_MAX_WAIT = 300  # 5 minutes max
 # WMS Metadata
 # =============================================================================
 
-WMS_QUERY_WORKERS = 16
+WMS_QUERY_WORKERS = 32
 WMS_NRW_BUFFER_M = 500
 WMS_RLP_BUFFER_M = 1000
 
