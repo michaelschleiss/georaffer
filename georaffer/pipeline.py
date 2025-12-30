@@ -191,29 +191,35 @@ def process_tiles(
     catalog_rows: list[tuple[str, int, int]] = []
     downloaders: list = []
 
-    if nrw_downloader is not None:
-        nrw_downloader.build_catalog(refresh=refresh_catalog)
-        catalog_rows.append(("NRW", nrw_downloader.total_image_count, len(nrw_downloader.build_catalog().dsm_tiles)))
-        downloaders.append(nrw_downloader)
-    if rlp_downloader is not None:
-        rlp_downloader.build_catalog(refresh=refresh_catalog)
-        catalog_rows.append(("RLP", rlp_downloader.total_image_count, len(rlp_downloader.build_catalog().dsm_tiles)))
-        downloaders.append(rlp_downloader)
+    for name, dl in [("NRW", nrw_downloader), ("RLP", rlp_downloader)]:
+        if dl is None:
+            continue
+        cat = dl.build_catalog(refresh=refresh_catalog)
+        if process_images and process_pointclouds:
+            jp2, laz = set(cat.image_tiles.keys()), set(cat.dsm_tiles.keys())
+            if jp2 != laz:
+                raise ValueError(f"{name} JP2/LAZ mismatch: {len(jp2)} vs {len(laz)}")
+        catalog_rows.append((name, dl.total_image_count, len(cat.dsm_tiles)))
+        downloaders.append(dl)
     if bb_downloader is not None:
         bb_catalog = bb_downloader.build_catalog(refresh=refresh_catalog)
         if process_images and process_pointclouds:
             jp2_keys = set(bb_catalog.image_tiles.keys())
             laz_keys = set(bb_catalog.dsm_tiles.keys())
-            if jp2_keys != laz_keys:
-                missing_laz = sorted(jp2_keys - laz_keys)
-                missing_jp2 = sorted(laz_keys - jp2_keys)
-                missing_laz_sample = ", ".join(map(str, missing_laz[:5]))
-                missing_jp2_sample = ", ".join(map(str, missing_jp2[:5]))
+            # Strict check: bDOM must be subset of DOP (no orphan bDOM tiles)
+            orphan_bdom = laz_keys - jp2_keys
+            if orphan_bdom:
+                sample = ", ".join(map(str, sorted(orphan_bdom)[:5]))
                 raise ValueError(
-                    "BB imagery/DSM catalogs must match. "
-                    f"Imagery tiles: {len(jp2_keys)}, DSM tiles: {len(laz_keys)}. "
-                    f"Missing DSM tiles (sample): {missing_laz_sample or 'none'}. "
-                    f"Missing imagery tiles (sample): {missing_jp2_sample or 'none'}."
+                    f"BB has {len(orphan_bdom)} bDOM tiles without DOP (sample): {sample}"
+                )
+            # Count check: difference must match expected missing bDOM
+            missing_count = len(jp2_keys) - len(laz_keys)
+            if missing_count != bb_downloader.EXPECTED_MISSING_BDOM:
+                raise ValueError(
+                    f"BB bDOM missing count changed! "
+                    f"Expected {bb_downloader.EXPECTED_MISSING_BDOM}, got {missing_count}. "
+                    f"Update BBDownloader.EXPECTED_MISSING_BDOM if this is expected."
                 )
         catalog_rows.append(("BB", len(bb_catalog.image_tiles), len(bb_catalog.dsm_tiles)))
         downloaders.append(bb_downloader)

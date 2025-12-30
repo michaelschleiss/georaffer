@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from georaffer.downloaders import NRWDownloader, RLPDownloader
+from georaffer.downloaders import BBDownloader, NRWDownloader, RLPDownloader
 
 CACHE_DIR = Path(
     os.environ.get("GEORAFFER_TEST_CACHE", Path.home() / ".cache" / "georaffer" / "test_tiles")
@@ -41,7 +41,14 @@ def nrw_downloader():
 @pytest.fixture(scope="module")
 def nrw_catalogs(nrw_downloader):
     """Fetch NRW catalogs once for all tests."""
-    return nrw_downloader.get_filtered_tile_urls()
+    catalog = nrw_downloader.build_catalog()
+    # Extract URLs from tile_info dicts - use most recent year for each tile
+    jp2_catalog = {}
+    for coords, years in catalog.image_tiles.items():
+        if years:
+            jp2_catalog[coords] = years[max(years)]["url"]
+    laz_catalog = {coords: tile["url"] for coords, tile in catalog.dsm_tiles.items()}
+    return jp2_catalog, laz_catalog
 
 
 @pytest.mark.network
@@ -144,7 +151,14 @@ def rlp_downloader():
 @pytest.fixture(scope="module")
 def rlp_catalogs(rlp_downloader):
     """Fetch RLP catalogs once for all tests."""
-    return rlp_downloader.get_filtered_tile_urls()
+    catalog = rlp_downloader.build_catalog()
+    # Extract URLs from tile_info dicts - use most recent year for each tile
+    jp2_catalog = {}
+    for coords, years in catalog.image_tiles.items():
+        if years:
+            jp2_catalog[coords] = years[max(years)]["url"]
+    laz_catalog = {coords: tile["url"] for coords, tile in catalog.dsm_tiles.items()}
+    return jp2_catalog, laz_catalog
 
 
 @pytest.mark.network
@@ -333,3 +347,40 @@ def test_wms_downloads_tile(wms_source, tmp_path):
         assert src.count >= 3, f"Expected at least 3 bands (RGB), got {src.count}"
         assert src.crs is not None, "Missing CRS"
         assert "25832" in str(src.crs), f"Expected EPSG:25832, got {src.crs}"
+
+
+# =============================================================================
+# BB (Brandenburg) Tests
+# =============================================================================
+
+
+@pytest.fixture(scope="module")
+def bb_downloader():
+    """Create BB downloader with cache directory."""
+    cache = CACHE_DIR / "bb"
+    cache.mkdir(parents=True, exist_ok=True)
+    return BBDownloader(output_dir=str(cache))
+
+
+@pytest.mark.network
+@pytest.mark.integration
+def test_bb_catalog_missing_bdom_count(bb_downloader):
+    """Verify BB bDOM tile count matches expected difference from DOP.
+
+    Border regions are not always reconstructed in bDOM. This test ensures
+    the expected count is still accurate - if it fails, EXPECTED_MISSING_BDOM
+    in BBDownloader needs to be updated.
+    """
+    catalog = bb_downloader.build_catalog()
+
+    dop_count = len(catalog.image_tiles)
+    bdom_count = len(catalog.dsm_tiles)
+    actual_missing = dop_count - bdom_count
+
+    assert actual_missing == bb_downloader.EXPECTED_MISSING_BDOM, (
+        f"BB bDOM missing count changed! "
+        f"Expected {bb_downloader.EXPECTED_MISSING_BDOM}, got {actual_missing}. "
+        f"(DOP: {dop_count}, bDOM: {bdom_count}). "
+        f"Update BBDownloader.EXPECTED_MISSING_BDOM if this is expected."
+    )
+

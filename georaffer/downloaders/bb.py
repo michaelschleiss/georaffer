@@ -32,7 +32,8 @@ class BBDownloader(RegionDownloader):
     BDOM_BASE_URL: ClassVar[str] = "https://data.geobasis-bb.de/geobasis/daten/bdom/tif/"
     DOP_BASE_URL: ClassVar[str] = "https://data.geobasis-bb.de/geobasis/daten/dop/rgbi_tif/"
     UTM_ZONE: ClassVar[int] = 33
-
+    # Border regions not always reconstructed in bDOM (as of 2024-12)
+    EXPECTED_MISSING_BDOM: ClassVar[int] = 488
 
     def __init__(
         self,
@@ -113,6 +114,9 @@ class BBDownloader(RegionDownloader):
                 }
         if not self.quiet:
             print(f"    {len(dsm_tiles)} tiles")
+            missing_count = len(image_tiles) - len(dsm_tiles)
+            if missing_count > 0:
+                print(f"    (bDOM has {missing_count} fewer tiles - border regions not always reconstructed)")
 
         return Catalog(image_tiles=image_tiles, dsm_tiles=dsm_tiles)
 
