@@ -147,8 +147,10 @@ def convert_tiles(
     grid_size_km: float = 1.0,
     profiling: bool = False,
     reprocess: bool = False,
+    image_files: list[str] | None = None,
+    dsm_files: list[str] | None = None,
 ) -> ConversionStats:
-    """Convert all raw tiles to GeoTIFF using parallel workers.
+    """Convert raw tiles to GeoTIFF using parallel workers.
 
     Args:
         raw_dir: Directory with raw tiles (contains image/ and dsm/ subdirs)
@@ -161,6 +163,10 @@ def convert_tiles(
         profiling: Enable profiling output
         reprocess: If False (default), skip files where outputs already exist.
             If True, reconvert all files regardless of existing outputs.
+        image_files: Optional list of image file paths to convert. If None,
+            scans raw_dir/image/ for all supported files.
+        dsm_files: Optional list of DSM file paths to convert. If None,
+            scans raw_dir/dsm/ for all supported files.
 
     Returns:
         ConversionStats with results
@@ -174,19 +180,37 @@ def convert_tiles(
 
     stats = ConversionStats()
 
-    # Collect files to convert
+    # Collect files to convert (use provided lists or scan directories)
     jp2_files: list[str] = []
     laz_files: list[str] = []
 
     jp2_dir = os.path.join(raw_dir, "image")
-    if process_images and os.path.exists(jp2_dir):
-        jp2_files = sorted(f for f in os.listdir(jp2_dir) if f.endswith((".jp2", ".tif", ".zip")))
+    if process_images:
+        if image_files is not None:
+            # Use provided file paths (extract basenames for files that exist)
+            jp2_files = sorted(
+                os.path.basename(f) for f in image_files
+                if os.path.exists(f)
+            )
+        elif os.path.exists(jp2_dir):
+            jp2_files = sorted(
+                f for f in os.listdir(jp2_dir)
+                if f.endswith((".jp2", ".tif", ".zip"))
+            )
 
     laz_dir = os.path.join(raw_dir, "dsm")
-    if process_pointclouds and os.path.exists(laz_dir):
-        laz_files = sorted(
-            f for f in os.listdir(laz_dir) if f.lower().endswith((".laz", ".tif", ".zip"))
-        )
+    if process_pointclouds:
+        if dsm_files is not None:
+            # Use provided file paths (extract basenames for files that exist)
+            laz_files = sorted(
+                os.path.basename(f) for f in dsm_files
+                if os.path.exists(f)
+            )
+        elif os.path.exists(laz_dir):
+            laz_files = sorted(
+                f for f in os.listdir(laz_dir)
+                if f.lower().endswith((".laz", ".tif", ".zip"))
+            )
 
     total_files = len(jp2_files) + len(laz_files)
     if total_files == 0:

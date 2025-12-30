@@ -33,7 +33,7 @@ from georaffer.downloaders import BBDownloader, NRWDownloader, RLPDownloader
 from georaffer.grids import generate_tiles_by_zone, latlon_array_to_utm
 from georaffer.inputs import load_from_pygeon
 from georaffer.reporting import print_catalog_summary, print_table
-from georaffer.tiles import calculate_required_tiles
+from georaffer.tiles import build_filtered_download_list
 
 
 def parse_args() -> argparse.Namespace:
@@ -492,7 +492,7 @@ def main() -> None:
         region.value.lower(): UTM_ZONE_BY_REGION[region] for region in selected_regions
     }
     coords_array = np.array(unique_coords)
-    tile_set, downloads_by_source = calculate_required_tiles(
+    tile_set, downloads_by_source = build_filtered_download_list(
         tiles_by_zone,
         args.grid_size_km,
         downloaders,

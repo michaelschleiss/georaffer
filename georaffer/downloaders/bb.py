@@ -64,16 +64,6 @@ class BBDownloader(RegionDownloader):
     def image_filename_from_url(self, url: str) -> str:
         return self._filename_from_url(url)
 
-    def get_filtered_tile_urls(self) -> tuple[dict, dict]:
-        """Get filtered DOP and bDOM tile URLs for download."""
-        catalog = self.build_catalog()
-        image_tiles = {
-            coords: years[max(years.keys())]["url"]
-            for coords, years in catalog.image_tiles.items()
-        }
-        dsm_tiles = {coords: tile["url"] for coords, tile in catalog.dsm_tiles.items()}
-        return image_tiles, dsm_tiles
-
     def _parse_coords(self, east_code: str, north_code: str) -> tuple[int, int] | None:
         """Parse 5-digit easting and 4-digit northing into grid coords."""
         try:

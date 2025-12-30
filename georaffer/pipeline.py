@@ -26,7 +26,7 @@ from georaffer.reporting import (
     render_table,
 )
 from georaffer.runtime import InterruptManager
-from georaffer.tiles import TileSet, calculate_required_tiles
+from georaffer.tiles import TileSet, build_filtered_download_list
 
 # Set multiprocessing to use 'spawn' mode for GDAL/rasterio safety
 # Why 'spawn' instead of 'fork'?
@@ -192,18 +192,18 @@ def process_tiles(
     downloaders: list = []
 
     if nrw_downloader is not None:
-        nrw_downloader.build_catalog()  # Pre-load for summary stats
+        nrw_downloader.build_catalog(refresh=refresh_catalog)
         catalog_rows.append(("NRW", nrw_downloader.total_image_count, len(nrw_downloader.build_catalog().dsm_tiles)))
         downloaders.append(nrw_downloader)
     if rlp_downloader is not None:
-        rlp_downloader.build_catalog()
+        rlp_downloader.build_catalog(refresh=refresh_catalog)
         catalog_rows.append(("RLP", rlp_downloader.total_image_count, len(rlp_downloader.build_catalog().dsm_tiles)))
         downloaders.append(rlp_downloader)
     if bb_downloader is not None:
-        bb_jp2, bb_laz = bb_downloader.get_filtered_tile_urls()
+        bb_catalog = bb_downloader.build_catalog(refresh=refresh_catalog)
         if process_images and process_pointclouds:
-            jp2_keys = set(bb_jp2)
-            laz_keys = set(bb_laz)
+            jp2_keys = set(bb_catalog.image_tiles.keys())
+            laz_keys = set(bb_catalog.dsm_tiles.keys())
             if jp2_keys != laz_keys:
                 missing_laz = sorted(jp2_keys - laz_keys)
                 missing_jp2 = sorted(laz_keys - jp2_keys)
@@ -215,7 +215,7 @@ def process_tiles(
                     f"Missing DSM tiles (sample): {missing_laz_sample or 'none'}. "
                     f"Missing imagery tiles (sample): {missing_jp2_sample or 'none'}."
                 )
-        catalog_rows.append(("BB", len(bb_jp2), len(bb_laz)))
+        catalog_rows.append(("BB", len(bb_catalog.image_tiles), len(bb_catalog.dsm_tiles)))
         downloaders.append(bb_downloader)
     catalogs_duration = time.perf_counter() - phase_start
 
@@ -225,7 +225,7 @@ def process_tiles(
         region.value.lower(): UTM_ZONE_BY_REGION[region] for region in selected_regions
     }
     original_coords = np.array(coords) if coords else None
-    tile_set, downloads_by_source = calculate_required_tiles(
+    tile_set, downloads_by_source = build_filtered_download_list(
         tiles_by_zone,
         grid_size_km,
         downloaders,
@@ -441,6 +441,16 @@ def process_tiles(
     print(f"Target resolutions: {', '.join(f'{r}px' for r in resolutions)}")
     print()
 
+    # Extract file paths from download list (respects year filter)
+    image_files = [
+        path for key, items in downloads_by_source.items()
+        if "_jp2" in key for _, path in items
+    ]
+    dsm_files = [
+        path for key, items in downloads_by_source.items()
+        if "_laz" in key for _, path in items
+    ]
+
     convert_stats = convert_tiles(
         str(Path(output_dir) / "raw"),
         str(Path(output_dir) / "processed"),
@@ -451,6 +461,8 @@ def process_tiles(
         grid_size_km=grid_size_km,
         profiling=profiling,
         reprocess=reprocess,
+        image_files=image_files,
+        dsm_files=dsm_files,
     )
 
     total_stats.converted = convert_stats.converted

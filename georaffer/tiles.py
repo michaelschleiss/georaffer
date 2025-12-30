@@ -87,7 +87,6 @@ def check_missing_coords(
     grid_size_km: float,
     downloaders: list[RegionDownloader],
     zone_by_region: dict[str, int],
-    filtered_urls: dict[str, tuple[dict, dict]],
 ) -> tuple[set[tuple[int, int, int]], set[tuple[int, int, int]]]:
     """Check which original coords have no coverage from any region.
 
@@ -100,7 +99,6 @@ def check_missing_coords(
         grid_size_km: User's grid resolution in km
         downloaders: List of region downloaders
         zone_by_region: Dict mapping region name -> UTM zone
-        filtered_urls: Dict mapping region name -> (jp2_urls, laz_urls) dicts
 
     Returns:
         (missing_jp2, missing_laz) - sets of (zone, x, y) tiles with no coverage
@@ -114,12 +112,12 @@ def check_missing_coords(
     grid_size_m = grid_size_km * METERS_PER_KM
 
     for downloader in downloaders:
-        name = downloader.region_name.lower()
-        zone = zone_by_region[name]
-        jp2_catalog, laz_catalog = filtered_urls[name]
+        zone = zone_by_region[downloader.region_name.lower()]
+        catalog = downloader.build_catalog()
 
-        jp2_tiles = jp2_catalog.keys()
-        laz_tiles = laz_catalog.keys()
+        # Get tile coordinate sets from catalog
+        jp2_tiles = catalog.image_tiles.keys()
+        laz_tiles = catalog.dsm_tiles.keys()
 
         # Vectorized reproject to region's zone
         xs, ys = reproject_utm_coords_vectorized(coords, source_zone, zone)
@@ -155,7 +153,7 @@ def check_missing_coords(
     return missing_jp2, missing_laz
 
 
-def calculate_required_tiles(
+def build_filtered_download_list(
     tiles_by_zone: dict[int, set[tuple[int, int]]],
     grid_size_km: float,
     downloaders: list[RegionDownloader],
@@ -163,134 +161,91 @@ def calculate_required_tiles(
     original_coords: np.ndarray | None = None,
     source_zone: int = 32,
 ) -> tuple[TileSet, dict[str, list[tuple[str, str]]]]:
-    """Map user-grid tiles to native grids, check availability, build download lists.
+    """Map user tiles to native grids, filter by year, build download list.
 
     Args:
         tiles_by_zone: Dict mapping UTM zone -> set of (grid_x, grid_y) user tiles.
-            Each zone's tiles are in that zone's coordinate system.
         grid_size_km: User's grid resolution in km
-        downloaders: List of region downloaders in priority order (first match wins)
+        downloaders: List of region downloaders
         zone_by_region: Dict mapping region name -> UTM zone number
-        original_coords: Optional Nx2 array of original (easting, northing) coords
-            in source_zone. If provided, enables precise cross-zone missing tile detection.
+        original_coords: Optional Nx2 array of original coords for missing tile detection
         source_zone: UTM zone of original_coords (default 32)
 
     Returns:
-        Tuple of (tile_set, downloads_by_source) where:
-        - tile_set: TileSet object with:
-          - jp2/laz: Dict[region_name, Set[(grid_x, grid_y)]] of available tiles
-          - missing_jp2/missing_laz: Set[(zone, grid_x, grid_y)] of unavailable tiles
-        - downloads_by_source: Dict[source_key, List[(url, output_path)]] where:
-          - source_key: '{region}_{type}' (e.g., 'nrw_jp2', 'rlp_laz')
-          - url: Download URL for the tile
-          - output_path: Local path to save the downloaded file
-
-    Algorithm overview:
-        User defines an arbitrary grid (e.g., 0.5km). Data providers publish in fixed
-        native grids (NRW: 1km, RLP: 2km). This function maps user tiles to provider
-        tiles by converting to UTM, checking which native tile each user tile falls
-        within, and verifying that tile exists in the provider's catalog.
-
-        Each region only receives tiles from its native UTM zone, ensuring correct
-        coordinate mapping (Zone 32 for NRW/RLP, Zone 33 for BB).
-
-    Example:
-        >>> tiles_by_zone = {32: {(350, 5600), (351, 5600)}}
-        >>> zone_by_region = {'nrw': 32}
-        >>> tile_set, downloads = calculate_required_tiles(
-        ...     tiles_by_zone, 1.0, [nrw_downloader], zone_by_region
-        ... )
+        Tuple of (tile_set, downloads_by_source)
     """
-    # Get filtered URLs from each downloader
-    filtered_urls: dict[str, tuple[dict, dict]] = {}
-    for downloader in downloaders:
-        name = downloader.region_name.lower()
-        filtered_urls[name] = downloader.get_filtered_tile_urls()
+    tile_set = TileSet()
+    downloads: dict[str, list[tuple[str, str]]] = {}
 
-    # ========== Phase 1: Map user tiles to native tiles per region ==========
-    # For each region, get tiles from its native zone and check catalog availability.
-    # Each region only sees tiles in its own coordinate system.
-    jp2_natives: dict[str, set[tuple[int, int]]] = {
-        d.region_name.lower(): set() for d in downloaders
-    }
-    laz_natives: dict[str, set[tuple[int, int]]] = {
-        d.region_name.lower(): set() for d in downloaders
-    }
+    # Track which native tiles we've already processed (for deduplication)
+    seen_jp2: dict[str, set[tuple[int, int]]] = {}
+    seen_laz: dict[str, set[tuple[int, int]]] = {}
 
     for downloader in downloaders:
         name = downloader.region_name.lower()
         zone = zone_by_region[name]
         zone_tiles = tiles_by_zone.get(zone, set())
-        jp2_urls, laz_urls = filtered_urls[name]
+        catalog = downloader.build_catalog()
 
-        for user_tile in zone_tiles:
-            # Convert user grid coords to UTM center point (in meters)
-            # These coords are in the region's native zone coordinate system
-            utm_x, utm_y = user_tile_to_utm_center(user_tile[0], user_tile[1], grid_size_km)
+        # Get year filter from downloader
+        from_year, to_year = None, None
+        if downloader.imagery_from:
+            from_year, to_year = downloader.imagery_from
 
-            # Ask region downloader: which native tile contains this UTM point?
-            grid_coords, _ = downloader.utm_to_grid_coords(utm_x, utm_y)
-            native_tile = (int(grid_coords[0]), int(grid_coords[1]))
-
-            # Check JP2 catalog
-            if native_tile in jp2_urls:
-                jp2_natives[name].add(native_tile)
-
-            # Check LAZ catalog
-            if native_tile in laz_urls:
-                laz_natives[name].add(native_tile)
-
-    # ========== Phase 2: Build download lists and tile set ==========
-    # For each unique native tile, look up its URL and create download spec.
-    # Special handling for multi-year NRW downloads (--historic-since flag).
-    tile_set = TileSet()
-    downloads: dict[str, list[tuple[str, str]]] = {}
-
-    for downloader in downloaders:
-        name = downloader.region_name.lower()
         downloads[f"{name}_jp2"] = []
         downloads[f"{name}_laz"] = []
         tile_set.jp2[name] = set()
         tile_set.laz[name] = set()
-        jp2_urls, laz_urls = filtered_urls[name]
+        seen_jp2[name] = set()
+        seen_laz[name] = set()
 
-        # JP2 downloads - support multi-year mode (e.g., NRW catalogs, RLP WMS)
-        for native_tile in jp2_natives[name]:
-            url = jp2_urls[native_tile]
-            tile_set.jp2[name].add(native_tile)
+        for user_tile in zone_tiles:
+            # Convert user grid coords to UTM center point
+            utm_x, utm_y = user_tile_to_utm_center(user_tile[0], user_tile[1], grid_size_km)
 
-            # Multi-year handling: If downloader loaded multiple years of data for the
-            # same tile coords, download all of them (e.g., NRW 2020, 2021, 2022 for tile 350,5600)
-            all_urls = downloader.get_all_urls_for_coord(native_tile) or None
+            # Map to native tile
+            grid_coords, _ = downloader.utm_to_grid_coords(utm_x, utm_y)
+            native_tile = (int(grid_coords[0]), int(grid_coords[1]))
 
-            if all_urls:
-                # Multi-year: add ALL URLs for this coord (different years = different files)
-                for u in all_urls:
-                    if hasattr(downloader, "image_filename_from_url"):
-                        filename = downloader.image_filename_from_url(u)
+            # JP2: check catalog and add matching years
+            if native_tile not in seen_jp2[name]:
+                years_data = catalog.image_tiles.get(native_tile, {})
+                if years_data:
+                    # Filter years, then pick latest only if no range specified
+                    valid_years = {
+                        y: tile for y, tile in years_data.items()
+                        if downloader._year_in_range(y, from_year, to_year)
+                    }
+                    if valid_years:
+                        # No filter = latest only, filter = all matching years
+                        years_to_download = (
+                            valid_years if from_year is not None
+                            else {max(valid_years): valid_years[max(valid_years)]}
+                        )
+                        for year, tile_info in years_to_download.items():
+                            url = tile_info["url"]
+                            if hasattr(downloader, "image_filename_from_url"):
+                                filename = downloader.image_filename_from_url(url)
+                            else:
+                                filename = _filename_from_url(url)
+                            path = os.path.join(downloader.raw_dir, "image", filename)
+                            downloads[f"{name}_jp2"].append((url, path))
+                            tile_set.jp2[name].add(native_tile)
+                seen_jp2[name].add(native_tile)
+
+            # LAZ: check catalog (no multi-year)
+            if native_tile not in seen_laz[name]:
+                if native_tile in catalog.dsm_tiles:
+                    tile_info = catalog.dsm_tiles[native_tile]
+                    url = tile_info["url"]
+                    if hasattr(downloader, "dsm_filename_from_url"):
+                        filename = downloader.dsm_filename_from_url(url)
                     else:
-                        filename = _filename_from_url(u)
-                    p = os.path.join(downloader.raw_dir, "image", filename)
-                    downloads[f"{name}_jp2"].append((u, p))
-            else:
-                # Standard single-year mode or fallback
-                if hasattr(downloader, "image_filename_from_url"):
-                    filename = downloader.image_filename_from_url(url)
-                else:
-                    filename = _filename_from_url(url)
-                path = os.path.join(downloader.raw_dir, "image", filename)
-                downloads[f"{name}_jp2"].append((url, path))
-
-        # LAZ downloads (no multi-year support currently)
-        for native_tile in laz_natives[name]:
-            url = laz_urls[native_tile]
-            tile_set.laz[name].add(native_tile)
-            if hasattr(downloader, "dsm_filename_from_url"):
-                filename = downloader.dsm_filename_from_url(url)
-            else:
-                filename = os.path.basename(url)
-            path = os.path.join(downloader.raw_dir, "dsm", filename)
-            downloads[f"{name}_laz"].append((url, path))
+                        filename = os.path.basename(url)
+                    path = os.path.join(downloader.raw_dir, "dsm", filename)
+                    downloads[f"{name}_laz"].append((url, path))
+                    tile_set.laz[name].add(native_tile)
+                seen_laz[name].add(native_tile)
 
     # ========== Phase 3: Calculate missing tiles ==========
     coords_from_input = original_coords is not None
@@ -327,7 +282,7 @@ def calculate_required_tiles(
             coords = np.vstack((coords, extra_coords))
 
     tile_set.missing_jp2, tile_set.missing_laz = check_missing_coords(
-        coords, source_zone, grid_size_km, downloaders, zone_by_region, filtered_urls
+        coords, source_zone, grid_size_km, downloaders, zone_by_region
     )
 
     return tile_set, downloads

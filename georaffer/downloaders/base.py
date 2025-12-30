@@ -189,20 +189,6 @@ class RegionDownloader(ABC):
         """
         pass
 
-    @abstractmethod
-    def get_filtered_tile_urls(self) -> tuple[dict, dict]:
-        """Get filtered image and DSM tile URLs for download.
-
-        Applies user-specified year filters and selects the best (most recent
-        valid) year for each tile from the catalog.
-
-        Returns:
-            Tuple of (image_tiles, dsm_tiles) where each dict maps:
-            - Key: (grid_x, grid_y) tuple of tile coordinates
-            - Value: Download URL for that tile
-        """
-        pass
-
     # =========================================================================
     # Catalog caching
     # =========================================================================
@@ -406,25 +392,6 @@ class RegionDownloader(ABC):
 
         except Exception:
             return False
-
-    def get_all_urls_for_coord(self, coords: tuple[int, int]) -> list[str]:
-        """Get all image URLs for a coordinate, filtered by year range.
-
-        Uses the catalog and filters by imagery_from if set.
-        """
-        catalog = self.build_catalog()
-        years = catalog.image_tiles.get(coords, {})
-        if not years:
-            return []
-
-        from_year, to_year = None, None
-        if self.imagery_from:
-            from_year, to_year = self.imagery_from
-
-        return [
-            tile["url"] for year, tile in years.items()
-            if self._year_in_range(year, from_year, to_year)
-        ]
 
     @property
     def total_image_count(self) -> int:

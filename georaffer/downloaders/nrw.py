@@ -125,28 +125,6 @@ class NRWDownloader(RegionDownloader):
 
         return jp2_tiles
 
-    def get_filtered_tile_urls(self) -> tuple[dict, dict]:
-        """Get filtered JP2 and LAZ tile URLs for download.
-
-        Applies year range filter if --imagery-from is set. Selects the most
-        recent valid year for each tile.
-
-        Returns:
-            Tuple of (jp2_tiles, laz_tiles) dicts mapping coords to URLs.
-        """
-        catalog = self.build_catalog()
-
-        jp2_tiles = {}
-        for coords, years in catalog.image_tiles.items():
-            # Filter by year range
-            valid = {y: tile for y, tile in years.items()
-                     if self._year_in_range(y, self._from_year, self._to_year)}
-            if valid:
-                jp2_tiles[coords] = valid[max(valid)]["url"]
-
-        dsm_tiles = {coords: tile["url"] for coords, tile in catalog.dsm_tiles.items()}
-        return jp2_tiles, dsm_tiles
-
     def _load_catalog(self) -> Catalog:
         """Load NRW catalog from ATOM feeds (current + historic).
 
