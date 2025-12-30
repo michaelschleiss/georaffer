@@ -6,6 +6,11 @@ file with all its target resolutions.
 """
 
 import os
+
+# Suppress "omp_set_nested deprecated" warning in worker processes.
+os.environ.setdefault("OMP_MAX_ACTIVE_LEVELS", "1")
+os.environ.setdefault("KMP_WARNINGS", "0")
+
 import re
 import tempfile
 import xml.etree.ElementTree as ET
