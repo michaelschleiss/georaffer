@@ -55,7 +55,8 @@ class NRWDownloader(RegionDownloader):
             from_year, to_year = imagery_from
             if from_year < 2010:
                 raise ValueError(
-                    f"Year {from_year} not supported. Use year >= 2010 (UTM coordinates)."
+                    f"Year {from_year} not supported. NRW imagery before 2010 uses "
+                    f"Gauß-Krüger CRS instead of UTM32."
                 )
             # Store year range for multi-year loading
             self._from_year = from_year

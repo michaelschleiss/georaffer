@@ -55,8 +55,9 @@ class RLPDownloader(RegionDownloader):
     WMS_RGB_LAYER_PATTERN = "rp_dop20_rgb_{year}"
     WMS_INFO_LAYER_PATTERN = "rp_dop20_info_{year}"
 
-    # Available historic years via WMS
-    HISTORIC_YEARS: ClassVar[list[int]] = list(range(1994, 2025))  # 1994-2024
+    # Historic years via WMS. Pre-2010 excluded due to compromised metadata: WMS
+    # sometimes returns year-only dates (e.g. "2000" not "2000-05-15").
+    HISTORIC_YEARS: ClassVar[list[int]] = list(range(2010, 2025))
 
     def __init__(
         self,
@@ -82,10 +83,11 @@ class RLPDownloader(RegionDownloader):
             self._to_year = None
         else:
             from_year, to_year = imagery_from
-            if from_year < 1994:
-                raise ValueError(f"Year {from_year} not supported. Use year >= 1994.")
-            if from_year > 2024:
-                raise ValueError(f"Year {from_year} not supported. Use year <= 2024.")
+            if from_year < 2010:
+                raise ValueError(
+                    f"Year {from_year} not supported. RLP WMS metadata before 2010 "
+                    f"is compromised (sometimes returns year-only dates)."
+                )
             self._from_year = from_year
             self._to_year = to_year
 
