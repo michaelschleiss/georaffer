@@ -175,9 +175,16 @@ class RLPDownloader(RegionDownloader):
                 jp2_tiles[(grid_x, grid_y)] = url
         return jp2_tiles
 
-    def _parse_laz_tiles(self, root: ET.Element) -> dict[tuple[int, int], dict]:
-        """Parse LAZ tiles from ATOM feed XML."""
-        laz_tiles = {}
+    def _parse_laz_tiles(self, root: ET.Element) -> dict[tuple[int, int], dict[int, dict]]:
+        """Parse LAZ tiles from ATOM feed XML.
+
+        Note: RLP LAZ filenames don't include year. We use current year as placeholder;
+        actual year is extracted from LAZ header during conversion.
+        """
+        from datetime import date as date_cls
+
+        current_year = date_cls.today().year
+        laz_tiles: dict[tuple[int, int], dict[int, dict]] = {}
         for link_elem in root.findall(".//link"):
             url = link_elem.get("href")
             if url and url.endswith(".laz"):
@@ -190,7 +197,11 @@ class RLPDownloader(RegionDownloader):
                     )
                 grid_x = int(match.group(1))
                 grid_y = int(match.group(2))
-                laz_tiles[(grid_x, grid_y)] = {"url": url, "acquisition_date": None}
+                coords = (grid_x, grid_y)
+                laz_tiles.setdefault(coords, {})[current_year] = {
+                    "url": url,
+                    "acquisition_date": None,
+                }
         return laz_tiles
 
     def _load_catalog(self) -> Catalog:

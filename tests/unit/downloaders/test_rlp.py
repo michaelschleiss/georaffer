@@ -245,9 +245,12 @@ class TestRLPParseLAZTiles:
         assert len(tiles) == 2
         assert (364, 5582) in tiles
         assert (366, 5584) in tiles
-        # Verify tile_info format
-        assert tiles[(364, 5582)]["url"].endswith(".laz")
-        assert "acquisition_date" in tiles[(364, 5582)]
+        # Verify year-indexed tile_info format (RLP uses current year as placeholder)
+        from datetime import date
+        current_year = date.today().year
+        assert current_year in tiles[(364, 5582)]
+        assert tiles[(364, 5582)][current_year]["url"].endswith(".laz")
+        assert "acquisition_date" in tiles[(364, 5582)][current_year]
 
     def test_parse_feed_raises_on_invalid_filename(self, downloader):
         """Test that invalid filenames raise ValueError."""
@@ -294,22 +297,23 @@ class TestRLPHistoricalImagery:
         assert downloader._from_year == 2015
         assert downloader._to_year == 2020
 
-    def test_init_rejects_year_before_1994(self, tmp_path):
-        """Test initialization rejects years before 1994."""
-        with pytest.raises(ValueError, match="Year 1993 not supported"):
-            RLPDownloader(str(tmp_path), imagery_from=(1993, None))
+    def test_init_rejects_year_before_2010(self, tmp_path):
+        """Test initialization rejects years before 2010 (WMS metadata compromised)."""
+        with pytest.raises(ValueError, match="Year 2009 not supported"):
+            RLPDownloader(str(tmp_path), imagery_from=(2009, None))
 
-    def test_init_rejects_year_after_2024(self, tmp_path):
-        """Test initialization rejects years after 2024."""
-        with pytest.raises(ValueError, match="Year 2025 not supported"):
-            RLPDownloader(str(tmp_path), imagery_from=(2025, None))
+    def test_init_accepts_year_2010_and_later(self, tmp_path):
+        """Test initialization accepts years from 2010 onwards."""
+        # Should not raise
+        downloader = RLPDownloader(str(tmp_path), imagery_from=(2010, None))
+        assert downloader._from_year == 2010
 
     def test_historic_years_range(self, tmp_path):
-        """Test HISTORIC_YEARS includes 1994-2024."""
+        """Test HISTORIC_YEARS includes 2010-2024 (pre-2010 excluded due to metadata issues)."""
         downloader = RLPDownloader(str(tmp_path))
-        assert 1994 in downloader.HISTORIC_YEARS
+        assert 2010 in downloader.HISTORIC_YEARS
         assert 2024 in downloader.HISTORIC_YEARS
-        assert 1993 not in downloader.HISTORIC_YEARS
+        assert 2009 not in downloader.HISTORIC_YEARS
         assert 2025 not in downloader.HISTORIC_YEARS
 
     def test_wms_lazy_initialized(self, tmp_path):

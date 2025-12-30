@@ -204,7 +204,7 @@ def normalize_regions(region_args: list[str]) -> list[Region]:
         key = region_name.lower()
         region = region_map.get(key)
         if region is None:
-            raise ValueError(f"Unknown region '{region_name}'. Use: nrw, rlp, bb.")
+            raise ValueError(f"Unknown region '{region_name}'. Use: nrw, rlp, bb, bw.")
         if region not in seen:
             normalized.append(region)
             seen.add(region)
@@ -410,10 +410,10 @@ Details:
     shared.add_argument(
         "--region",
         nargs="+",
-        choices=["nrw", "rlp", "bb"],
-        default=["nrw", "rlp"],
+        choices=["nrw", "rlp", "bb", "bw"],
+        default=["nrw", "rlp", "bw"],
         metavar="REGION",
-        help="Regions to include: nrw rlp bb (default: nrw rlp)",
+        help="Regions to include: nrw rlp bb bw (default: nrw rlp bw)",
     )
     shared.add_argument(
         "--refresh-catalog",

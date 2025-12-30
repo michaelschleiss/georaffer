@@ -40,8 +40,7 @@ Image.MAX_IMAGE_PIXELS = None
 class Catalog:
     """Complete tile catalog for a region (all years).
 
-    Stores mapping of (grid_x, grid_y) -> {year: tile_info} for image tiles,
-    and (grid_x, grid_y) -> tile_info for DSM tiles (current year only).
+    Stores mapping of (grid_x, grid_y) -> {year: tile_info} for both image and DSM tiles.
 
     tile_info is a dict with keys:
         - "url": str (download URL)
@@ -49,7 +48,7 @@ class Catalog:
     """
 
     image_tiles: dict[tuple[int, int], dict[int, dict]] = field(default_factory=dict)
-    dsm_tiles: dict[tuple[int, int], dict] = field(default_factory=dict)
+    dsm_tiles: dict[tuple[int, int], dict[int, dict]] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.now)
 
     def is_stale(self, ttl_days: int = CATALOG_TTL_DAYS) -> bool:
@@ -65,7 +64,8 @@ class Catalog:
                 for (x, y), years in self.image_tiles.items()
             },
             "dsm_tiles": {
-                f"{x},{y}": tile for (x, y), tile in self.dsm_tiles.items()
+                f"{x},{y}": {str(year): tile for year, tile in years.items()}
+                for (x, y), years in self.dsm_tiles.items()
             },
         }
 
@@ -77,10 +77,10 @@ class Catalog:
             x, y = map(int, coord_str.split(","))
             image_tiles[(x, y)] = {int(year): tile for year, tile in years.items()}
 
-        dsm_tiles: dict[tuple[int, int], dict] = {}
-        for coord_str, tile in data["dsm_tiles"].items():
+        dsm_tiles: dict[tuple[int, int], dict[int, dict]] = {}
+        for coord_str, years in data["dsm_tiles"].items():
             x, y = map(int, coord_str.split(","))
-            dsm_tiles[(x, y)] = tile
+            dsm_tiles[(x, y)] = {int(year): tile for year, tile in years.items()}
 
         return cls(
             image_tiles=image_tiles,

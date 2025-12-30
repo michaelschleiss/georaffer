@@ -46,6 +46,8 @@ def init_worker(threads_per_worker: int) -> None:
 from georaffer.config import (
     BB_BDOM_PATTERN,
     BB_DOP_PATTERN,
+    BW_DOM_PATTERN,
+    BW_DOP_PATTERN,
     METERS_PER_KM,
     NRW_JP2_PATTERN,
     NRW_LAZ_PATTERN,
@@ -73,7 +75,7 @@ def detect_region(filename: str) -> Region:
         filename: Source filename
 
     Returns:
-        Region enum (NRW, RLP, or BB)
+        Region enum (NRW, RLP, BB, or BW)
     """
     filename_lower = filename.lower()
 
@@ -81,6 +83,8 @@ def detect_region(filename: str) -> Region:
         return Region.RLP
     if BB_BDOM_PATTERN.match(filename_lower) or BB_DOP_PATTERN.match(filename_lower):
         return Region.BB
+    if BW_DOP_PATTERN.match(filename_lower) or BW_DOM_PATTERN.match(filename_lower):
+        return Region.BW
     if NRW_JP2_PATTERN.match(filename) or NRW_LAZ_PATTERN.match(filename):
         return Region.NRW
     raise ValueError(f"Unrecognized tile filename: {filename}")
@@ -333,13 +337,13 @@ def resolve_source_year(
         return normalized
 
     if data_type == "image":
-        if region == Region.BB:
+        if region in (Region.BB, Region.BW):
             if input_path.suffix.lower() != ".zip":
-                raise ValueError(f"BB raw tiles must be .zip: {filename}")
-            meta_year = _normalize_year(_extract_bb_meta_year(input_path))
+                raise ValueError(f"{region.value} raw tiles must be .zip: {filename}")
+            meta_year = _normalize_year(_extract_zip_meta_year(input_path))
             if meta_year:
                 return meta_year
-            raise ValueError(f"Year not found in BB metadata: {filename}")
+            raise ValueError(f"Year not found in {region.value} metadata: {filename}")
         raise ValueError(f"Year not found in filename or metadata: {filename}")
 
     if data_type == "dsm":
@@ -348,17 +352,18 @@ def resolve_source_year(
             if header_year:
                 return header_year
         if input_path.suffix.lower() == ".zip":
-            meta_year = _normalize_year(_extract_bb_meta_year(input_path))
+            meta_year = _normalize_year(_extract_zip_meta_year(input_path))
             if meta_year:
                 return meta_year
-        if region == Region.BB:
-            raise ValueError(f"BB raw tiles must be .zip: {filename}")
+        if region in (Region.BB, Region.BW):
+            raise ValueError(f"{region.value} raw tiles must be .zip: {filename}")
         raise ValueError(f"Year not found in filename or source metadata: {filename}")
 
     raise ValueError(f"Unknown data_type '{data_type}' for year resolution.")
 
 
-def _extract_bb_meta_year(input_path: Path) -> str | None:
+def _extract_zip_meta_year(input_path: Path) -> str | None:
+    """Extract year from ZIP metadata (BB or BW formats)."""
     if input_path.suffix.lower() != ".zip":
         return None
 
@@ -377,13 +382,14 @@ def _extract_bb_meta_year(input_path: Path) -> str | None:
         return None
 
     for text in texts:
-        year = _extract_bb_year_from_text(text)
+        year = _extract_zip_year_from_text(text)
         if year:
             return year
     return None
 
 
-def _extract_bb_meta_date(input_path: Path) -> str | None:
+def _extract_zip_meta_date(input_path: Path) -> str | None:
+    """Extract date from ZIP metadata (BB or BW formats)."""
     if input_path.suffix.lower() != ".zip":
         return None
 
@@ -401,20 +407,27 @@ def _extract_bb_meta_date(input_path: Path) -> str | None:
         return None
 
     for text in texts:
-        date = _extract_bb_date_from_text(text)
+        date = _extract_zip_date_from_text(text)
         if date:
             return date
     return None
 
 
-def _extract_bb_year_from_text(text: str) -> str | None:
-    # Legacy XML format: <file_creation_day_year>123/2024</file_creation_day_year>
+def _extract_zip_year_from_text(text: str) -> str | None:
+    """Extract year from ZIP metadata text (supports BB and BW formats)."""
+    # BB legacy XML format: <file_creation_day_year>123/2024</file_creation_day_year>
     match = re.search(r"<file_creation_day_year>\d{1,3}/(\d{4})</file_creation_day_year>", text)
     if match:
         return match.group(1)
 
-    # HTML format (2025+): Bildflugdatum:</td><td>2025-04-27</td>
+    # BB HTML format (2025+): Bildflugdatum:</td><td>2025-04-27</td>
     match = re.search(r"Bildflugdatum:</td><td>\s*(\d{4})-\d{2}-\d{2}", text)
+    if match:
+        return match.group(1)
+
+    # BW XML format: try common date patterns
+    # Look for befliegungsdatum (flight date) or erstellung (creation)
+    match = re.search(r"befliegungsdatum[^0-9]*(\d{4})", text, re.IGNORECASE)
     if match:
         return match.group(1)
 
@@ -424,9 +437,21 @@ def _extract_bb_year_from_text(text: str) -> str | None:
     return None
 
 
-def _extract_bb_date_from_text(text: str) -> str | None:
+def _extract_zip_date_from_text(text: str) -> str | None:
+    """Extract date from ZIP metadata text (supports BB and BW formats)."""
     match = re.search(
         r"Bildflugdatum[^0-9]*(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4})",
+        text,
+        re.IGNORECASE,
+    )
+    if match:
+        normalized = _normalize_metadata_date(match.group(1))
+        if normalized:
+            return normalized
+
+    # BW: befliegungsdatum
+    match = re.search(
+        r"befliegungsdatum[^0-9]*(\d{4}-\d{1,2}-\d{1,2}|\d{1,2}\.\d{1,2}\.\d{4})",
         text,
         re.IGNORECASE,
     )

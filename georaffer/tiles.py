@@ -233,10 +233,13 @@ def build_filtered_download_list(
                             tile_set.jp2[name].add(native_tile)
                 seen_jp2[name].add(native_tile)
 
-            # LAZ: check catalog (no multi-year)
+            # LAZ/DSM: check catalog (use latest year available)
             if native_tile not in seen_laz[name]:
-                if native_tile in catalog.dsm_tiles:
-                    tile_info = catalog.dsm_tiles[native_tile]
+                years_data = catalog.dsm_tiles.get(native_tile, {})
+                if years_data:
+                    # Use latest year available
+                    latest_year = max(years_data)
+                    tile_info = years_data[latest_year]
                     url = tile_info["url"]
                     if hasattr(downloader, "dsm_filename_from_url"):
                         filename = downloader.dsm_filename_from_url(url)

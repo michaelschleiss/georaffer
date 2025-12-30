@@ -14,6 +14,8 @@ from rasterio.transform import Affine
 from georaffer.config import (
     BB_BDOM_PATTERN,
     BB_DOP_PATTERN,
+    BW_DOM_PATTERN,
+    BW_DOP_PATTERN,
     NRW_JP2_PATTERN,
     NRW_LAZ_PATTERN,
     RLP_JP2_PATTERN,
@@ -22,7 +24,7 @@ from georaffer.config import (
 
 # Pattern for processed output files: {region}_{zone}_{easting}_{northing}_{year}.tif
 # Easting is 6 digits, northing is 7 digits.
-OUTPUT_FILE_PATTERN = re.compile(r"(?:nrw|rlp|bb)_(?:32|33)_(\d{6})_(\d{7})_\d{4}(?:_\d+)?\.tif$")
+OUTPUT_FILE_PATTERN = re.compile(r"(?:nrw|rlp|bb|bw)_(?:32|33)_(\d{6})_(\d{7})_\d{4}(?:_\d+)?\.tif$")
 
 
 @contextmanager
@@ -76,7 +78,7 @@ def parse_rlp_tile_coords(filename: str) -> tuple[int, int] | None:
 
 
 def parse_tile_coords(filename: str) -> tuple[int, int] | None:
-    """Extract grid coordinates from NRW or RLP style filenames.
+    """Extract grid coordinates from NRW, RLP, BB, or BW style filenames.
 
     Handles:
     - NRW JP2: dop10rgbi_32_350_5600_1_nw_2021.jp2 → (350, 5600) [raw input tile coords]
@@ -85,16 +87,20 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
     - RLP LAZ: bdom20rgbi_32_364_5582_2_rp.laz → (364, 5582) [raw input tile coords]
     - BB bDOM: bdom_33250-5888.zip → (250, 5888) [raw input tile coords]
     - BB DOP: dop_33250-5888.zip → (250, 5888) [raw input tile coords]
+    - BW DOP: dop20rgb_32_489_5420_2_bw.zip → (489, 5420) [raw input tile coords]
+    - BW DOM: dom1_32_489_5420_2_bw.zip → (489, 5420) [raw input tile coords]
     - Output files: nrw_32_350500_5600000_2021.tif → (350500, 5600000) [UTM coordinates]
 
     Pattern matching strategy:
       1. Try NRW patterns first (strict validation catches format errors early)
       2. Fall back to RLP patterns (different naming conventions)
-      3. Finally check processed output files (UTM coordinates in meters)
-      4. Return None if no match (signals invalid/unexpected filename)
+      3. Try BB patterns (zone prefix + km coords)
+      4. Try BW patterns (simple km coords like RLP)
+      5. Finally check processed output files (UTM coordinates in meters)
+      6. Return None if no match (signals invalid/unexpected filename)
 
     Returns None for:
-      - Wrong region prefix (e.g., "hessen_..." instead of nrw/rlp)
+      - Wrong region prefix (e.g., "hessen_..." instead of nrw/rlp/bb/bw)
       - Malformed coordinates (non-numeric, wrong format)
       - Missing required components (zone, year, coordinates)
       - Completely unrecognized filename patterns
@@ -120,6 +126,12 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
             grid_x = int(east_code[2:])
             grid_y = int(match.group(2))
             return grid_x, grid_y
+
+    # Try BW patterns (simple km coords like RLP)
+    for pattern in (BW_DOP_PATTERN, BW_DOM_PATTERN):
+        match = pattern.match(filename.lower())
+        if match:
+            return int(match.group(1)), int(match.group(2))
 
     # Processed output files: {region}_{zone}_{easting}_{northing}_{year}.tif
     # Uses UTM coordinates in meters (e.g., 350500, 5600000)

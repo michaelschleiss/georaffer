@@ -192,9 +192,9 @@ class NRWDownloader(RegionDownloader):
 
         return Catalog(image_tiles=tiles, dsm_tiles=laz_tiles)
 
-    def _parse_laz_tiles(self, root: ET.Element) -> dict[tuple[int, int], dict]:
+    def _parse_laz_tiles(self, root: ET.Element) -> dict[tuple[int, int], dict[int, dict]]:
         """Parse LAZ tiles from XML feed."""
-        laz_tiles = {}
+        laz_tiles: dict[tuple[int, int], dict[int, dict]] = {}
         for file_elem in root.findall(".//file"):
             filename = file_elem.get("name")
             if filename and filename.endswith(".laz"):
@@ -206,5 +206,10 @@ class NRWDownloader(RegionDownloader):
                     )
                 grid_x = int(match.group(1))
                 grid_y = int(match.group(2))
-                laz_tiles[(grid_x, grid_y)] = {"url": self._laz_base_url + filename, "acquisition_date": None}
+                year = int(match.group(3))
+                coords = (grid_x, grid_y)
+                laz_tiles.setdefault(coords, {})[year] = {
+                    "url": self._laz_base_url + filename,
+                    "acquisition_date": None,
+                }
         return laz_tiles

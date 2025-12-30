@@ -103,12 +103,13 @@ class BBDownloader(RegionDownloader):
         # bDOM tiles (current only)
         if not self.quiet:
             print("  Loading bDOM tiles from OGC API...")
-        dsm_tiles: dict[tuple[int, int], dict] = {}
+        dsm_tiles: dict[tuple[int, int], dict[int, dict]] = {}
         for sheetnr, creation_date in self._fetch_ogc_collection("bdom_single"):
             east, north = sheetnr.split("-")
             coords = self._parse_coords(east, north)
             if coords:
-                dsm_tiles[coords] = {
+                year = creation_date.year
+                dsm_tiles.setdefault(coords, {})[year] = {
                     "url": f"{self.BDOM_BASE_URL}bdom_{sheetnr}.zip",
                     "acquisition_date": creation_date.isoformat(),
                 }

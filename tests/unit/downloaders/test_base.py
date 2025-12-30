@@ -264,7 +264,7 @@ class TestCatalog:
             (350, 5600): {2020: {"url": "http://example.com/2020.jp2", "acquisition_date": None}},
         }
         dsm = {
-            (350, 5600): {"url": "http://example.com/dsm.laz", "acquisition_date": None},
+            (350, 5600): {2024: {"url": "http://example.com/dsm.laz", "acquisition_date": None}},
         }
         created = datetime(2025, 1, 15, 10, 30, 0)
         catalog = Catalog(image_tiles=tiles, dsm_tiles=dsm, created_at=created)
@@ -275,7 +275,7 @@ class TestCatalog:
         assert "350,5600" in result["image_tiles"]
         assert result["image_tiles"]["350,5600"]["2020"]["url"] == "http://example.com/2020.jp2"
         assert "350,5600" in result["dsm_tiles"]
-        assert result["dsm_tiles"]["350,5600"]["url"] == "http://example.com/dsm.laz"
+        assert result["dsm_tiles"]["350,5600"]["2024"]["url"] == "http://example.com/dsm.laz"
 
     def test_catalog_from_dict(self):
         """Test deserialization from JSON-compatible dict."""
@@ -289,7 +289,7 @@ class TestCatalog:
                 },
             },
             "dsm_tiles": {
-                "350,5600": {"url": "http://example.com/dsm.laz", "acquisition_date": None},
+                "350,5600": {"2024": {"url": "http://example.com/dsm.laz", "acquisition_date": None}},
             },
         }
 
@@ -301,7 +301,7 @@ class TestCatalog:
         assert catalog.image_tiles[(351, 5601)][2019]["url"] == "http://example.com/2019.jp2"
         assert catalog.image_tiles[(351, 5601)][2019]["acquisition_date"] == "2019-06-15"
         assert len(catalog.dsm_tiles) == 1
-        assert catalog.dsm_tiles[(350, 5600)]["url"] == "http://example.com/dsm.laz"
+        assert catalog.dsm_tiles[(350, 5600)][2024]["url"] == "http://example.com/dsm.laz"
 
     def test_catalog_roundtrip(self):
         """Test serialization roundtrip preserves data."""
@@ -313,7 +313,7 @@ class TestCatalog:
             (351, 5601): {2019: {"url": "http://example.com/2019.jp2", "acquisition_date": None}},
         }
         dsm = {
-            (350, 5600): {"url": "http://example.com/dsm.laz", "acquisition_date": None},
+            (350, 5600): {2024: {"url": "http://example.com/dsm.laz", "acquisition_date": None}},
         }
         original = Catalog(image_tiles=tiles, dsm_tiles=dsm, created_at=datetime(2025, 1, 15, 10, 30, 0))
 

@@ -186,9 +186,10 @@ class TestNRWParseLAZTiles:
         assert len(tiles) == 2
         assert (350, 5600) in tiles
         assert (351, 5600) in tiles
-        # Verify tile_info format
-        assert tiles[(350, 5600)]["url"].endswith(".laz")
-        assert "acquisition_date" in tiles[(350, 5600)]
+        # Verify year-indexed tile_info format
+        assert 2025 in tiles[(350, 5600)]
+        assert tiles[(350, 5600)][2025]["url"].endswith(".laz")
+        assert "acquisition_date" in tiles[(350, 5600)][2025]
 
     def test_parse_feed_raises_on_invalid_filename(self, downloader):
         """Test that invalid filenames raise ValueError."""
