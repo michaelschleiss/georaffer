@@ -180,7 +180,7 @@ class TestRLPFilenamePatterns:
         assert match is None
 
 
-class TestRLPParseJP2Feed:
+class TestRLPParseJP2Tiles:
     """Tests for JP2 feed parsing (geobasis-rlp.de atomfeed-links format)."""
 
     @pytest.fixture
@@ -194,9 +194,8 @@ class TestRLPParseJP2Feed:
             <link type="image/jp2" href="https://example.com/dop20rgb_32_364_5606_2_rp_2023.jp2"/>
         </root>"""
         root = ET.fromstring(xml)
-        mock_session = Mock()
 
-        tiles = downloader._parse_jp2_feed(mock_session, root)
+        tiles = downloader._parse_jp2_tiles(root)
 
         assert len(tiles) == 2
         assert (362, 5604) in tiles
@@ -208,10 +207,9 @@ class TestRLPParseJP2Feed:
             <link type="image/jp2" href="https://example.com/invalid.jp2"/>
         </root>"""
         root = ET.fromstring(xml)
-        mock_session = Mock()
 
         with pytest.raises(ValueError, match="doesn't match pattern"):
-            downloader._parse_jp2_feed(mock_session, root)
+            downloader._parse_jp2_tiles(root)
 
     def test_parse_feed_skips_non_jp2_links(self, downloader):
         """Test that non-JP2 links are skipped."""
@@ -221,14 +219,13 @@ class TestRLPParseJP2Feed:
             <link type="application/xml" href="https://example.com/metadata.xml"/>
         </root>"""
         root = ET.fromstring(xml)
-        mock_session = Mock()
 
-        tiles = downloader._parse_jp2_feed(mock_session, root)
+        tiles = downloader._parse_jp2_tiles(root)
 
         assert len(tiles) == 1
 
 
-class TestRLPParseLAZFeed:
+class TestRLPParseLAZTiles:
     """Tests for LAZ feed parsing (geobasis-rlp.de atomfeed-links format)."""
 
     @pytest.fixture
@@ -242,13 +239,15 @@ class TestRLPParseLAZFeed:
             <link href="https://example.com/bdom20rgbi_32_366_5584_2_rp.laz"/>
         </root>"""
         root = ET.fromstring(xml)
-        mock_session = Mock()
 
-        tiles = downloader._parse_laz_feed(mock_session, root)
+        tiles = downloader._parse_laz_tiles(root)
 
         assert len(tiles) == 2
         assert (364, 5582) in tiles
         assert (366, 5584) in tiles
+        # Verify tile_info format
+        assert tiles[(364, 5582)]["url"].endswith(".laz")
+        assert "acquisition_date" in tiles[(364, 5582)]
 
     def test_parse_feed_raises_on_invalid_filename(self, downloader):
         """Test that invalid filenames raise ValueError."""
@@ -256,10 +255,9 @@ class TestRLPParseLAZFeed:
             <link href="https://example.com/invalid.laz"/>
         </root>"""
         root = ET.fromstring(xml)
-        mock_session = Mock()
 
         with pytest.raises(ValueError, match="doesn't match pattern"):
-            downloader._parse_laz_feed(mock_session, root)
+            downloader._parse_laz_tiles(root)
 
     def test_parse_feed_skips_non_laz_links(self, downloader):
         """Test that non-LAZ links are skipped."""
@@ -269,9 +267,8 @@ class TestRLPParseLAZFeed:
             <link href="https://example.com/info.html"/>
         </root>"""
         root = ET.fromstring(xml)
-        mock_session = Mock()
 
-        tiles = downloader._parse_laz_feed(mock_session, root)
+        tiles = downloader._parse_laz_tiles(root)
 
         assert len(tiles) == 1
 
@@ -330,16 +327,18 @@ class TestRLPHistoricalImagery:
         from georaffer.downloaders.base import Catalog
 
         downloader = RLPDownloader(str(tmp_path), imagery_from=(2020, 2021))
-        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
 
-        # Mock catalog with tiles from different years
-        fake_catalog = Catalog(image_tiles={
-            (362, 5604): {2021: "https://example.com/tile_2021.jp2"},
-            (363, 5604): {2023: "https://example.com/tile_2023.jp2"},
-        })
+        # Mock catalog with tiles from different years (new tile_info format)
+        fake_catalog = Catalog(
+            image_tiles={
+                (362, 5604): {2021: {"url": "https://example.com/tile_2021.jp2", "acquisition_date": None}},
+                (363, 5604): {2023: {"url": "https://example.com/tile_2023.jp2", "acquisition_date": None}},
+            },
+            dsm_tiles={},
+        )
         monkeypatch.setattr(downloader, "build_catalog", lambda: fake_catalog)
 
-        jp2_tiles, _ = downloader.get_available_tiles()
+        jp2_tiles, _ = downloader.get_filtered_tile_urls()
 
         # Only 2021 tile should be included (2023 outside range 2020-2021)
         assert jp2_tiles == {(362, 5604): "https://example.com/tile_2021.jp2"}
@@ -348,9 +347,12 @@ class TestRLPHistoricalImagery:
         ]
         assert downloader.get_all_urls_for_coord((363, 5604)) == []
 
-    def test_get_all_urls_for_coord_empty_without_wms(self, tmp_path):
-        """Test get_all_urls_for_coord returns empty list without WMS mode."""
+    def test_get_all_urls_for_coord_empty_without_catalog(self, tmp_path, monkeypatch):
+        """Test get_all_urls_for_coord returns empty list with empty catalog."""
+        from georaffer.downloaders.base import Catalog
+
         downloader = RLPDownloader(str(tmp_path))
+        monkeypatch.setattr(downloader, "build_catalog", lambda: Catalog())
         urls = downloader.get_all_urls_for_coord((362, 5604))
         assert urls == []
 
@@ -374,18 +376,22 @@ class TestRLPLoadCatalog:
 
     def test_parallel_execution_processes_all_coords(self, tmp_path, monkeypatch):
         """Verify ThreadPoolExecutor processes all coordinates without dropping any."""
+        from georaffer.downloaders import feeds
         downloader = RLPDownloader(str(tmp_path), quiet=True)
 
         # Mock current tiles from ATOM feed
         current_tiles = {
-            (362, 5604): "http://example.com/tile1.jp2",
-            (364, 5606): "http://example.com/tile2.jp2",
-            (366, 5608): "http://example.com/tile3.jp2",
+            (362, 5604): "http://example.com/dop20rgb_32_362_5604_2_rp_2023.jp2",
+            (364, 5606): "http://example.com/dop20rgb_32_364_5606_2_rp_2023.jp2",
+            (366, 5608): "http://example.com/dop20rgb_32_366_5608_2_rp_2023.jp2",
         }
-        monkeypatch.setattr(
-            downloader, "_fetch_and_parse_feed",
-            lambda url, typ: current_tiles if typ == "jp2" else {}
-        )
+        monkeypatch.setattr(downloader, "_parse_jp2_tiles", lambda root: current_tiles)
+
+        # Mock the XML feed fetch
+        def mock_fetch_xml(session, url, wrap_content=False):
+            return ET.fromstring("<root></root>")
+
+        monkeypatch.setattr(feeds, "fetch_xml_feed", mock_fetch_xml)
 
         # Track which coords were queried
         queried_coords = []
@@ -406,16 +412,19 @@ class TestRLPLoadCatalog:
 
     def test_runtime_errors_counted_not_raised(self, tmp_path, monkeypatch):
         """Verify RuntimeError from WMS retries is counted but doesn't abort build."""
+        from georaffer.downloaders import feeds
         downloader = RLPDownloader(str(tmp_path), quiet=True)
 
         current_tiles = {
-            (362, 5604): "http://example.com/tile1.jp2",
-            (364, 5606): "http://example.com/tile2.jp2",
+            (362, 5604): "http://example.com/dop20rgb_32_362_5604_2_rp_2023.jp2",
+            (364, 5606): "http://example.com/dop20rgb_32_364_5606_2_rp_2023.jp2",
         }
-        monkeypatch.setattr(
-            downloader, "_fetch_and_parse_feed",
-            lambda url, typ: current_tiles if typ == "jp2" else {}
-        )
+        monkeypatch.setattr(downloader, "_parse_jp2_tiles", lambda root: current_tiles)
+
+        def mock_fetch_xml(session, url, wrap_content=False):
+            return ET.fromstring("<root></root>")
+
+        monkeypatch.setattr(feeds, "fetch_xml_feed", mock_fetch_xml)
 
         call_count = {"total": 0, "errors": 0}
 
@@ -437,13 +446,16 @@ class TestRLPLoadCatalog:
 
     def test_unexpected_errors_propagate(self, tmp_path, monkeypatch):
         """Verify unexpected exceptions are not silently swallowed."""
+        from georaffer.downloaders import feeds
         downloader = RLPDownloader(str(tmp_path), quiet=True)
 
-        current_tiles = {(362, 5604): "http://example.com/tile1.jp2"}
-        monkeypatch.setattr(
-            downloader, "_fetch_and_parse_feed",
-            lambda url, typ: current_tiles if typ == "jp2" else {}
-        )
+        current_tiles = {(362, 5604): "http://example.com/dop20rgb_32_362_5604_2_rp_2023.jp2"}
+        monkeypatch.setattr(downloader, "_parse_jp2_tiles", lambda root: current_tiles)
+
+        def mock_fetch_xml(session, url, wrap_content=False):
+            return ET.fromstring("<root></root>")
+
+        monkeypatch.setattr(feeds, "fetch_xml_feed", mock_fetch_xml)
 
         def mock_check_coverage(years, grid_x, grid_y):
             raise ValueError("Unexpected parse error")

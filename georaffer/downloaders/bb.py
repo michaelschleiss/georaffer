@@ -64,8 +64,8 @@ class BBDownloader(RegionDownloader):
     def image_filename_from_url(self, url: str) -> str:
         return self._filename_from_url(url)
 
-    def get_available_tiles(self) -> tuple[dict, dict]:
-        """Return available DOP and bDOM tiles."""
+    def get_filtered_tile_urls(self) -> tuple[dict, dict]:
+        """Get filtered DOP and bDOM tile URLs for download."""
         catalog = self.build_catalog()
         image_tiles = {
             coords: years[max(years.keys())]["url"]

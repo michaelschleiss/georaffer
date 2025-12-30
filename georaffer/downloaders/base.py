@@ -190,8 +190,11 @@ class RegionDownloader(ABC):
         pass
 
     @abstractmethod
-    def get_available_tiles(self) -> tuple[dict, dict]:
-        """Get available image and DSM tiles.
+    def get_filtered_tile_urls(self) -> tuple[dict, dict]:
+        """Get filtered image and DSM tile URLs for download.
+
+        Applies user-specified year filters and selects the best (most recent
+        valid) year for each tile from the catalog.
 
         Returns:
             Tuple of (image_tiles, dsm_tiles) where each dict maps:

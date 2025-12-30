@@ -17,19 +17,12 @@ class ConcreteDownloader(RegionDownloader):
     def utm_to_grid_coords(self, utm_x, utm_y):
         return (int(utm_x // 1000), int(utm_y // 1000)), (int(utm_x // 1000), int(utm_y // 1000))
 
-    def _parse_jp2_feed(self, session, root):
-        return {(350, 5600): "http://example.com/tile.jp2"}
-
-    def _parse_laz_feed(self, session, root):
-        return {(350, 5600): "http://example.com/tile.laz"}
-
-    @property
-    def jp2_feed_url(self):
-        return "http://example.com/jp2_feed.xml"
-
-    @property
-    def laz_feed_url(self):
-        return "http://example.com/laz_feed.xml"
+    def get_filtered_tile_urls(self) -> tuple[dict, dict]:
+        """Return mock tiles for testing."""
+        return (
+            {(350, 5600): "http://example.com/tile.jp2"},
+            {(350, 5600): "http://example.com/tile.laz"},
+        )
 
     def _load_catalog(self) -> Catalog:
         return Catalog()
@@ -241,86 +234,22 @@ class TestVerifyFileIntegrity:
         assert result is True
 
 
-class TestFetchAndParseFeed:
-    """Tests for _fetch_and_parse_feed method."""
+class TestGetFilteredTileUrls:
+    """Tests for get_filtered_tile_urls abstract method."""
 
     @pytest.fixture
     def downloader(self, tmp_path):
         mock_session = Mock()
         return ConcreteDownloader("TEST", str(tmp_path), session=mock_session)
 
-    def test_fetch_feed_success(self, downloader):
-        """Test successful feed fetch and parse."""
-        mock_response = Mock()
-        mock_response.content = b"<root><item>test</item></root>"
-        mock_response.raise_for_status = Mock()
-        downloader.session.get.return_value = mock_response
-
-        result = downloader._fetch_and_parse_feed("http://example.com/feed.xml", "jp2")
-
-        assert result == {(350, 5600): "http://example.com/tile.jp2"}
-
-    def test_fetch_feed_retries_on_error(self, downloader):
-        """Test retry on network error."""
-        import requests
-
-        # First call fails, second succeeds
-        mock_response = Mock()
-        mock_response.content = b"<root></root>"
-        mock_response.raise_for_status = Mock()
-
-        downloader.session.get.side_effect = [
-            requests.RequestException("Network error"),
-            mock_response,
-        ]
-
-        with patch("georaffer.downloaders.base.time.sleep"):
-            result = downloader._fetch_and_parse_feed("http://example.com/feed.xml", "jp2")
-
-        assert downloader.session.get.call_count == 2
-
-    def test_fetch_feed_raises_after_max_retries(self, downloader):
-        """Test RuntimeError after exhausting retries."""
-        import requests
-
-        downloader.session.get.side_effect = requests.RequestException("Network error")
-
-        with patch("georaffer.downloaders.base.time.sleep"):
-            with patch("georaffer.downloaders.base.MAX_RETRIES", 3):
-                with pytest.raises(RuntimeError, match="Failed to fetch feed"):
-                    downloader._fetch_and_parse_feed("http://example.com/feed.xml", "jp2")
-
-
-class TestGetAvailableTiles:
-    """Tests for get_available_tiles method."""
-
-    @pytest.fixture
-    def downloader(self, tmp_path):
-        mock_session = Mock()
-        return ConcreteDownloader("TEST", str(tmp_path), session=mock_session)
-
-    def test_get_available_tiles_success(self, downloader):
-        """Test successful retrieval of both tile types."""
-        mock_response = Mock()
-        mock_response.content = b"<root></root>"
-        mock_response.raise_for_status = Mock()
-        downloader.session.get.return_value = mock_response
-
-        jp2_tiles, laz_tiles = downloader.get_available_tiles()
+    def test_get_filtered_tile_urls_success(self, downloader):
+        """Test successful retrieval of both tile types from concrete implementation."""
+        jp2_tiles, laz_tiles = downloader.get_filtered_tile_urls()
 
         assert (350, 5600) in jp2_tiles
+        assert jp2_tiles[(350, 5600)] == "http://example.com/tile.jp2"
         assert (350, 5600) in laz_tiles
-
-    def test_get_available_tiles_raises_on_jp2_error(self, downloader):
-        """Test exception propagation on JP2 feed error."""
-        import requests
-
-        downloader.session.get.side_effect = requests.RequestException("Failed")
-
-        with patch("georaffer.downloaders.base.time.sleep"):
-            with patch("georaffer.downloaders.base.MAX_RETRIES", 1):
-                with pytest.raises(RuntimeError):
-                    downloader.get_available_tiles()
+        assert laz_tiles[(350, 5600)] == "http://example.com/tile.laz"
 
 
 class TestCatalog:
@@ -329,13 +258,16 @@ class TestCatalog:
     def test_catalog_creation(self):
         """Test creating a catalog with tiles."""
         tiles = {
-            (350, 5600): {2020: "http://example.com/2020.jp2", 2021: "http://example.com/2021.jp2"},
-            (351, 5600): {2020: "http://example.com/351_2020.jp2"},
+            (350, 5600): {
+                2020: {"url": "http://example.com/2020.jp2", "acquisition_date": None},
+                2021: {"url": "http://example.com/2021.jp2", "acquisition_date": None},
+            },
+            (351, 5600): {2020: {"url": "http://example.com/351_2020.jp2", "acquisition_date": None}},
         }
         catalog = Catalog(image_tiles=tiles)
 
         assert len(catalog.image_tiles) == 2
-        assert catalog.image_tiles[(350, 5600)][2020] == "http://example.com/2020.jp2"
+        assert catalog.image_tiles[(350, 5600)][2020]["url"] == "http://example.com/2020.jp2"
         assert isinstance(catalog.created_at, datetime)
 
     def test_catalog_is_stale_fresh(self):
@@ -354,24 +286,35 @@ class TestCatalog:
     def test_catalog_to_dict(self):
         """Test serialization to JSON-compatible dict."""
         tiles = {
-            (350, 5600): {2020: "http://example.com/2020.jp2"},
+            (350, 5600): {2020: {"url": "http://example.com/2020.jp2", "acquisition_date": None}},
+        }
+        dsm = {
+            (350, 5600): {"url": "http://example.com/dsm.laz", "acquisition_date": None},
         }
         created = datetime(2025, 1, 15, 10, 30, 0)
-        catalog = Catalog(image_tiles=tiles, created_at=created)
+        catalog = Catalog(image_tiles=tiles, dsm_tiles=dsm, created_at=created)
 
         result = catalog.to_dict()
 
         assert result["created_at"] == "2025-01-15T10:30:00"
         assert "350,5600" in result["image_tiles"]
-        assert result["image_tiles"]["350,5600"]["2020"] == "http://example.com/2020.jp2"
+        assert result["image_tiles"]["350,5600"]["2020"]["url"] == "http://example.com/2020.jp2"
+        assert "350,5600" in result["dsm_tiles"]
+        assert result["dsm_tiles"]["350,5600"]["url"] == "http://example.com/dsm.laz"
 
     def test_catalog_from_dict(self):
         """Test deserialization from JSON-compatible dict."""
         data = {
             "created_at": "2025-01-15T10:30:00",
             "image_tiles": {
-                "350,5600": {"2020": "http://example.com/2020.jp2"},
-                "351,5601": {"2019": "http://example.com/2019.jp2", "2020": "http://example.com/2020.jp2"},
+                "350,5600": {"2020": {"url": "http://example.com/2020.jp2", "acquisition_date": None}},
+                "351,5601": {
+                    "2019": {"url": "http://example.com/2019.jp2", "acquisition_date": "2019-06-15"},
+                    "2020": {"url": "http://example.com/2020.jp2", "acquisition_date": None},
+                },
+            },
+            "dsm_tiles": {
+                "350,5600": {"url": "http://example.com/dsm.laz", "acquisition_date": None},
             },
         }
 
@@ -379,21 +322,31 @@ class TestCatalog:
 
         assert catalog.created_at == datetime(2025, 1, 15, 10, 30, 0)
         assert len(catalog.image_tiles) == 2
-        assert catalog.image_tiles[(350, 5600)][2020] == "http://example.com/2020.jp2"
-        assert catalog.image_tiles[(351, 5601)][2019] == "http://example.com/2019.jp2"
+        assert catalog.image_tiles[(350, 5600)][2020]["url"] == "http://example.com/2020.jp2"
+        assert catalog.image_tiles[(351, 5601)][2019]["url"] == "http://example.com/2019.jp2"
+        assert catalog.image_tiles[(351, 5601)][2019]["acquisition_date"] == "2019-06-15"
+        assert len(catalog.dsm_tiles) == 1
+        assert catalog.dsm_tiles[(350, 5600)]["url"] == "http://example.com/dsm.laz"
 
     def test_catalog_roundtrip(self):
         """Test serialization roundtrip preserves data."""
         tiles = {
-            (350, 5600): {2020: "http://example.com/2020.jp2", 2021: "http://example.com/2021.jp2"},
-            (351, 5601): {2019: "http://example.com/2019.jp2"},
+            (350, 5600): {
+                2020: {"url": "http://example.com/2020.jp2", "acquisition_date": None},
+                2021: {"url": "http://example.com/2021.jp2", "acquisition_date": "2021-07-01"},
+            },
+            (351, 5601): {2019: {"url": "http://example.com/2019.jp2", "acquisition_date": None}},
         }
-        original = Catalog(image_tiles=tiles, created_at=datetime(2025, 1, 15, 10, 30, 0))
+        dsm = {
+            (350, 5600): {"url": "http://example.com/dsm.laz", "acquisition_date": None},
+        }
+        original = Catalog(image_tiles=tiles, dsm_tiles=dsm, created_at=datetime(2025, 1, 15, 10, 30, 0))
 
         restored = Catalog.from_dict(original.to_dict())
 
         assert restored.created_at == original.created_at
         assert restored.image_tiles == original.image_tiles
+        assert restored.dsm_tiles == original.dsm_tiles
 
 
 class TestFetchCatalog:
@@ -408,7 +361,7 @@ class TestFetchCatalog:
 
     def test_build_catalog_returns_instance_cache(self, downloader):
         """Test that instance cache is returned without disk access."""
-        cached = Catalog(image_tiles={(350, 5600): {2020: "http://cached.com"}})
+        cached = Catalog(image_tiles={(350, 5600): {2020: {"url": "http://cached.com", "acquisition_date": None}}})
         downloader._catalog = cached
 
         result = downloader.build_catalog()
@@ -419,7 +372,8 @@ class TestFetchCatalog:
         """Test that fresh disk cache is loaded."""
         cache_data = {
             "created_at": datetime.now().isoformat(),
-            "image_tiles": {"350,5600": {"2020": "http://disk.com"}},
+            "image_tiles": {"350,5600": {"2020": {"url": "http://disk.com", "acquisition_date": None}}},
+            "dsm_tiles": {},
         }
         cache_path = tmp_path / "cache" / "test_catalog.json"
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -428,14 +382,15 @@ class TestFetchCatalog:
 
         result = downloader.build_catalog()
 
-        assert result.image_tiles[(350, 5600)][2020] == "http://disk.com"
+        assert result.image_tiles[(350, 5600)][2020]["url"] == "http://disk.com"
 
     def test_build_catalog_ignores_stale_disk_cache(self, downloader, tmp_path):
         """Test that stale disk cache triggers reload."""
         old_time = datetime.now() - timedelta(days=60)
         cache_data = {
             "created_at": old_time.isoformat(),
-            "image_tiles": {"350,5600": {"2020": "http://stale.com"}},
+            "image_tiles": {"350,5600": {"2020": {"url": "http://stale.com", "acquisition_date": None}}},
+            "dsm_tiles": {},
         }
         cache_path = tmp_path / "cache" / "test_catalog.json"
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -450,12 +405,13 @@ class TestFetchCatalog:
     def test_build_catalog_refresh_bypasses_cache(self, downloader, tmp_path):
         """Test that refresh=True bypasses all caches."""
         # Set instance cache
-        downloader._catalog = Catalog(image_tiles={(350, 5600): {2020: "http://instance.com"}})
+        downloader._catalog = Catalog(image_tiles={(350, 5600): {2020: {"url": "http://instance.com", "acquisition_date": None}}})
 
         # Set disk cache
         cache_data = {
             "created_at": datetime.now().isoformat(),
-            "image_tiles": {"350,5600": {"2020": "http://disk.com"}},
+            "image_tiles": {"350,5600": {"2020": {"url": "http://disk.com", "acquisition_date": None}}},
+            "dsm_tiles": {},
         }
         cache_path = tmp_path / "cache" / "test_catalog.json"
         cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -498,7 +454,7 @@ class TestFetchCatalog:
 
     def test_write_cache_creates_parent_dirs(self, downloader, tmp_path):
         """Test _write_cache creates parent directories."""
-        downloader._catalog = Catalog(image_tiles={(350, 5600): {2020: "http://test.com"}})
+        downloader._catalog = Catalog(image_tiles={(350, 5600): {2020: {"url": "http://test.com", "acquisition_date": None}}})
         downloader._cache_path = tmp_path / "deep" / "nested" / "cache.json"
 
         downloader._write_cache()
@@ -508,7 +464,7 @@ class TestFetchCatalog:
     def test_write_cache_noop_without_cache_path(self, downloader):
         """Test _write_cache does nothing when _cache_path is None."""
         downloader._cache_path = None
-        downloader._catalog = Catalog(image_tiles={(350, 5600): {2020: "http://test.com"}})
+        downloader._catalog = Catalog(image_tiles={(350, 5600): {2020: {"url": "http://test.com", "acquisition_date": None}}})
 
         # Should not raise
         downloader._write_cache()

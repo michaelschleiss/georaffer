@@ -147,13 +147,14 @@ class RLPDownloader(RegionDownloader):
             raise RuntimeError(f"WMS download failed for {url}")
         return super().download_file(url, output_path, on_progress=on_progress)
 
-    def get_available_tiles(
+    def get_filtered_tile_urls(
         self,
         requested_coords: set[tuple[int, int]] | None = None,  # Unused, kept for API compat
     ) -> tuple[dict, dict]:
-        """Get available JP2 and LAZ tiles.
+        """Get filtered JP2 and LAZ tile URLs for download.
 
-        Uses cached catalog. Filters by year range if --imagery-from is set.
+        Applies year range filter if --imagery-from is set. Selects the most
+        recent valid year for each tile.
 
         Returns:
             Tuple of (jp2_tiles, laz_tiles) dicts mapping coords to URLs.

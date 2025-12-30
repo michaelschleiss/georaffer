@@ -33,7 +33,7 @@ from georaffer.downloaders import BBDownloader, NRWDownloader, RLPDownloader
 from georaffer.grids import generate_tiles_by_zone, latlon_array_to_utm
 from georaffer.inputs import load_from_pygeon
 from georaffer.reporting import print_catalog_summary, print_table
-from georaffer.tiles import RegionCatalog, calculate_required_tiles
+from georaffer.tiles import calculate_required_tiles
 
 
 def parse_args() -> argparse.Namespace:
@@ -461,33 +461,28 @@ def main() -> None:
         print(f"Warning: output directory does not exist: {output_path}")
         print()
 
-    downloaders: dict[str, object] = {}
-    region_catalogs: list[RegionCatalog] = []
+    downloaders: list = []
     catalog_rows: list[tuple[str, int, int]] = []
 
     start = time.perf_counter()
 
     if Region.NRW in selected_regions:
         nrw_downloader = NRWDownloader(args.output, imagery_from=imagery_from)
-        nrw_jp2, nrw_laz = nrw_downloader.get_available_tiles()
-        catalog_rows.append(("NRW", nrw_downloader.total_image_count or len(nrw_jp2), len(nrw_laz)))
-        region_catalogs.append(RegionCatalog("nrw", nrw_downloader, nrw_jp2, nrw_laz))
-        downloaders["nrw"] = nrw_downloader
+        nrw_downloader.build_catalog()
+        catalog_rows.append(("NRW", nrw_downloader.total_image_count, len(nrw_downloader.build_catalog().dsm_tiles)))
+        downloaders.append(nrw_downloader)
 
     if Region.RLP in selected_regions:
         rlp_downloader = RLPDownloader(args.output, imagery_from=imagery_from)
-        rlp_coords = _rlp_native_coords(rlp_downloader, tiles_by_zone, args.grid_size_km)
-        rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(requested_coords=rlp_coords)
-        catalog_rows.append(("RLP", rlp_downloader.total_image_count or len(rlp_jp2), len(rlp_laz)))
-        region_catalogs.append(RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz))
-        downloaders["rlp"] = rlp_downloader
+        rlp_downloader.build_catalog()
+        catalog_rows.append(("RLP", rlp_downloader.total_image_count, len(rlp_downloader.build_catalog().dsm_tiles)))
+        downloaders.append(rlp_downloader)
 
     if Region.BB in selected_regions:
         bb_downloader = BBDownloader(args.output)
-        bb_jp2, bb_laz = bb_downloader.get_available_tiles()
-        catalog_rows.append(("BB", len(bb_jp2), len(bb_laz)))
-        region_catalogs.append(RegionCatalog("bb", bb_downloader, bb_jp2, bb_laz))
-        downloaders["bb"] = bb_downloader
+        bb_downloader.build_catalog()
+        catalog_rows.append(("BB", bb_downloader.total_image_count, len(bb_downloader.build_catalog().dsm_tiles)))
+        downloaders.append(bb_downloader)
 
     catalog_duration = time.perf_counter() - start
     if catalog_rows:
@@ -500,7 +495,7 @@ def main() -> None:
     tile_set, downloads_by_source = calculate_required_tiles(
         tiles_by_zone,
         args.grid_size_km,
-        region_catalogs,
+        downloaders,
         zone_by_region,
         original_coords=coords_array,
         source_zone=source_zone,

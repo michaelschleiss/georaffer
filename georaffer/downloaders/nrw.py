@@ -125,10 +125,11 @@ class NRWDownloader(RegionDownloader):
 
         return jp2_tiles
 
-    def get_available_tiles(self) -> tuple[dict, dict]:
-        """Get available JP2 and LAZ tiles.
+    def get_filtered_tile_urls(self) -> tuple[dict, dict]:
+        """Get filtered JP2 and LAZ tile URLs for download.
 
-        Uses cached catalog. Filters by year range if --imagery-from is set.
+        Applies year range filter if --imagery-from is set. Selects the most
+        recent valid year for each tile.
 
         Returns:
             Tuple of (jp2_tiles, laz_tiles) dicts mapping coords to URLs.

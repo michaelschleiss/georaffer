@@ -26,7 +26,7 @@ from georaffer.reporting import (
     render_table,
 )
 from georaffer.runtime import InterruptManager
-from georaffer.tiles import RegionCatalog, TileSet, calculate_required_tiles
+from georaffer.tiles import TileSet, calculate_required_tiles
 
 # Set multiprocessing to use 'spawn' mode for GDAL/rasterio safety
 # Why 'spawn' instead of 'fork'?
@@ -189,24 +189,18 @@ def process_tiles(
     print(f"Querying tile catalogs from {region_labels} servers...")
     phase_start = time.perf_counter()
     catalog_rows: list[tuple[str, int, int]] = []
-    region_catalogs: list[RegionCatalog] = []
-    nrw_jp2: dict = {}
-    nrw_laz: dict = {}
-    rlp_jp2: dict = {}
-    rlp_laz: dict = {}
-    bb_jp2: dict = {}
-    bb_laz: dict = {}
+    downloaders: list = []
 
     if nrw_downloader is not None:
-        nrw_jp2, nrw_laz = nrw_downloader.get_available_tiles()
-        catalog_rows.append(("NRW", nrw_downloader.total_image_count or len(nrw_jp2), len(nrw_laz)))
-        region_catalogs.append(RegionCatalog("nrw", nrw_downloader, nrw_jp2, nrw_laz))
+        nrw_downloader.build_catalog()  # Pre-load for summary stats
+        catalog_rows.append(("NRW", nrw_downloader.total_image_count, len(nrw_downloader.build_catalog().dsm_tiles)))
+        downloaders.append(nrw_downloader)
     if rlp_downloader is not None:
-        rlp_jp2, rlp_laz = rlp_downloader.get_available_tiles(requested_coords=rlp_native_coords)
-        catalog_rows.append(("RLP", rlp_downloader.total_image_count or len(rlp_jp2), len(rlp_laz)))
-        region_catalogs.append(RegionCatalog("rlp", rlp_downloader, rlp_jp2, rlp_laz))
+        rlp_downloader.build_catalog()
+        catalog_rows.append(("RLP", rlp_downloader.total_image_count, len(rlp_downloader.build_catalog().dsm_tiles)))
+        downloaders.append(rlp_downloader)
     if bb_downloader is not None:
-        bb_jp2, bb_laz = bb_downloader.get_available_tiles()
+        bb_jp2, bb_laz = bb_downloader.get_filtered_tile_urls()
         if process_images and process_pointclouds:
             jp2_keys = set(bb_jp2)
             laz_keys = set(bb_laz)
@@ -222,10 +216,9 @@ def process_tiles(
                     f"Missing imagery tiles (sample): {missing_jp2_sample or 'none'}."
                 )
         catalog_rows.append(("BB", len(bb_jp2), len(bb_laz)))
-        region_catalogs.append(RegionCatalog("bb", bb_downloader, bb_jp2, bb_laz))
+        downloaders.append(bb_downloader)
     catalogs_duration = time.perf_counter() - phase_start
 
-    # Use total counts (includes historical) for JP2, unique locations for LAZ
     print_catalog_summary(catalog_rows, catalogs_duration)
 
     zone_by_region = {
@@ -235,7 +228,7 @@ def process_tiles(
     tile_set, downloads_by_source = calculate_required_tiles(
         tiles_by_zone,
         grid_size_km,
-        region_catalogs,
+        downloaders,
         zone_by_region,
         original_coords=original_coords,
         source_zone=source_zone,

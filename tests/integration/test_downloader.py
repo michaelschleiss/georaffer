@@ -41,7 +41,7 @@ def nrw_downloader():
 @pytest.fixture(scope="module")
 def nrw_catalogs(nrw_downloader):
     """Fetch NRW catalogs once for all tests."""
-    return nrw_downloader.get_available_tiles()
+    return nrw_downloader.get_filtered_tile_urls()
 
 
 @pytest.mark.network
@@ -144,7 +144,7 @@ def rlp_downloader():
 @pytest.fixture(scope="module")
 def rlp_catalogs(rlp_downloader):
     """Fetch RLP catalogs once for all tests."""
-    return rlp_downloader.get_available_tiles()
+    return rlp_downloader.get_filtered_tile_urls()
 
 
 @pytest.mark.network

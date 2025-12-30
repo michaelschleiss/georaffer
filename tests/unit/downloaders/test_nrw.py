@@ -52,16 +52,18 @@ class TestNRWHistoricFiltering:
         from georaffer.downloaders.base import Catalog
 
         downloader = NRWDownloader(str(tmp_path), imagery_from=(2018, 2018))
-        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
 
-        # Mock catalog with tiles from different years
-        fake_catalog = Catalog(image_tiles={
-            (350, 5600): {2018: "https://example.com/tile_2018.jp2"},
-            (351, 5600): {2021: "https://example.com/tile_2021.jp2"},
-        })
+        # Mock catalog with tiles from different years (new tile_info format)
+        fake_catalog = Catalog(
+            image_tiles={
+                (350, 5600): {2018: {"url": "https://example.com/tile_2018.jp2", "acquisition_date": None}},
+                (351, 5600): {2021: {"url": "https://example.com/tile_2021.jp2", "acquisition_date": None}},
+            },
+            dsm_tiles={},
+        )
         monkeypatch.setattr(downloader, "build_catalog", lambda: fake_catalog)
 
-        jp2_tiles, laz_tiles = downloader.get_available_tiles()
+        jp2_tiles, laz_tiles = downloader.get_filtered_tile_urls()
 
         # Only 2018 tile should be included (2021 outside range)
         assert jp2_tiles == {(350, 5600): "https://example.com/tile_2018.jp2"}
@@ -191,7 +193,7 @@ class TestNRWParseJP2Feed:
             )
 
 
-class TestNRWParseLAZFeed:
+class TestNRWParseLAZTiles:
     """Tests for LAZ feed parsing."""
 
     @pytest.fixture
@@ -205,13 +207,15 @@ class TestNRWParseLAZFeed:
             <file name="bdom50_32351_5600_1_nw_2025.laz"/>
         </index>"""
         root = ET.fromstring(xml)
-        mock_session = Mock()
 
-        tiles = downloader._parse_laz_feed(mock_session, root)
+        tiles = downloader._parse_laz_tiles(root)
 
         assert len(tiles) == 2
         assert (350, 5600) in tiles
         assert (351, 5600) in tiles
+        # Verify tile_info format
+        assert tiles[(350, 5600)]["url"].endswith(".laz")
+        assert "acquisition_date" in tiles[(350, 5600)]
 
     def test_parse_feed_raises_on_invalid_filename(self, downloader):
         """Test that invalid filenames raise ValueError."""
@@ -219,10 +223,9 @@ class TestNRWParseLAZFeed:
             <file name="wrong_format.laz"/>
         </index>"""
         root = ET.fromstring(xml)
-        mock_session = Mock()
 
         with pytest.raises(ValueError, match="doesn't match pattern"):
-            downloader._parse_laz_feed(mock_session, root)
+            downloader._parse_laz_tiles(root)
 
     def test_parse_feed_skips_non_laz(self, downloader):
         """Test that non-LAZ files are skipped."""
@@ -232,9 +235,8 @@ class TestNRWParseLAZFeed:
             <file name="metadata.xml"/>
         </index>"""
         root = ET.fromstring(xml)
-        mock_session = Mock()
 
-        tiles = downloader._parse_laz_feed(mock_session, root)
+        tiles = downloader._parse_laz_tiles(root)
 
         assert len(tiles) == 1
 
@@ -244,6 +246,7 @@ class TestNRWLoadCatalog:
 
     def test_parallel_execution_processes_all_years(self, tmp_path, monkeypatch):
         """Verify parallel_map processes all historic years without dropping any."""
+        from georaffer.downloaders import feeds
         downloader = NRWDownloader(str(tmp_path), quiet=True)
 
         # Track which years were processed
@@ -260,8 +263,12 @@ class TestNRWLoadCatalog:
             # Current feed
             return {(350, 5600): ("http://example.com/current.jp2", 2025)}
 
+        # Mock the LAZ feed fetch to return empty XML
+        def mock_fetch_xml(session, url):
+            return ET.fromstring("<index></index>")
+
         monkeypatch.setattr(downloader, "_parse_jp2_feed_with_year", mock_parse)
-        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
+        monkeypatch.setattr(feeds, "fetch_xml_feed", mock_fetch_xml)
 
         catalog = downloader._load_catalog()
 
@@ -274,6 +281,7 @@ class TestNRWLoadCatalog:
     def test_404_errors_counted_not_raised(self, tmp_path, monkeypatch):
         """Verify 404 errors are counted but don't abort catalog build."""
         import requests
+        from georaffer.downloaders import feeds
         downloader = NRWDownloader(str(tmp_path), quiet=True)
 
         call_count = {"total": 0, "errors": 0}
@@ -287,8 +295,11 @@ class TestNRWLoadCatalog:
                 raise requests.HTTPError(response=resp)
             return {(350, 5600): ("http://example.com/tile.jp2", 2020)}
 
+        def mock_fetch_xml(session, url):
+            return ET.fromstring("<index></index>")
+
         monkeypatch.setattr(downloader, "_parse_jp2_feed_with_year", mock_parse)
-        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
+        monkeypatch.setattr(feeds, "fetch_xml_feed", mock_fetch_xml)
 
         # Should not raise despite 404 errors
         catalog = downloader._load_catalog()
@@ -300,6 +311,7 @@ class TestNRWLoadCatalog:
     def test_non_404_errors_propagate(self, tmp_path, monkeypatch):
         """Verify non-404 HTTP errors are not silently swallowed."""
         import requests
+        from georaffer.downloaders import feeds
         downloader = NRWDownloader(str(tmp_path), quiet=True)
 
         def mock_parse(session, feed_url, base_url):
@@ -309,8 +321,11 @@ class TestNRWLoadCatalog:
                 raise requests.HTTPError(response=resp)
             return {(350, 5600): ("http://example.com/tile.jp2", 2020)}
 
+        def mock_fetch_xml(session, url):
+            return ET.fromstring("<index></index>")
+
         monkeypatch.setattr(downloader, "_parse_jp2_feed_with_year", mock_parse)
-        monkeypatch.setattr(downloader, "_fetch_and_parse_feed", lambda *args, **kwargs: {})
+        monkeypatch.setattr(feeds, "fetch_xml_feed", mock_fetch_xml)
 
         with pytest.raises(requests.HTTPError):
             downloader._load_catalog()

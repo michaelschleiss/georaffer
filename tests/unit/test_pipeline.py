@@ -117,24 +117,25 @@ class TestGenerateUserGridTiles:
         assert (1751, 28001) in tiles  # NE
 
 
+def _make_mock_downloader(name, tmp_path, grid_size=1000, jp2_catalog=None, laz_catalog=None):
+    """Create a mock downloader with the required interface."""
+    downloader = MagicMock(raw_dir=tmp_path / name)
+    downloader.region_name = name.upper()
+    downloader.utm_to_grid_coords.side_effect = lambda x, y: (
+        (int(x // grid_size), int(y // grid_size)),
+        (int(x // grid_size), int(y // grid_size)),
+    )
+    downloader.get_all_urls_for_coord.return_value = []
+    downloader.get_filtered_tile_urls.return_value = (jp2_catalog or {}, laz_catalog or {})
+    return downloader
+
+
 class TestCalculateRequiredTiles:
     """Tests for calculate_required_tiles native grid mapping behavior."""
 
     def test_maps_to_nrw_native_grid(self, tmp_path):
         """Test user-grid tiles map to NRW 1km native grid."""
-        from georaffer.tiles import RegionCatalog, calculate_required_tiles
-
-        # Mock downloaders
-        nrw_downloader = MagicMock(raw_dir=tmp_path / "nrw")
-        nrw_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 1000), int(y // 1000)),
-            (int(x // 1000), int(y // 1000)),
-        )
-        rlp_downloader = MagicMock(raw_dir=tmp_path / "rlp")
-        rlp_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 2000), int(y // 2000)),
-            (int(x // 2000), int(y // 2000)),
-        )
+        from georaffer.tiles import calculate_required_tiles
 
         # Build NRW catalog for 3x3 ring (9 tiles)
         nrw_jp2_catalog = {
@@ -143,50 +144,39 @@ class TestCalculateRequiredTiles:
             for dy in (-1, 0, 1)
         }
 
-        regions = [
-            RegionCatalog("nrw", nrw_downloader, nrw_jp2_catalog, {}),
-            RegionCatalog("rlp", rlp_downloader, {}, {}),
-        ]
+        nrw_downloader = _make_mock_downloader("nrw", tmp_path, 1000, nrw_jp2_catalog)
+        rlp_downloader = _make_mock_downloader("rlp", tmp_path, 2000)
 
         # User tiles in grid coordinates (at 1km resolution) covering a 3x3 area
         user_tiles = {(350 + dx, 5600 + dy) for dx in range(-1, 2) for dy in range(-1, 2)}
 
         tiles_by_zone = {32: user_tiles}
         zone_by_region = {"nrw": 32, "rlp": 32}
-        tiles, downloads = calculate_required_tiles(tiles_by_zone, 1.0, regions, zone_by_region)
+        tiles, downloads = calculate_required_tiles(
+            tiles_by_zone, 1.0, [nrw_downloader, rlp_downloader], zone_by_region
+        )
 
         assert tiles.jp2_count("nrw") == 9
         assert len(downloads["nrw_jp2"]) == 9
 
     def test_only_downloads_available_tiles(self, tmp_path):
         """Test only available tiles are downloaded, not missing ones."""
-        from georaffer.tiles import RegionCatalog, calculate_required_tiles
-
-        nrw_downloader = MagicMock(raw_dir=tmp_path / "nrw")
-        nrw_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 1000), int(y // 1000)),
-            (int(x // 1000), int(y // 1000)),
-        )
-        rlp_downloader = MagicMock(raw_dir=tmp_path / "rlp")
-        rlp_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 2000), int(y // 2000)),
-            (int(x // 2000), int(y // 2000)),
-        )
+        from georaffer.tiles import calculate_required_tiles
 
         # Only one tile available
         nrw_jp2_catalog = {(350, 5600): "http://example.com/tile.jp2"}
 
-        regions = [
-            RegionCatalog("nrw", nrw_downloader, nrw_jp2_catalog, {}),
-            RegionCatalog("rlp", rlp_downloader, {}, {}),
-        ]
+        nrw_downloader = _make_mock_downloader("nrw", tmp_path, 1000, nrw_jp2_catalog)
+        rlp_downloader = _make_mock_downloader("rlp", tmp_path, 2000)
 
         # Request 3 user tiles
         user_tiles = {(350, 5600), (351, 5601), (352, 5602)}
 
         tiles_by_zone = {32: user_tiles}
         zone_by_region = {"nrw": 32, "rlp": 32}
-        tiles, downloads = calculate_required_tiles(tiles_by_zone, 1.0, regions, zone_by_region)
+        tiles, downloads = calculate_required_tiles(
+            tiles_by_zone, 1.0, [nrw_downloader, rlp_downloader], zone_by_region
+        )
 
         assert tiles.jp2_count("nrw") == 1
         assert len(downloads["nrw_jp2"]) == 1
@@ -194,15 +184,9 @@ class TestCalculateRequiredTiles:
 
     def test_missing_includes_margin_tiles_with_original_coords(self, tmp_path):
         """Test missing tiles include margin tiles when original coords are provided."""
-        from georaffer.tiles import RegionCatalog, calculate_required_tiles
+        from georaffer.tiles import calculate_required_tiles
 
-        nrw_downloader = MagicMock(raw_dir=tmp_path / "nrw")
-        nrw_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 1000), int(y // 1000)),
-            (int(x // 1000), int(y // 1000)),
-        )
-
-        regions = [RegionCatalog("nrw", nrw_downloader, {}, {})]
+        nrw_downloader = _make_mock_downloader("nrw", tmp_path, 1000)
         zone_by_region = {"nrw": 32}
 
         original_coords = np.array([(350500.0, 5600500.0)])
@@ -211,7 +195,7 @@ class TestCalculateRequiredTiles:
         tiles, _ = calculate_required_tiles(
             tiles_by_zone,
             1.0,
-            regions,
+            [nrw_downloader],
             zone_by_region,
             original_coords=original_coords,
             source_zone=32,
@@ -223,33 +207,21 @@ class TestCalculateRequiredTiles:
 
     def test_coverage_from_nrw_only(self, tmp_path):
         """Test user tile covered by NRW but not RLP is not reported as missing."""
-        from georaffer.tiles import RegionCatalog, calculate_required_tiles
-
-        nrw_downloader = MagicMock(raw_dir=tmp_path / "nrw")
-        nrw_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 1000), int(y // 1000)),
-            (int(x // 1000), int(y // 1000)),
-        )
-
-        rlp_downloader = MagicMock(raw_dir=tmp_path / "rlp")
-        rlp_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 2000), int(y // 2000)),
-            (int(x // 2000), int(y // 2000)),
-        )
+        from georaffer.tiles import calculate_required_tiles
 
         # Only NRW has coverage for this location
         nrw_jp2_catalog = {(350, 5600): "http://example.com/nrw_tile.jp2"}
 
-        regions = [
-            RegionCatalog("nrw", nrw_downloader, nrw_jp2_catalog, {}),
-            RegionCatalog("rlp", rlp_downloader, {}, {}),
-        ]
+        nrw_downloader = _make_mock_downloader("nrw", tmp_path, 1000, nrw_jp2_catalog)
+        rlp_downloader = _make_mock_downloader("rlp", tmp_path, 2000)
 
         user_tiles = {(350, 5600)}
 
         tiles_by_zone = {32: user_tiles}
         zone_by_region = {"nrw": 32, "rlp": 32}
-        tiles, downloads = calculate_required_tiles(tiles_by_zone, 1.0, regions, zone_by_region)
+        tiles, downloads = calculate_required_tiles(
+            tiles_by_zone, 1.0, [nrw_downloader, rlp_downloader], zone_by_region
+        )
 
         # Should find tile in NRW
         assert tiles.jp2_count("nrw") == 1
@@ -262,33 +234,21 @@ class TestCalculateRequiredTiles:
 
     def test_coverage_from_rlp_only(self, tmp_path):
         """Test user tile covered by RLP but not NRW is not reported as missing."""
-        from georaffer.tiles import RegionCatalog, calculate_required_tiles
-
-        nrw_downloader = MagicMock(raw_dir=tmp_path / "nrw")
-        nrw_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 1000), int(y // 1000)),
-            (int(x // 1000), int(y // 1000)),
-        )
-
-        rlp_downloader = MagicMock(raw_dir=tmp_path / "rlp")
-        rlp_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 2000), int(y // 2000)),
-            (int(x // 2000), int(y // 2000)),
-        )
+        from georaffer.tiles import calculate_required_tiles
 
         # Only RLP has coverage for this location
         rlp_jp2_catalog = {(175, 2800): "http://example.com/rlp_tile.jp2"}
 
-        regions = [
-            RegionCatalog("nrw", nrw_downloader, {}, {}),
-            RegionCatalog("rlp", rlp_downloader, rlp_jp2_catalog, {}),
-        ]
+        nrw_downloader = _make_mock_downloader("nrw", tmp_path, 1000)
+        rlp_downloader = _make_mock_downloader("rlp", tmp_path, 2000, rlp_jp2_catalog)
 
         user_tiles = {(350, 5600)}
 
         tiles_by_zone = {32: user_tiles}
         zone_by_region = {"nrw": 32, "rlp": 32}
-        tiles, downloads = calculate_required_tiles(tiles_by_zone, 1.0, regions, zone_by_region)
+        tiles, downloads = calculate_required_tiles(
+            tiles_by_zone, 1.0, [nrw_downloader, rlp_downloader], zone_by_region
+        )
 
         # Should find tile in RLP
         assert tiles.jp2_count("rlp") == 1
@@ -301,31 +261,18 @@ class TestCalculateRequiredTiles:
 
     def test_no_coverage_from_either_region(self, tmp_path):
         """Test user tile covered by neither region is reported as missing."""
-        from georaffer.tiles import RegionCatalog, calculate_required_tiles
+        from georaffer.tiles import calculate_required_tiles
 
-        nrw_downloader = MagicMock(raw_dir=tmp_path / "nrw")
-        nrw_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 1000), int(y // 1000)),
-            (int(x // 1000), int(y // 1000)),
-        )
-
-        rlp_downloader = MagicMock(raw_dir=tmp_path / "rlp")
-        rlp_downloader.utm_to_grid_coords.side_effect = lambda x, y: (
-            (int(x // 2000), int(y // 2000)),
-            (int(x // 2000), int(y // 2000)),
-        )
-
-        # Neither region has coverage
-        regions = [
-            RegionCatalog("nrw", nrw_downloader, {}, {}),
-            RegionCatalog("rlp", rlp_downloader, {}, {}),
-        ]
+        nrw_downloader = _make_mock_downloader("nrw", tmp_path, 1000)
+        rlp_downloader = _make_mock_downloader("rlp", tmp_path, 2000)
 
         user_tiles = {(350, 5600)}
 
         tiles_by_zone = {32: user_tiles}
         zone_by_region = {"nrw": 32, "rlp": 32}
-        tiles, downloads = calculate_required_tiles(tiles_by_zone, 1.0, regions, zone_by_region)
+        tiles, downloads = calculate_required_tiles(
+            tiles_by_zone, 1.0, [nrw_downloader, rlp_downloader], zone_by_region
+        )
 
         # Should find nothing
         assert tiles.jp2_count("nrw") == 0
@@ -346,12 +293,20 @@ def test_process_tiles_passes_imagery_from_to_nrw_and_rlp(tmp_path):
     nrw_imagery_from: list[tuple[int, int | None] | None] = []
     rlp_imagery_from: list[tuple[int, int | None] | None] = []
 
+    class DummyCatalog:
+        dsm_tiles = {}
+
     class DummyNRW:
+        region_name = "NRW"
+        total_image_count = 0
+
         def __init__(self, output_dir: str, imagery_from=None, session=None):
             nrw_imagery_from.append(imagery_from)
-            self.total_image_count = None
 
-        def get_available_tiles(self):
+        def build_catalog(self):
+            return DummyCatalog()
+
+        def get_filtered_tile_urls(self):
             return {}, {}
 
         def utm_to_grid_coords(self, utm_x: float, utm_y: float):
@@ -360,11 +315,16 @@ def test_process_tiles_passes_imagery_from_to_nrw_and_rlp(tmp_path):
             return (grid_x, grid_y), (grid_x, grid_y)
 
     class DummyRLP:
+        region_name = "RLP"
+        total_image_count = 0
+
         def __init__(self, output_dir: str, imagery_from=None, session=None):
             rlp_imagery_from.append(imagery_from)
-            self.total_image_count = None
 
-        def get_available_tiles(self, requested_coords=None):
+        def build_catalog(self):
+            return DummyCatalog()
+
+        def get_filtered_tile_urls(self, requested_coords=None):
             return {}, {}
 
         def utm_to_grid_coords(self, utm_x: float, utm_y: float):
@@ -462,21 +422,9 @@ class TestExtractYearFromFilename:
             "",
         ],
     )
-    def test_extract_optional_latest(self, filename):
-        """Without require flag we still allow 'latest' fallback."""
-        assert extract_year_from_filename(filename, require=False) == "latest"
-
-    @pytest.mark.parametrize(
-        "filename",
-        [
-            "no_year_here.jp2",
-            "",
-        ],
-    )
-    def test_extract_required_raises(self, filename):
-        """Require flag should raise when year is absent."""
-        with pytest.raises(RuntimeError):
-            extract_year_from_filename(filename, require=True)
+    def test_extract_returns_none_for_missing(self, filename):
+        """Returns None when year is absent."""
+        assert extract_year_from_filename(filename) is None
 
 
 class TestGenerateOutputName:
@@ -755,9 +703,8 @@ class TestConvertTiles:
                 threads_per_worker,
                 grid_size_km,
                 profiling,
-                precomputed_wms,
             ) = args
-            return True, [], filename, len(resolutions) * 4  # simulate 2x2 split
+            return True, filename, len(resolutions) * 4  # simulate 2x2 split
 
         monkeypatch.setattr(convert_mod, "convert_jp2_worker", fake_worker)
 
@@ -793,7 +740,7 @@ class TestConvertTiles:
         (output_dir / "nrw_32_350000_5600000_2021.tif").touch()
 
         def fake_jp2_worker(args):
-            return True, [], args[0], 1
+            return True, args[0], 1
 
         monkeypatch.setenv("GEORAFFER_DISABLE_PROCESS_POOL", "1")
         monkeypatch.setattr(convert_mod, "convert_jp2_worker", fake_jp2_worker)
@@ -821,7 +768,7 @@ class TestConvertTiles:
         (output_dir / "nrw_32_350000_5600000_2021.tif").touch()
 
         def fake_jp2_worker(args):
-            return True, [], args[0], 1
+            return True, args[0], 1
 
         monkeypatch.setenv("GEORAFFER_DISABLE_PROCESS_POOL", "1")
         monkeypatch.setattr(convert_mod, "convert_jp2_worker", fake_jp2_worker)
