@@ -10,6 +10,7 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from concurrent.futures import ProcessPoolExecutor, TimeoutError, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,7 +57,7 @@ def _outputs_exist(
     filename: str,
     processed_dir: str,
     data_type: str,
-    resolutions: list[int | None],
+    resolutions: Sequence[int | None],
     grid_size_km: float,
     *,
     source_dir: str | None = None,

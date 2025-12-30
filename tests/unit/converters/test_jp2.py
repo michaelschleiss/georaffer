@@ -102,7 +102,7 @@ class TestConvertJP2:
                     year="2021",
                 )
 
-    def test_convert_rlp_triggers_split(self, mock_rasterio, mock_atomic_write, mock_wms, tmp_path):
+    def test_convert_rlp_triggers_split(self, mock_rasterio, mock_atomic_write, tmp_path):
         """Test RLP tiles trigger splitting when enabled."""
         mock_open, mock_src = mock_rasterio
         # RLP 2km tile at 0.2m resolution = 10000x10000 pixels

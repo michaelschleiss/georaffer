@@ -17,13 +17,6 @@ class ConcreteDownloader(RegionDownloader):
     def utm_to_grid_coords(self, utm_x, utm_y):
         return (int(utm_x // 1000), int(utm_y // 1000)), (int(utm_x // 1000), int(utm_y // 1000))
 
-    def get_filtered_tile_urls(self) -> tuple[dict, dict]:
-        """Return mock tiles for testing."""
-        return (
-            {(350, 5600): "http://example.com/tile.jp2"},
-            {(350, 5600): "http://example.com/tile.laz"},
-        )
-
     def _load_catalog(self) -> Catalog:
         return Catalog()
 
@@ -232,24 +225,6 @@ class TestVerifyFileIntegrity:
         result = downloader._verify_file_integrity(buffer, "test.unknown")
 
         assert result is True
-
-
-class TestGetFilteredTileUrls:
-    """Tests for get_filtered_tile_urls abstract method."""
-
-    @pytest.fixture
-    def downloader(self, tmp_path):
-        mock_session = Mock()
-        return ConcreteDownloader("TEST", str(tmp_path), session=mock_session)
-
-    def test_get_filtered_tile_urls_success(self, downloader):
-        """Test successful retrieval of both tile types from concrete implementation."""
-        jp2_tiles, laz_tiles = downloader.get_filtered_tile_urls()
-
-        assert (350, 5600) in jp2_tiles
-        assert jp2_tiles[(350, 5600)] == "http://example.com/tile.jp2"
-        assert (350, 5600) in laz_tiles
-        assert laz_tiles[(350, 5600)] == "http://example.com/tile.laz"
 
 
 class TestCatalog:

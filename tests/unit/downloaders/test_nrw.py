@@ -44,33 +44,6 @@ class TestNRWDownloaderInit:
         assert "hist_dop_2010" in downloader.jp2_feed_url
 
 
-class TestNRWHistoricFiltering:
-    """Tests for historical feed filtering logic."""
-
-    def test_filters_current_feed_by_year_range(self, tmp_path, monkeypatch):
-        """Current feed tiles outside the requested range should be skipped."""
-        from georaffer.downloaders.base import Catalog
-
-        downloader = NRWDownloader(str(tmp_path), imagery_from=(2018, 2018))
-
-        # Mock catalog with tiles from different years (new tile_info format)
-        fake_catalog = Catalog(
-            image_tiles={
-                (350, 5600): {2018: {"url": "https://example.com/tile_2018.jp2", "acquisition_date": None}},
-                (351, 5600): {2021: {"url": "https://example.com/tile_2021.jp2", "acquisition_date": None}},
-            },
-            dsm_tiles={},
-        )
-        monkeypatch.setattr(downloader, "build_catalog", lambda: fake_catalog)
-
-        jp2_tiles, laz_tiles = downloader.get_filtered_tile_urls()
-
-        # Only 2018 tile should be included (2021 outside range)
-        assert jp2_tiles == {(350, 5600): "https://example.com/tile_2018.jp2"}
-        assert laz_tiles == {}
-        assert downloader.total_image_count == 1
-
-
 class TestNRWUtmToGridCoords:
     """Tests for UTM to grid coordinate conversion."""
 

@@ -322,40 +322,6 @@ class TestRLPHistoricalImagery:
         assert wms is not None
         assert downloader._wms is wms
 
-    def test_filters_current_feed_by_year_range(self, tmp_path, monkeypatch):
-        """Current feed tiles outside the requested range should be skipped."""
-        from georaffer.downloaders.base import Catalog
-
-        downloader = RLPDownloader(str(tmp_path), imagery_from=(2020, 2021))
-
-        # Mock catalog with tiles from different years (new tile_info format)
-        fake_catalog = Catalog(
-            image_tiles={
-                (362, 5604): {2021: {"url": "https://example.com/tile_2021.jp2", "acquisition_date": None}},
-                (363, 5604): {2023: {"url": "https://example.com/tile_2023.jp2", "acquisition_date": None}},
-            },
-            dsm_tiles={},
-        )
-        monkeypatch.setattr(downloader, "build_catalog", lambda: fake_catalog)
-
-        jp2_tiles, _ = downloader.get_filtered_tile_urls()
-
-        # Only 2021 tile should be included (2023 outside range 2020-2021)
-        assert jp2_tiles == {(362, 5604): "https://example.com/tile_2021.jp2"}
-        assert downloader.get_all_urls_for_coord((362, 5604)) == [
-            "https://example.com/tile_2021.jp2"
-        ]
-        assert downloader.get_all_urls_for_coord((363, 5604)) == []
-
-    def test_get_all_urls_for_coord_empty_without_catalog(self, tmp_path, monkeypatch):
-        """Test get_all_urls_for_coord returns empty list with empty catalog."""
-        from georaffer.downloaders.base import Catalog
-
-        downloader = RLPDownloader(str(tmp_path))
-        monkeypatch.setattr(downloader, "build_catalog", lambda: Catalog())
-        urls = downloader.get_all_urls_for_coord((362, 5604))
-        assert urls == []
-
     def test_extract_year_from_url(self, tmp_path):
         """Test _extract_year_from_url parses JP2 URLs."""
         downloader = RLPDownloader(str(tmp_path))

@@ -38,7 +38,7 @@ def render_table(headers: Sequence[str], rows: Iterable[Sequence[Any]]) -> str:
     return "\n".join(lines)
 
 
-def print_table(title: str, headers: Sequence[str], rows: list[Sequence[Any]]) -> None:
+def print_table(title: str, headers: Sequence[str], rows: Sequence[Sequence[Any]]) -> None:
     """Render and print a table with title.
 
     Args:

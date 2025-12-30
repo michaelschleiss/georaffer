@@ -118,24 +118,43 @@ class TestGenerateUserGridTiles:
 
 
 def _make_mock_downloader(name, tmp_path, grid_size=1000, jp2_catalog=None, laz_catalog=None):
-    """Create a mock downloader with the required interface."""
+    """Create a mock downloader with the required interface.
+
+    Args:
+        jp2_catalog: Dict mapping (x, y) -> url (converted to Catalog format internally)
+        laz_catalog: Dict mapping (x, y) -> url (converted to Catalog format internally)
+    """
+    from georaffer.downloaders.base import Catalog
+
+    # Convert simple url dict to Catalog format: {coord: {year: {"url": url, ...}}}
+    image_tiles = {}
+    for coord, url in (jp2_catalog or {}).items():
+        image_tiles[coord] = {2020: {"url": url, "acquisition_date": None}}
+
+    dsm_tiles = {}
+    for coord, url in (laz_catalog or {}).items():
+        dsm_tiles[coord] = {"url": url, "acquisition_date": None}
+
+    catalog = Catalog(image_tiles=image_tiles, dsm_tiles=dsm_tiles)
+
     downloader = MagicMock(raw_dir=tmp_path / name)
     downloader.region_name = name.upper()
+    downloader.imagery_from = None
     downloader.utm_to_grid_coords.side_effect = lambda x, y: (
         (int(x // grid_size), int(y // grid_size)),
         (int(x // grid_size), int(y // grid_size)),
     )
-    downloader.get_all_urls_for_coord.return_value = []
-    downloader.get_filtered_tile_urls.return_value = (jp2_catalog or {}, laz_catalog or {})
+    downloader.build_catalog.return_value = catalog
+    downloader._year_in_range.return_value = True
     return downloader
 
 
 class TestCalculateRequiredTiles:
-    """Tests for calculate_required_tiles native grid mapping behavior."""
+    """Tests for build_filtered_download_list native grid mapping behavior."""
 
     def test_maps_to_nrw_native_grid(self, tmp_path):
         """Test user-grid tiles map to NRW 1km native grid."""
-        from georaffer.tiles import calculate_required_tiles
+        from georaffer.tiles import build_filtered_download_list
 
         # Build NRW catalog for 3x3 ring (9 tiles)
         nrw_jp2_catalog = {
@@ -152,7 +171,7 @@ class TestCalculateRequiredTiles:
 
         tiles_by_zone = {32: user_tiles}
         zone_by_region = {"nrw": 32, "rlp": 32}
-        tiles, downloads = calculate_required_tiles(
+        tiles, downloads = build_filtered_download_list(
             tiles_by_zone, 1.0, [nrw_downloader, rlp_downloader], zone_by_region
         )
 
@@ -161,7 +180,7 @@ class TestCalculateRequiredTiles:
 
     def test_only_downloads_available_tiles(self, tmp_path):
         """Test only available tiles are downloaded, not missing ones."""
-        from georaffer.tiles import calculate_required_tiles
+        from georaffer.tiles import build_filtered_download_list
 
         # Only one tile available
         nrw_jp2_catalog = {(350, 5600): "http://example.com/tile.jp2"}
@@ -174,7 +193,7 @@ class TestCalculateRequiredTiles:
 
         tiles_by_zone = {32: user_tiles}
         zone_by_region = {"nrw": 32, "rlp": 32}
-        tiles, downloads = calculate_required_tiles(
+        tiles, downloads = build_filtered_download_list(
             tiles_by_zone, 1.0, [nrw_downloader, rlp_downloader], zone_by_region
         )
 
@@ -184,7 +203,7 @@ class TestCalculateRequiredTiles:
 
     def test_missing_includes_margin_tiles_with_original_coords(self, tmp_path):
         """Test missing tiles include margin tiles when original coords are provided."""
-        from georaffer.tiles import calculate_required_tiles
+        from georaffer.tiles import build_filtered_download_list
 
         nrw_downloader = _make_mock_downloader("nrw", tmp_path, 1000)
         zone_by_region = {"nrw": 32}
@@ -192,7 +211,7 @@ class TestCalculateRequiredTiles:
         original_coords = np.array([(350500.0, 5600500.0)])
         tiles_by_zone = {32: {(350, 5600), (351, 5600)}}
 
-        tiles, _ = calculate_required_tiles(
+        tiles, _ = build_filtered_download_list(
             tiles_by_zone,
             1.0,
             [nrw_downloader],
@@ -207,7 +226,7 @@ class TestCalculateRequiredTiles:
 
     def test_coverage_from_nrw_only(self, tmp_path):
         """Test user tile covered by NRW but not RLP is not reported as missing."""
-        from georaffer.tiles import calculate_required_tiles
+        from georaffer.tiles import build_filtered_download_list
 
         # Only NRW has coverage for this location
         nrw_jp2_catalog = {(350, 5600): "http://example.com/nrw_tile.jp2"}
@@ -219,7 +238,7 @@ class TestCalculateRequiredTiles:
 
         tiles_by_zone = {32: user_tiles}
         zone_by_region = {"nrw": 32, "rlp": 32}
-        tiles, downloads = calculate_required_tiles(
+        tiles, downloads = build_filtered_download_list(
             tiles_by_zone, 1.0, [nrw_downloader, rlp_downloader], zone_by_region
         )
 
@@ -234,7 +253,7 @@ class TestCalculateRequiredTiles:
 
     def test_coverage_from_rlp_only(self, tmp_path):
         """Test user tile covered by RLP but not NRW is not reported as missing."""
-        from georaffer.tiles import calculate_required_tiles
+        from georaffer.tiles import build_filtered_download_list
 
         # Only RLP has coverage for this location
         rlp_jp2_catalog = {(175, 2800): "http://example.com/rlp_tile.jp2"}
@@ -246,7 +265,7 @@ class TestCalculateRequiredTiles:
 
         tiles_by_zone = {32: user_tiles}
         zone_by_region = {"nrw": 32, "rlp": 32}
-        tiles, downloads = calculate_required_tiles(
+        tiles, downloads = build_filtered_download_list(
             tiles_by_zone, 1.0, [nrw_downloader, rlp_downloader], zone_by_region
         )
 
@@ -261,7 +280,7 @@ class TestCalculateRequiredTiles:
 
     def test_no_coverage_from_either_region(self, tmp_path):
         """Test user tile covered by neither region is reported as missing."""
-        from georaffer.tiles import calculate_required_tiles
+        from georaffer.tiles import build_filtered_download_list
 
         nrw_downloader = _make_mock_downloader("nrw", tmp_path, 1000)
         rlp_downloader = _make_mock_downloader("rlp", tmp_path, 2000)
@@ -270,7 +289,7 @@ class TestCalculateRequiredTiles:
 
         tiles_by_zone = {32: user_tiles}
         zone_by_region = {"nrw": 32, "rlp": 32}
-        tiles, downloads = calculate_required_tiles(
+        tiles, downloads = build_filtered_download_list(
             tiles_by_zone, 1.0, [nrw_downloader, rlp_downloader], zone_by_region
         )
 
@@ -294,6 +313,7 @@ def test_process_tiles_passes_imagery_from_to_nrw_and_rlp(tmp_path):
     rlp_imagery_from: list[tuple[int, int | None] | None] = []
 
     class DummyCatalog:
+        image_tiles = {}
         dsm_tiles = {}
 
     class DummyNRW:
@@ -303,11 +323,8 @@ def test_process_tiles_passes_imagery_from_to_nrw_and_rlp(tmp_path):
         def __init__(self, output_dir: str, imagery_from=None, session=None):
             nrw_imagery_from.append(imagery_from)
 
-        def build_catalog(self):
+        def build_catalog(self, refresh=False):
             return DummyCatalog()
-
-        def get_filtered_tile_urls(self):
-            return {}, {}
 
         def utm_to_grid_coords(self, utm_x: float, utm_y: float):
             grid_x = int(utm_x // 1000)
@@ -321,11 +338,8 @@ def test_process_tiles_passes_imagery_from_to_nrw_and_rlp(tmp_path):
         def __init__(self, output_dir: str, imagery_from=None, session=None):
             rlp_imagery_from.append(imagery_from)
 
-        def build_catalog(self):
+        def build_catalog(self, refresh=False):
             return DummyCatalog()
-
-        def get_filtered_tile_urls(self, requested_coords=None):
-            return {}, {}
 
         def utm_to_grid_coords(self, utm_x: float, utm_y: float):
             grid_x = int(utm_x // 2000) * 2
@@ -355,7 +369,7 @@ def test_process_tiles_passes_imagery_from_to_nrw_and_rlp(tmp_path):
         patch("georaffer.pipeline.RLPDownloader", DummyRLP),
         patch("georaffer.pipeline.generate_tiles_by_zone", return_value={32: {(350, 5600)}}),
         patch(
-            "georaffer.pipeline.calculate_required_tiles",
+            "georaffer.pipeline.build_filtered_download_list",
             return_value=(TileSet(), {}),
         ),
         patch("georaffer.pipeline.convert_tiles", return_value=dummy_convert),
@@ -703,6 +717,7 @@ class TestConvertTiles:
                 threads_per_worker,
                 grid_size_km,
                 profiling,
+                _,  # unused
             ) = args
             return True, filename, len(resolutions) * 4  # simulate 2x2 split
 
