@@ -11,7 +11,7 @@ from georaffer.downloaders import BBDownloader, NRWDownloader, RLPDownloader
 from georaffer.grids import latlon_to_utm
 from georaffer.pipeline import process_tiles
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "BBDownloader",
     "NRWDownloader",
