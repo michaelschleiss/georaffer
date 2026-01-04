@@ -219,7 +219,7 @@ def download_files(
                         downloader, url, Path(path), check_remote_size, remote_size_timeout
                     )
                 else:
-                    skip = True
+                    skip = _local_file_is_valid(downloader, Path(path))
                 if skip:
                     stats.skipped += 1
             if not skip:
@@ -261,8 +261,9 @@ def download_files(
                             stats.skipped += 1
                             continue
                     else:
-                        stats.skipped += 1
-                        continue
+                        if _local_file_is_valid(downloader, Path(path)):
+                            stats.skipped += 1
+                            continue
 
                 try:
                     downloader.download_file(url, path, on_progress=on_progress)

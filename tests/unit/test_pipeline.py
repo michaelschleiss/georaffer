@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, Mock, patch
 import numpy as np
 import pytest
 
+from georaffer.config import MIN_FILE_SIZE
 from georaffer.conversion import convert_tiles
 from georaffer.downloading import download_files
 from georaffer.grids import generate_user_grid_tiles, latlon_to_utm
@@ -493,7 +494,7 @@ class TestDownloadFiles:
         """Test skipping existing files."""
         # Create existing file
         existing = tmp_path / "existing.jp2"
-        existing.touch()
+        existing.write_bytes(b"0" * MIN_FILE_SIZE)
 
         mock_downloader = Mock()
 
@@ -506,6 +507,24 @@ class TestDownloadFiles:
         assert stats.skipped == 1
         assert stats.downloaded == 0
         mock_downloader.download_file.assert_not_called()
+
+    def test_invalid_cached_file_redownloads(self, tmp_path):
+        """Test that invalid cached files are re-downloaded."""
+        existing = tmp_path / "existing.jp2"
+        existing.write_bytes(b"")  # Below MIN_FILE_SIZE
+
+        mock_downloader = Mock()
+        mock_downloader.download_file.return_value = True
+
+        downloads = [
+            ("http://example.com/existing.jp2", str(existing)),
+        ]
+
+        stats = download_files(downloads, mock_downloader, force=False)
+
+        assert stats.downloaded == 1
+        assert stats.skipped == 0
+        mock_downloader.download_file.assert_called_once()
 
     def test_force_redownload(self, tmp_path):
         """Test force re-download of existing files."""
