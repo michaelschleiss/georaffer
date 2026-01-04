@@ -48,6 +48,8 @@ from georaffer.config import (
     BB_DOP_PATTERN,
     BW_DOM_PATTERN,
     BW_DOP_PATTERN,
+    BY_DOM_PATTERN,
+    BY_DOP_PATTERN,
     METERS_PER_KM,
     NRW_JP2_PATTERN,
     NRW_LAZ_PATTERN,
@@ -75,7 +77,7 @@ def detect_region(filename: str) -> Region:
         filename: Source filename
 
     Returns:
-        Region enum (NRW, RLP, BB, or BW)
+        Region enum (NRW, RLP, BB, BW, or BY)
     """
     filename_lower = filename.lower()
 
@@ -85,6 +87,8 @@ def detect_region(filename: str) -> Region:
         return Region.BB
     if BW_DOP_PATTERN.match(filename_lower) or BW_DOM_PATTERN.match(filename_lower):
         return Region.BW
+    if BY_DOP_PATTERN.match(filename) or BY_DOM_PATTERN.match(filename):
+        return Region.BY
     if NRW_JP2_PATTERN.match(filename) or NRW_LAZ_PATTERN.match(filename):
         return Region.NRW
     raise ValueError(f"Unrecognized tile filename: {filename}")
@@ -344,6 +348,10 @@ def resolve_source_year(
             if meta_year:
                 return meta_year
             raise ValueError(f"Year not found in {region.value} metadata: {filename}")
+        # BY uses direct TIFs without year in filename; use current year
+        if region == Region.BY:
+            from datetime import date
+            return str(date.today().year)
         raise ValueError(f"Year not found in filename or metadata: {filename}")
 
     if data_type == "dsm":
@@ -357,6 +365,10 @@ def resolve_source_year(
                 return meta_year
         if region in (Region.BB, Region.BW):
             raise ValueError(f"{region.value} raw tiles must be .zip: {filename}")
+        # BY uses direct TIFs without year in filename; use current year
+        if region == Region.BY:
+            from datetime import date
+            return str(date.today().year)
         raise ValueError(f"Year not found in filename or source metadata: {filename}")
 
     raise ValueError(f"Unknown data_type '{data_type}' for year resolution.")

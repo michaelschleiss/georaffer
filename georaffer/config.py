@@ -15,18 +15,19 @@ class Region(str, Enum):
 
     Each region has different tile sizes and resolutions:
 
-                    NRW                 RLP                 BB                  BW
-    Tile size       1km x 1km           2km x 2km           1km x 1km           2km x 2km
-    Orthophoto      0.1 m/px            0.2 m/px            (not available)     0.2 m/px
-    DSM spacing     0.5 m               0.2 m               0.2 m (raster)      1.0 m (raster)
+                    NRW                 RLP                 BB                  BW                  BY
+    Tile size       1km x 1km           2km x 2km           1km x 1km           2km x 2km           1km x 1km
+    Orthophoto      0.1 m/px            0.2 m/px            (not available)     0.2 m/px            0.2 m/px
+    DSM spacing     0.5 m               0.2 m               0.2 m (raster)      1.0 m (raster)      0.2 m (raster)
 
-    NRW/RLP/BW use EPSG:25832 (UTM Zone 32N). BB uses EPSG:25833 (UTM Zone 33N).
+    NRW/RLP/BW/BY use EPSG:25832 (UTM Zone 32N). BB uses EPSG:25833 (UTM Zone 33N).
     """
 
     NRW = "NRW"
     RLP = "RLP"
     BB = "BB"
     BW = "BW"
+    BY = "BY"
 
 
 # =============================================================================
@@ -41,6 +42,7 @@ NRW_GRID_SIZE = 1000  # 1km
 RLP_GRID_SIZE = 2000  # 2km
 BB_GRID_SIZE = 1000  # 1km
 BW_GRID_SIZE = 2000  # 2km
+BY_GRID_SIZE = 1000  # 1km
 
 # Output tile size (km). Must evenly divide native sizes for splitting to work.
 OUTPUT_TILE_SIZE_KM = 1.0
@@ -103,12 +105,13 @@ DSM_NODATA = -9999.0
 DEFAULT_PIXEL_SIZE = 0.5  # meters per pixel
 
 # LAZ point spacing by region (meters)
-# Note: BB and BW use raster DSM (not LAZ), but spacing is still needed for grid calculations
+# Note: BB, BW, BY use raster DSM (not LAZ), but spacing is still needed for grid calculations
 LAZ_SPACING_BY_REGION = {
     Region.NRW: 0.5,
     Region.RLP: 0.2,
     Region.BB: 0.2,
     Region.BW: 1.0,  # DOM1 is 1m raster
+    Region.BY: 0.2,  # DOM20 is 0.2m raster
 }
 
 LAZ_SAMPLE_SIZE = 10000  # Points to sample for verification
@@ -135,6 +138,9 @@ BB_DOP_PATTERN = re.compile(r"dop_(\d{5})-(\d{4})\.zip$", re.IGNORECASE)
 # E is odd (3 digits), N is even (4 digits), optional year suffix for historic
 BW_DOP_PATTERN = re.compile(r"dop20rgb_32_(\d{3})_(\d{4})_2_bw(?:_(\d{4}))?\.zip$")
 BW_DOM_PATTERN = re.compile(r"dom1_32_(\d{3})_(\d{4})_2_bw\.zip$")
+# BY patterns: 32{E}_{N}.tif for DOP20, 32{E}_{N}_20_DOM.tif for DOM20
+BY_DOP_PATTERN = re.compile(r"32(\d{3})_(\d{4})\.tif$")
+BY_DOM_PATTERN = re.compile(r"32(\d{3})_(\d{4})_20_DOM\.tif$")
 
 
 # =============================================================================
@@ -150,6 +156,8 @@ def get_tile_size_km(region: Region) -> float:
         tile_size_m = BB_GRID_SIZE
     elif region == Region.BW:
         tile_size_m = BW_GRID_SIZE
+    elif region == Region.BY:
+        tile_size_m = BY_GRID_SIZE
     else:
         tile_size_m = NRW_GRID_SIZE
     return tile_size_m / METERS_PER_KM
@@ -160,6 +168,7 @@ UTM_ZONE_BY_REGION = {
     Region.RLP: 32,
     Region.BB: 33,
     Region.BW: 32,
+    Region.BY: 32,
 }
 
 
