@@ -50,10 +50,17 @@ class RLPDownloader(RegionDownloader):
     Historical imagery available from 1994-2024 via WMS service.
     """
 
-    # WMS service for historical imagery
-    WMS_BASE_URL = "https://geo4.service24.rlp.de/wms/rp_hkdop20.fcgi"
+    # WMS service for historical imagery (year-specific layers)
+    WMS_HISTORIC_URL = "https://geo4.service24.rlp.de/wms/rp_hkdop20.fcgi"
     WMS_RGB_LAYER_PATTERN = "rp_dop20_rgb_{year}"
     WMS_INFO_LAYER_PATTERN = "rp_dop20_info_{year}"
+
+    # WMS service for current imagery (single layer, no year suffix)
+    WMS_CURRENT_URL = "https://geo4.service24.rlp.de/wms/rp_dop20.fcgi"
+    WMS_CURRENT_INFO_LAYER = "rp_dop20_info"
+
+    # Alias for backward compatibility
+    WMS_BASE_URL = WMS_HISTORIC_URL
 
     # Historic years via WMS. Pre-2010 excluded due to compromised metadata: WMS
     # sometimes returns year-only dates (e.g. "2000" not "2000-05-15").
@@ -156,6 +163,129 @@ class RLPDownloader(RegionDownloader):
         if match:
             return int(match.group(3))
         return None
+
+    def _fetch_current_wms_dates(
+        self, tiles: dict[tuple[int, int], dict[int, dict]]
+    ) -> None:
+        """Fetch acquisition dates for current tiles from the current WMS.
+
+        The current WMS (rp_dop20.fcgi) provides acquisition dates for the most
+        recent imagery via the rp_dop20_info layer. The date is in 'erstellung'
+        field with DD.MM.YYYY format.
+
+        Args:
+            tiles: Tile dict to update in-place. Only tiles with acquisition_date=None
+                   will be queried.
+        """
+        import re
+        from datetime import datetime
+
+        # Collect tiles that need dates
+        tiles_to_query = []
+        for coords, years in tiles.items():
+            for year, meta in years.items():
+                if meta.get("acquisition_date") is None:
+                    tiles_to_query.append((coords, year))
+
+        if not tiles_to_query:
+            return
+
+        if not self.quiet:
+            print(
+                f"  Fetching acquisition dates from current WMS "
+                f"({len(tiles_to_query)} tiles, {WMS_QUERY_WORKERS} workers)..."
+            )
+
+        def query_tile(coords: tuple[int, int]) -> tuple[tuple[int, int], str | None]:
+            """Query current WMS for acquisition date of a tile."""
+            grid_x, grid_y = coords
+            # Convert grid coords to bbox (RLP uses 2km grid, coords are in km)
+            minx = grid_x * METERS_PER_KM
+            miny = grid_y * METERS_PER_KM
+            maxx = minx + RLP_GRID_SIZE
+            maxy = miny + RLP_GRID_SIZE
+
+            params = {
+                "SERVICE": "WMS",
+                "VERSION": "1.1.1",
+                "REQUEST": "GetFeatureInfo",
+                "LAYERS": self.WMS_CURRENT_INFO_LAYER,
+                "QUERY_LAYERS": self.WMS_CURRENT_INFO_LAYER,
+                "STYLES": "",
+                "SRS": "EPSG:25832",
+                "BBOX": f"{minx},{miny},{maxx},{maxy}",
+                "WIDTH": "100",
+                "HEIGHT": "100",
+                "X": "50",
+                "Y": "50",
+                "INFO_FORMAT": "text/plain",
+            }
+
+            from georaffer.config import WMS_COVERAGE_RETRIES, RETRY_BACKOFF_BASE, WMS_RETRY_MAX_WAIT
+
+            for attempt in range(WMS_COVERAGE_RETRIES):
+                try:
+                    response = self._session.get(
+                        self.WMS_CURRENT_URL,
+                        params=params,
+                        timeout=10,
+                    )
+                    response.raise_for_status()
+                    text = response.text
+
+                    # Current WMS returns: erstellung = '21.06.2025' (DD.MM.YYYY)
+                    match = re.search(r"erstellung\s*=\s*'(\d{2}\.\d{2}\.\d{4})'", text)
+                    if match:
+                        date_str = match.group(1)
+                        # Parse DD.MM.YYYY and convert to ISO format
+                        dt = datetime.strptime(date_str, "%d.%m.%Y")
+                        return coords, dt.strftime("%Y-%m-%d")
+                    return coords, None
+
+                except Exception:
+                    if attempt < WMS_COVERAGE_RETRIES - 1:
+                        time.sleep(min(RETRY_BACKOFF_BASE**attempt, WMS_RETRY_MAX_WAIT))
+
+            return coords, None
+
+        # Get unique coordinates (a tile coord may have multiple years)
+        unique_coords = set(coords for coords, _ in tiles_to_query)
+
+        fetched = 0
+        failed = 0
+        started = time.perf_counter()
+
+        with ThreadPoolExecutor(max_workers=WMS_QUERY_WORKERS) as executor:
+            futures = {
+                executor.submit(query_tile, coords): coords
+                for coords in unique_coords
+            }
+
+            for fut in as_completed(futures):
+                fetched += 1
+                coords, acq_date = fut.result()
+
+                if acq_date:
+                    # Update all years for this tile that have acquisition_date=None
+                    for year, meta in tiles.get(coords, {}).items():
+                        if meta.get("acquisition_date") is None:
+                            meta["acquisition_date"] = acq_date
+                else:
+                    failed += 1
+
+                if not self.quiet and (fetched % 100 == 0 or fetched == len(unique_coords)):
+                    elapsed = time.perf_counter() - started
+                    rate = fetched / elapsed if elapsed > 0 else 0
+                    print(
+                        f"\r  {fetched}/{len(unique_coords)} checked ({rate:.1f} req/s)",
+                        end="",
+                        flush=True,
+                    )
+
+        if not self.quiet:
+            print()
+        if failed and not self.quiet:
+            print(f"  Warning: {failed} current WMS queries returned no date")
 
     def _parse_jp2_tiles(self, root: ET.Element) -> dict[tuple[int, int], str]:
         """Parse JP2 tiles from ATOM feed XML."""
@@ -279,6 +409,10 @@ class RLPDownloader(RegionDownloader):
             print()
         if failed and not self.quiet:
             print(f"  Warning: {failed} WMS queries failed")
+
+        # 2b. Fetch acquisition dates for current tiles from current WMS
+        # (Historic WMS doesn't have layers for the newest year yet)
+        self._fetch_current_wms_dates(tiles)
 
         # 3. LAZ tiles
         root = fetch_xml_feed(self._session, self._laz_feed_url, wrap_content=True)
