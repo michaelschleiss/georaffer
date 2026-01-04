@@ -274,23 +274,18 @@ class BYDownloader(RegionDownloader):
         if not self.quiet:
             print("  Loading DOP20 tiles from metalink catalogs...")
         image_tiles: dict[tuple[int, int], dict[int, dict]] = {}
+        current_urls: dict[tuple[int, int], str] = {}
 
         for coords, url in self._fetch_all_metalinks(self.DOP_METALINK_BASE, "dop"):
             if coords:
-                # Bayern metalinks don't include year in filename, use current
-                # Could query WMS by_dop20_info for actual dates if needed
-                from datetime import date
-
-                year = date.today().year
-                image_tiles.setdefault(coords, {})[year] = {
-                    "url": url,
-                    "acquisition_date": None,
-                }
+                current_urls[coords] = url
+                image_tiles.setdefault(coords, {})
 
         if not self.quiet:
             print(f"    {len(image_tiles)} tiles")
 
         # Historic DOP tiles via WMS (independent of imagery_from)
+        current_assigned: set[tuple[int, int]] = set()
         if os.getenv("GEORAFFER_DISABLE_WMS") != "1" and image_tiles:
             historic_years = [y for y in self._historic_years() if y >= 2010]
             if historic_years and not self.quiet:
@@ -339,6 +334,16 @@ class BYDownloader(RegionDownloader):
                             "acquisition_date": acq_date,
                         }
                         historic_found += 1
+                    if coverage:
+                        current_url = current_urls.get((grid_x, grid_y))
+                        if current_url:
+                            latest_year = max(coverage)
+                            meta = coverage[latest_year]
+                            image_tiles.setdefault((grid_x, grid_y), {})[latest_year] = {
+                                "url": current_url,
+                                "acquisition_date": meta.get("acquisition_date") if meta else None,
+                            }
+                            current_assigned.add((grid_x, grid_y))
 
                     if not self.quiet and total and (checked % 100 == 0 or checked == total):
                         elapsed = time.perf_counter() - started
@@ -354,6 +359,20 @@ class BYDownloader(RegionDownloader):
                 print()
             if failed and not self.quiet:
                 print(f"  Warning: {failed} WMS queries failed")
+
+        if current_urls:
+            from datetime import date
+
+            fallback_year = date.today().year
+            for coords, url in current_urls.items():
+                if coords in current_assigned:
+                    continue
+                if fallback_year in image_tiles.get(coords, {}):
+                    continue
+                image_tiles.setdefault(coords, {})[fallback_year] = {
+                    "url": url,
+                    "acquisition_date": None,
+                }
 
         # DOM tiles
         if not self.quiet:

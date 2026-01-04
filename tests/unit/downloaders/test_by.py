@@ -198,6 +198,45 @@ class TestBYFilenames:
         filename = downloader.image_filename_from_url(url)
         assert filename == "32679_5392.tif"
 
+
+class TestBYCatalogDates:
+    """Tests for BY catalog acquisition dates."""
+
+    def test_current_tile_uses_latest_wms_year(self, tmp_path, monkeypatch):
+        """Metalink tiles should inherit the latest WMS year/date."""
+        downloader = BYDownloader(str(tmp_path))
+
+        def fake_fetch_all_metalinks(base_url, product):
+            if product == "dop":
+                return [((679, 5392), "https://download1.bayernwolke.de/a/dop20/data/32679_5392.tif")]
+            return []
+
+        def fake_wms_check(years, grid_x, grid_y):
+            assert grid_x == 679
+            assert grid_y == 5392
+            return {
+                2018: {"acquisition_date": "2018-05-01"},
+                2020: {"acquisition_date": "2020-06-10"},
+            }
+
+        class FakeWMS:
+            def get_tile_url(self, year, grid_x, grid_y):
+                return f"wms://{year}/{grid_x}/{grid_y}"
+
+        monkeypatch.delenv("GEORAFFER_DISABLE_WMS", raising=False)
+        monkeypatch.setattr(downloader, "_fetch_all_metalinks", fake_fetch_all_metalinks)
+        monkeypatch.setattr(downloader, "_historic_years", lambda: [2018, 2020])
+        monkeypatch.setattr(downloader, "_wms_check_coverage_multi", fake_wms_check)
+        downloader._wms = FakeWMS()
+
+        catalog = downloader._load_catalog()
+        tiles = catalog.image_tiles[(679, 5392)]
+
+        assert 2020 in tiles
+        assert tiles[2020]["url"].endswith("32679_5392.tif")
+        assert tiles[2020]["acquisition_date"] == "2020-06-10"
+        assert tiles[2018]["url"] == "wms://2018/679/5392"
+
     def test_image_filename_from_wms_url(self, downloader):
         """Test image filename generation from WMS GetMap URL."""
         url = (
