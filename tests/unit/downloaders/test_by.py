@@ -68,6 +68,7 @@ class TestBYFilenamePatterns:
             ("32679_5392.tif", (679, 5392)),
             ("32400_5700.tif", (400, 5700)),
             ("32550_5500.tif", (550, 5500)),
+            ("32679_5392_2018.tif", (679, 5392)),
         ],
     )
     def test_dop_pattern_valid(self, filename, expected):
@@ -197,6 +198,18 @@ class TestBYFilenames:
         filename = downloader.image_filename_from_url(url)
         assert filename == "32679_5392.tif"
 
+    def test_image_filename_from_wms_url(self, downloader):
+        """Test image filename generation from WMS GetMap URL."""
+        url = (
+            "https://geoservices.bayern.de/od/wms/histdop/v1/histdop?"
+            "SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap"
+            "&LAYERS=by_dop_2018_h&STYLES=&SRS=EPSG:25832"
+            "&BBOX=679000,5392000,680000,5393000"
+            "&WIDTH=5000&HEIGHT=5000&FORMAT=image/tiff"
+        )
+        filename = downloader.image_filename_from_url(url)
+        assert filename == "32679_5392_2018.tif"
+
     def test_dsm_filename_from_url(self, downloader):
         """Test DSM filename extraction from URL."""
         url = "https://download1.bayernwolke.de/a/dom20/DOM/32686_5369_20_DOM.tif"
@@ -208,3 +221,33 @@ class TestBYFilenames:
         url = "https://example.com/file.zip"
         with pytest.raises(ValueError, match="TIF"):
             downloader.image_filename_from_url(url)
+
+
+class TestBYHistoricYears:
+    """Tests for BY historic year discovery."""
+
+    @pytest.fixture
+    def downloader(self, tmp_path):
+        return BYDownloader(str(tmp_path))
+
+    def test_historic_years_parses_non_namespaced_capabilities(self, downloader):
+        """BY WMS capabilities should parse without XML namespaces."""
+        xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <WMT_MS_Capabilities>
+          <Capability>
+            <Layer>
+              <Layer><Name>by_dop_2018_h</Name></Layer>
+              <Layer><Name>by_dop_2018_h_info</Name></Layer>
+              <Layer><Name>by_dop_2020_h</Name></Layer>
+            </Layer>
+          </Capability>
+        </WMT_MS_Capabilities>"""
+
+        mock_response = Mock()
+        mock_response.text = xml
+        mock_response.raise_for_status = Mock()
+
+        downloader._session.get = Mock(return_value=mock_response)
+
+        years = downloader._historic_years()
+        assert years == [2018, 2020]

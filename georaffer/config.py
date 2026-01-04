@@ -134,8 +134,6 @@ RLP_JP2_PATTERN = re.compile(r"dop20rgb_32_(\d{3})_(\d{4})_2_rp_(\d{4})\.(jp2|ti
 RLP_LAZ_PATTERN = re.compile(r"bdom20rgbi_32_(\d{3})_(\d{4})_2_rp\.laz$")
 BB_BDOM_PATTERN = re.compile(r"bdom_(\d{5})-(\d{4})\.zip$", re.IGNORECASE)
 BB_DOP_PATTERN = re.compile(r"dop_(\d{5})-(\d{4})\.zip$", re.IGNORECASE)
-# BY patterns: 32{E}_{N}.tif for DOP20, 32{E}_{N}_20_DOM.tif for DOM20
-BY_DOP_PATTERN = re.compile(r"32(\d{3})_(\d{4})\.tif$")
 # BW patterns:
 # - Download ZIPs: dop20rgb_32_{E}_{N}_2_bw.zip / dom1_32_{E}_{N}_2_bw.zip
 # - Subtiles: dop20rgb_32_{E}_{N}_1_bw_YYYY.tif / dom1_32_{E}_{N}_1_bw_YYYY.tif
@@ -145,6 +143,8 @@ BW_DOP_PATTERN = re.compile(
 BW_DOM_PATTERN = re.compile(
     r"dom1_32_(\d{3})_(\d{4})_[12]_bw(?:_(\d{4}))?\.(zip|tif|tiff|png|jpg|jpeg)$"
 )
+# BY patterns: 32{E}_{N}.tif for DOP20, optional _YYYY for historic WMS, 32{E}_{N}_20_DOM.tif for DOM20
+BY_DOP_PATTERN = re.compile(r"32(\d{3})_(\d{4})(?:_(\d{4}))?\.tif$")
 BY_DOM_PATTERN = re.compile(r"32(\d{3})_(\d{4})_20_DOM\.tif$")
 
 

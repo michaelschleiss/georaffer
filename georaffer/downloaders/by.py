@@ -2,6 +2,7 @@
 
 Catalog source: Metalink files at geodaten.bayern.de/odd/a/
 Download source: https://download1.bayernwolke.de/a/
+Historic DOP WMS: https://geoservices.bayern.de/od/wms/histdop/v1/histdop
 
 Grid system:
 - 1km x 1km tiles (like NRW)
@@ -14,6 +15,9 @@ Metalink structure:
 - URLs: https://geodaten.bayern.de/odd/a/{product}/meta/metalink/09{1-7}.meta4
 """
 
+import os
+import re
+import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -25,9 +29,15 @@ from georaffer.config import (
     BY_GRID_SIZE,
     CATALOG_CACHE_DIR,
     FEED_TIMEOUT,
+    RETRY_BACKOFF_BASE,
     Region,
+    WMS_COVERAGE_RETRIES,
+    WMS_QUERY_WORKERS,
+    WMS_RETRY_MAX_WAIT,
+    WMS_TIMEOUT,
 )
 from georaffer.downloaders.base import Catalog, RegionDownloader
+from georaffer.downloaders.wms import WMSImagerySource, _normalize_wms_date
 
 # Metalink pagination settings
 METALINK_PARALLEL_WORKERS = 7  # One per district
@@ -50,6 +60,11 @@ class BYDownloader(RegionDownloader):
     DOP_BASE_URL: ClassVar[str] = "https://download1.bayernwolke.de/a/dop20/data/"
     DOM_BASE_URL: ClassVar[str] = "https://download1.bayernwolke.de/a/dom20/DOM/"
 
+    # Historic DOP via WMS
+    WMS_BASE_URL: ClassVar[str] = "https://geoservices.bayern.de/od/wms/histdop/v1/histdop"
+    WMS_RGB_LAYER_PATTERN: ClassVar[str] = "by_dop_{year}_h"
+    WMS_INFO_LAYER_PATTERN: ClassVar[str] = "by_dop_{year}_h_info"
+
     UTM_ZONE: ClassVar[int] = 32
 
     def __init__(
@@ -63,8 +78,10 @@ class BYDownloader(RegionDownloader):
             Region.BY, output_dir, imagery_from=imagery_from, session=session, quiet=quiet
         )
         self._cache_path = CATALOG_CACHE_DIR / "by_catalog.json"
+        self._wms_years_cache: list[int] | None = None
+        self._wms: WMSImagerySource | None = None
 
-        # Parse imagery_from for historic support (if we add it later)
+        # Parse imagery_from for download filtering
         if imagery_from is not None:
             from_year, to_year = imagery_from
             self._from_year = from_year
@@ -83,10 +100,163 @@ class BYDownloader(RegionDownloader):
 
     def _filename_from_url(self, url: str) -> str:
         """Return filename from URL, validating it's a TIF file."""
+        lowered = url.lower()
+        if "service=wms" in lowered and "request=getmap" in lowered:
+            from urllib.parse import parse_qs, urlparse
+
+            parsed = urlparse(url)
+            params = parse_qs(parsed.query)
+            bbox = params.get("BBOX", params.get("bbox", [""]))[0].split(",")
+            if len(bbox) < 4:
+                raise ValueError(f"BY WMS URL missing BBOX: {url}")
+            minx_m = float(bbox[0])
+            miny_m = float(bbox[1])
+            grid_x = int(round(minx_m / BY_GRID_SIZE))
+            grid_y = int(round(miny_m / BY_GRID_SIZE))
+            layer = params.get("LAYERS", params.get("layers", [""]))[0]
+            year_match = re.search(r"(\d{4})", layer)
+            if not year_match:
+                raise ValueError(f"BY WMS URL missing year layer: {url}")
+            year = year_match.group(1)
+            return f"32{grid_x:03d}_{grid_y:04d}_{year}.tif"
+
         name = Path(url).name
         if not name.lower().endswith(".tif"):
             raise ValueError(f"BY downloads must be TIF files (got {name}).")
         return name
+
+    @property
+    def wms(self) -> WMSImagerySource:
+        """Lazy-init WMS imagery source for historic DOP."""
+        if self._wms is None:
+            self._wms = WMSImagerySource(
+                base_url=self.WMS_BASE_URL,
+                rgb_layer_pattern=self.WMS_RGB_LAYER_PATTERN,
+                info_layer_pattern=self.WMS_INFO_LAYER_PATTERN,
+                tile_size_m=BY_GRID_SIZE,
+                resolution_m=0.2,
+                image_format="image/tiff",
+                crs="EPSG:25832",
+                session=self._session,
+            )
+        return self._wms
+
+    def _historic_years(self) -> list[int]:
+        """Fetch available historic years from WMS capabilities."""
+        if self._wms_years_cache is not None:
+            return self._wms_years_cache
+
+        params = {"SERVICE": "WMS", "REQUEST": "GetCapabilities"}
+        resp = self._session.get(self.WMS_BASE_URL, params=params, timeout=FEED_TIMEOUT)
+        resp.raise_for_status()
+
+        root = ET.fromstring(resp.text)
+        years: list[int] = []
+        # BY WMS capabilities are not namespaced; handle both variants.
+        for xpath, ns in (
+            (".//Layer/Layer", None),
+            (".//wms:Layer/wms:Layer", {"wms": "http://www.opengis.net/wms"}),
+        ):
+            for layer in root.findall(xpath, ns or {}):
+                name_el = layer.find("Name") if ns is None else layer.find("wms:Name", ns)
+                if name_el is None or not name_el.text:
+                    continue
+                name = name_el.text.strip()
+                match = re.fullmatch(r"by_dop_(\d{4})_h", name)
+                if match:
+                    years.append(int(match.group(1)))
+
+        years = sorted(set(years))
+        self._wms_years_cache = years
+        return years
+
+    def _wms_bbox(self, grid_x: int, grid_y: int) -> tuple[int, int, int, int]:
+        """Return WMS BBOX for a 1km BY grid tile."""
+        minx = grid_x * BY_GRID_SIZE
+        miny = grid_y * BY_GRID_SIZE
+        maxx = minx + BY_GRID_SIZE
+        maxy = miny + BY_GRID_SIZE
+        return (minx, miny, maxx, maxy)
+
+    def _parse_wms_featureinfo(
+        self, text: str, years: set[int]
+    ) -> dict[int, dict[str, str | None]]:
+        """Parse BY WMS GetFeatureInfo response for multiple layers."""
+        if "Search returned no results" in text or "no results" in text.lower():
+            return {}
+
+        result: dict[int, dict[str, str | None]] = {}
+        current_year: int | None = None
+
+        for line in text.splitlines():
+            line = line.strip()
+            layer_match = re.match(r"Layer 'by_dop_(\d{4})_h_info'\s*$", line)
+            if layer_match:
+                year = int(layer_match.group(1))
+                current_year = year if year in years else None
+                if current_year is not None and current_year not in result:
+                    result[current_year] = {"acquisition_date": None}
+                continue
+
+            if current_year is None:
+                continue
+
+            ua_match = re.search(r"ua\s*=\s*'([^']*)'", line)
+            if ua_match:
+                raw_date = ua_match.group(1).strip()
+                if raw_date:
+                    normalized = _normalize_wms_date(raw_date) or raw_date
+                    result[current_year]["acquisition_date"] = normalized
+
+        return result
+
+    def _wms_check_coverage_multi(
+        self,
+        years: list[int],
+        grid_x: int,
+        grid_y: int,
+    ) -> dict[int, dict[str, str | None]]:
+        """Query BY WMS for multiple years in one GetFeatureInfo call."""
+        if not years:
+            return {}
+
+        bbox = self._wms_bbox(grid_x, grid_y)
+        layers = ",".join(self.WMS_INFO_LAYER_PATTERN.format(year=y) for y in years)
+        params = {
+            "SERVICE": "WMS",
+            "VERSION": "1.1.1",
+            "REQUEST": "GetFeatureInfo",
+            "LAYERS": layers,
+            "QUERY_LAYERS": layers,
+            "STYLES": "",
+            "SRS": "EPSG:25832",
+            "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
+            "WIDTH": "100",
+            "HEIGHT": "100",
+            "X": "50",
+            "Y": "50",
+            "INFO_FORMAT": "text/plain",
+        }
+
+        last_error: Exception | None = None
+        for attempt in range(WMS_COVERAGE_RETRIES):
+            try:
+                response = self._session.get(
+                    self.WMS_BASE_URL,
+                    params=params,
+                    timeout=WMS_TIMEOUT,
+                )
+                response.raise_for_status()
+                return self._parse_wms_featureinfo(response.text, set(years))
+            except requests.RequestException as e:
+                last_error = e
+                if attempt < WMS_COVERAGE_RETRIES - 1:
+                    wait_time = min(RETRY_BACKOFF_BASE**attempt, WMS_RETRY_MAX_WAIT)
+                    time.sleep(wait_time)
+
+        raise RuntimeError(
+            f"BY WMS coverage check failed after {WMS_COVERAGE_RETRIES} attempts: {last_error}"
+        )
 
     def dsm_filename_from_url(self, url: str) -> str:
         return self._filename_from_url(url)
@@ -97,7 +267,8 @@ class BYDownloader(RegionDownloader):
     def _load_catalog(self) -> Catalog:
         """Load BY catalog from district metalink files.
 
-        Fetches all 7 district metalinks in parallel for both DOP20 and DOM20.
+        Fetches all 7 district metalinks in parallel for both DOP20 and DOM20,
+        then queries historic DOP coverage via WMS.
         """
         # DOP tiles
         if not self.quiet:
@@ -118,6 +289,71 @@ class BYDownloader(RegionDownloader):
 
         if not self.quiet:
             print(f"    {len(image_tiles)} tiles")
+
+        # Historic DOP tiles via WMS (independent of imagery_from)
+        if os.getenv("GEORAFFER_DISABLE_WMS") != "1" and image_tiles:
+            historic_years = [y for y in self._historic_years() if y >= 2010]
+            if historic_years and not self.quiet:
+                print(
+                    f"  Querying BY historic WMS for {len(image_tiles)} tiles × {len(historic_years)} years "
+                    f"({WMS_QUERY_WORKERS} workers)..."
+                )
+
+            checked = 0
+            failed = 0
+            historic_found = 0
+            started = time.perf_counter()
+
+            tiles_list = list(image_tiles.keys())
+            with ThreadPoolExecutor(max_workers=WMS_QUERY_WORKERS) as executor:
+                futures = {}
+                for grid_x, grid_y in tiles_list:
+                    missing_years = [
+                        y for y in historic_years if y not in image_tiles.get((grid_x, grid_y), {})
+                    ]
+                    if not missing_years:
+                        continue
+                    futures[
+                        executor.submit(
+                            self._wms_check_coverage_multi, missing_years, grid_x, grid_y
+                        )
+                    ] = (grid_x, grid_y)
+
+                total = len(futures)
+                for fut in as_completed(futures):
+                    checked += 1
+                    grid_x, grid_y = futures[fut]
+                    try:
+                        coverage = fut.result()
+                    except RuntimeError:
+                        failed += 1
+                        coverage = {}
+
+                    for year, meta in coverage.items():
+                        if year in image_tiles.get((grid_x, grid_y), {}):
+                            continue
+                        url = self.wms.get_tile_url(year, grid_x, grid_y)
+                        acq_date = meta.get("acquisition_date") if meta else None
+                        image_tiles.setdefault((grid_x, grid_y), {})[year] = {
+                            "url": url,
+                            "acquisition_date": acq_date,
+                        }
+                        historic_found += 1
+
+                    if not self.quiet and total and (checked % 100 == 0 or checked == total):
+                        elapsed = time.perf_counter() - started
+                        rate = checked / elapsed if elapsed > 0 else 0
+                        print(
+                            f"\r  {checked}/{total} checked, "
+                            f"{historic_found} historic found ({rate:.1f} req/s)",
+                            end="",
+                            flush=True,
+                        )
+
+            if not self.quiet and total:
+                print()
+            if failed and not self.quiet:
+                print(f"  Warning: {failed} WMS queries failed")
 
         # DOM tiles
         if not self.quiet:

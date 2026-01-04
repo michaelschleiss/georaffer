@@ -92,6 +92,7 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
     - BW DOP: dop20rgb_32_489_5420_2_bw.zip → (489, 5420) [raw input tile coords]
     - BW DOM: dom1_32_489_5420_2_bw.zip → (489, 5420) [raw input tile coords]
     - BY DOP: 32679_5392.tif → (679, 5392) [raw input tile coords]
+    - BY DOP historic: 32679_5392_2018.tif → (679, 5392) [raw input tile coords]
     - BY DOM: 32686_5369_20_DOM.tif → (686, 5369) [raw input tile coords]
     - Output files: nrw_32_350500_5600000_2021.tif → (350500, 5600000) [UTM coordinates]
 

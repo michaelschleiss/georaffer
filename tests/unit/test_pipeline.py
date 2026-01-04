@@ -6,13 +6,17 @@ from unittest.mock import MagicMock, Mock, patch
 import numpy as np
 import pytest
 
-from georaffer.config import MIN_FILE_SIZE
+from georaffer.config import MIN_FILE_SIZE, Region
 from georaffer.conversion import convert_tiles
 from georaffer.downloading import download_files
 from georaffer.grids import generate_user_grid_tiles, latlon_to_utm
 from georaffer.pipeline import ProcessingStats
 from georaffer.tiles import TileSet
-from georaffer.workers import extract_year_from_filename, generate_output_name
+from georaffer.workers import (
+    extract_year_from_filename,
+    generate_output_name,
+    resolve_source_year,
+)
 
 
 class TestTileSet:
@@ -440,6 +444,34 @@ class TestExtractYearFromFilename:
     def test_extract_returns_none_for_missing(self, filename):
         """Returns None when year is absent."""
         assert extract_year_from_filename(filename) is None
+
+
+class TestResolveSourceYear:
+    """Tests for resolve_source_year."""
+
+    def test_by_wms_filename_uses_year(self, tmp_path):
+        """BY WMS filenames should use the embedded year."""
+        input_path = tmp_path / "32679_5392_2018.tif"
+        year = resolve_source_year(
+            input_path.name,
+            input_path,
+            data_type="image",
+            region=Region.BY,
+        )
+        assert year == "2018"
+
+    def test_by_dop_filename_falls_back_to_current_year(self, tmp_path):
+        """BY DOP filenames without year should fall back to current year."""
+        from datetime import date
+
+        input_path = tmp_path / "32679_5392.tif"
+        year = resolve_source_year(
+            input_path.name,
+            input_path,
+            data_type="image",
+            region=Region.BY,
+        )
+        assert year == str(date.today().year)
 
 
 class TestGenerateOutputName:

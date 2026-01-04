@@ -395,7 +395,16 @@ def resolve_source_year(
         raise ValueError(f"Invalid year '{value}' for {filename}.")
 
     region = region or detect_region(filename)
-    year = extract_year_from_filename(filename)
+    if region == Region.BY:
+        by_match = BY_DOP_PATTERN.match(filename)
+        if by_match:
+            by_year = _normalize_year(by_match.group(3))
+            if by_year:
+                return by_year
+        year = None
+    else:
+        year = extract_year_from_filename(filename)
+
     normalized = _normalize_year(year)
     if normalized:
         return normalized
