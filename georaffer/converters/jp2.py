@@ -7,8 +7,10 @@ from pathlib import Path
 import numpy as np
 import rasterio
 import rasterio.warp
-from rasterio.enums import Resampling
-from rasterio.transform import Affine
+from rasterio.errors import NotGeoreferencedWarning
+import warnings
+from rasterio.enums import ColorInterp, Resampling
+from rasterio.transform import Affine, from_bounds
 
 from georaffer.config import (
     METERS_PER_KM,
@@ -136,124 +138,158 @@ def convert_jp2(
             return 8  # Fallback: even 1/256th resolution is too big (rare)
 
         with rasterio.Env(**env_opts):
-            with rasterio.open(input_path, **open_opts) as src:
-                # For splits, read enough pixels so each sub-tile has the requested resolution
-                target_full = None
-                split_max = max([r for r in resolutions if r], default=None)
-                if split_max and split_factor > 1:
-                    scale = max(1, ratio_int)
-                    target_full = min(src.width, split_max * scale)
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    category=NotGeoreferencedWarning,
+                    message="Dataset has no geotransform",
+                )
+                with rasterio.open(input_path, **open_opts) as src:
+                    # For splits, read enough pixels so each sub-tile has the requested resolution
+                    target_full = None
+                    split_max = max([r for r in resolutions if r], default=None)
+                    if split_max and split_factor > 1:
+                        scale = max(1, ratio_int)
+                        target_full = min(src.width, split_max * scale)
 
-                effective_target = target_full or max_req
-
-                if (
-                    effective_target
-                    and isinstance(src.width, (int, float))
-                    and isinstance(src.height, (int, float))
-                    and effective_target < src.width
-                    and effective_target < src.height
-                ):
-                    rlevel = _choose_rlevel(src.width, effective_target)
-                    factor = 2**rlevel
-                    target = (src.count, src.height // factor, src.width // factor)
-                    data = src.read(
-                        out_shape=target,
-                        masked=False,
-                        boundless=False,
-                    )
-                    transform = src.transform * Affine.scale(factor, factor)
-                else:
-                    data = src.read()
-                    transform = src.transform
-                crs = src.crs
-                t_read = time.perf_counter() - t_read_start
-
-                filename = os.path.basename(input_path)
-
-                coords = parse_tile_coords(filename)
-
-                if split_factor > 1:
-                    if not coords:
-                        raise RuntimeError(
-                            f"Splitting failed: could not read grid coordinates from '{filename}'. "
-                            "This tile name must include grid coords (e.g., …_350_5600_…)."
+                    effective_target = target_full or max_req
+    
+                    if (
+                        effective_target
+                        and isinstance(src.width, (int, float))
+                        and isinstance(src.height, (int, float))
+                        and effective_target < src.width
+                        and effective_target < src.height
+                    ):
+                        rlevel = _choose_rlevel(src.width, effective_target)
+                        factor = 2**rlevel
+                        target = (src.count, src.height // factor, src.width // factor)
+                        data = src.read(
+                            out_shape=target,
+                            masked=False,
+                            boundless=False,
                         )
-                    rows, cols = data.shape[1], data.shape[2]
-                    if rows < ratio_int or cols < ratio_int:
-                        raise RuntimeError(
-                            f"Splitting failed: the data read is only {rows}x{cols} pixels, "
-                            f"but a {ratio_int}x{ratio_int} split needs at least {ratio_int} pixels on each side. "
-                            "Try a higher read resolution or a coarser grid."
+                        transform = src.transform * Affine.scale(factor, factor)
+                    else:
+                        data = src.read()
+                        transform = src.transform
+                    crs = src.crs
+                    colorinterp = src.colorinterp
+                    t_read = time.perf_counter() - t_read_start
+    
+                    filename = os.path.basename(input_path)
+    
+                    coords = parse_tile_coords(filename)
+    
+                    if (crs is None or transform == Affine.identity()) and coords:
+                        tile_m = get_tile_size_km(region) * METERS_PER_KM
+                        left = coords[0] * METERS_PER_KM
+                        bottom = coords[1] * METERS_PER_KM
+                        right = left + tile_m
+                        top = bottom + tile_m
+                        transform = from_bounds(left, bottom, right, top, data.shape[-1], data.shape[-2])
+                        crs = (
+                            "EPSG:25833"
+                            if region == Region.BB
+                            else "EPSG:25832"
                         )
-                    if rows % ratio_int != 0 or cols % ratio_int != 0:
-                        raise RuntimeError(
-                            f"Splitting failed: the read window {rows}x{cols} does not divide evenly into a {ratio_int}x{ratio_int} grid. "
-                            "Read at a resolution where both dimensions are multiples of the split ratio, or choose a compatible grid size."
-                        )
-                    return _convert_split_jp2(
-                        data,
-                        transform,
-                        crs,
-                        coords,
-                        output_paths,
-                        resolutions,
-                        filename,
-                        region,
-                        year,
-                        ratio_int,
-                        grid_size_km=grid_size_km,
-                        num_threads=threads,
-                        profiling=profiling,
-                        t_read=t_read,
-                    )
-
-                # Standard conversion (no splitting)
-                timing = []
-                for resolution in resolutions:
-                    path_str = output_paths.get(resolution)
-                    if not path_str:
-                        continue
-                    output_path = Path(path_str)
-
-                    if resolution:
-                        t_res_start = time.perf_counter()
-                        out_data, out_transform = resample_raster(
+    
+                    if len(colorinterp) == 1 and colorinterp[0] == ColorInterp.palette:
+                        cmap = src.colormap(1)
+                        if cmap:
+                            max_idx = max(cmap.keys())
+                            rgba_len = len(next(iter(cmap.values())))
+                            lut = np.zeros((max_idx + 1, rgba_len), dtype=np.uint8)
+                            for idx, rgba in cmap.items():
+                                lut[idx] = rgba
+                            indices = data[0] if data.ndim == 3 else data
+                            expanded = lut[indices]
+                            if rgba_len == 4 and np.all(expanded[..., 3] == 255):
+                                expanded = expanded[..., :3]
+                            data = expanded.transpose(2, 0, 1)
+    
+                    if split_factor > 1:
+                        if not coords:
+                            raise RuntimeError(
+                                f"Splitting failed: could not read grid coordinates from '{filename}'. "
+                                "This tile name must include grid coords (e.g., …_350_5600_…)."
+                            )
+                        rows, cols = data.shape[1], data.shape[2]
+                        if rows < ratio_int or cols < ratio_int:
+                            raise RuntimeError(
+                                f"Splitting failed: the data read is only {rows}x{cols} pixels, "
+                                f"but a {ratio_int}x{ratio_int} split needs at least {ratio_int} pixels on each side. "
+                                "Try a higher read resolution or a coarser grid."
+                            )
+                        if rows % ratio_int != 0 or cols % ratio_int != 0:
+                            raise RuntimeError(
+                                f"Splitting failed: the read window {rows}x{cols} does not divide evenly into a {ratio_int}x{ratio_int} grid. "
+                                "Read at a resolution where both dimensions are multiples of the split ratio, or choose a compatible grid size."
+                            )
+                        return _convert_split_jp2(
                             data,
                             transform,
                             crs,
-                            resolution,
-                            threads,
-                            dtype=np.uint8,
-                            resampling=Resampling.lanczos,
+                            coords,
+                            output_paths,
+                            resolutions,
+                            filename,
+                            region,
+                            year,
+                            ratio_int,
+                            grid_size_km=grid_size_km,
+                            num_threads=threads,
+                            profiling=profiling,
+                            t_read=t_read,
                         )
-                        t_res = time.perf_counter() - t_res_start
-                    else:
-                        out_data, out_transform = data, transform
-                        t_res = 0.0
-
-                    t_write_start = time.perf_counter()
-                    write_geotiff(
-                        output_path,
-                        out_data,
-                        out_transform,
-                        crs,
-                    )
-                    t_write = time.perf_counter() - t_write_start
-                    timing.append((resolution, t_res, t_write))
-
-                if profiling:
-                    total_resample = sum(t[1] for t in timing)
-                    total_write = sum(t[2] for t in timing)
-                    total = t_read + total_resample + total_write
-                    timing_str = "; ".join(
-                        f"res={res or 'native'} resample={t_res:.3f}s write={t_w:.3f}s"
-                        for res, t_res, t_w in timing
-                    )
-                    print(
-                        f"[jp2] {os.path.basename(input_path)} region={region} split_factor={compute_split_factor(tile_km, grid_size_km)} "
-                        f"read={t_read:.3f}s resample_total={total_resample:.3f}s write_total={total_write:.3f}s total={total:.3f}s | {timing_str}"
-                    )
-
+    
+                    # Standard conversion (no splitting)
+                    timing = []
+                    for resolution in resolutions:
+                        path_str = output_paths.get(resolution)
+                        if not path_str:
+                            continue
+                        output_path = Path(path_str)
+    
+                        if resolution:
+                            t_res_start = time.perf_counter()
+                            out_data, out_transform = resample_raster(
+                                data,
+                                transform,
+                                crs,
+                                resolution,
+                                threads,
+                                dtype=np.uint8,
+                                resampling=Resampling.lanczos,
+                            )
+                            t_res = time.perf_counter() - t_res_start
+                        else:
+                            out_data, out_transform = data, transform
+                            t_res = 0.0
+    
+                        t_write_start = time.perf_counter()
+                        write_geotiff(
+                            output_path,
+                            out_data,
+                            out_transform,
+                            crs,
+                        )
+                        t_write = time.perf_counter() - t_write_start
+                        timing.append((resolution, t_res, t_write))
+    
+                    if profiling:
+                        total_resample = sum(t[1] for t in timing)
+                        total_write = sum(t[2] for t in timing)
+                        total = t_read + total_resample + total_write
+                        timing_str = "; ".join(
+                            f"res={res or 'native'} resample={t_res:.3f}s write={t_w:.3f}s"
+                            for res, t_res, t_w in timing
+                        )
+                        print(
+                            f"[jp2] {os.path.basename(input_path)} region={region} split_factor={compute_split_factor(tile_km, grid_size_km)} "
+                            f"read={t_read:.3f}s resample_total={total_resample:.3f}s write_total={total_write:.3f}s total={total:.3f}s | {timing_str}"
+                        )
+    
         return True
 
     except Exception as e:

@@ -159,22 +159,67 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, str, int]:
 
     input_path = Path(jp2_dir) / filename
     region = detect_region(filename)
-    year = resolve_source_year(filename, input_path, data_type="image", region=region)
+    year = None
+    if not (region == Region.BW and input_path.suffix.lower() == ".zip"):
+        year = resolve_source_year(filename, input_path, data_type="image", region=region)
 
     try:
         # Setup output paths for each resolution
-        output_paths: dict[int | None, str] = {}
-        for res in resolutions:
-            output_name = generate_output_name(filename, region, year, "image")
-            res_dir = Path(processed_dir) / "image" / ("native" if res is None else str(res))
-            res_dir.mkdir(parents=True, exist_ok=True)
-            output_paths[res] = str(res_dir / output_name)
+        outputs_count = 0
+        tile_km = get_tile_size_km(region)
+        split_factor = compute_split_factor(tile_km, grid_size_km)
 
-        if input_path.suffix.lower() == ".zip":
+        if input_path.suffix.lower() == ".zip" and region == Region.BW:
             with tempfile.TemporaryDirectory() as tmpdir:
-                extracted_tif = _extract_bb_zip_tif(input_path, Path(tmpdir))
+                extracted_tifs = _extract_zip_tifs(input_path, Path(tmpdir))
+                for tif_path in extracted_tifs:
+                    sub_name = tif_path.name
+                    sub_year = resolve_source_year(
+                        sub_name, tif_path, data_type="image", region=region
+                    )
+                    output_paths: dict[int | None, str] = {}
+                    for res in resolutions:
+                        output_name = generate_output_name(sub_name, region, sub_year, "image")
+                        res_dir = Path(processed_dir) / "image" / (
+                            "native" if res is None else str(res)
+                        )
+                        res_dir.mkdir(parents=True, exist_ok=True)
+                        output_paths[res] = str(res_dir / output_name)
+                    convert_jp2(
+                        tif_path,
+                        output_paths,
+                        region,
+                        sub_year,
+                        resolutions,
+                        num_threads=num_threads,
+                        grid_size_km=grid_size_km,
+                        profiling=profiling,
+                    )
+                    outputs_count += len(resolutions) * split_factor
+        else:
+            output_paths = {}
+            for res in resolutions:
+                output_name = generate_output_name(filename, region, year, "image")
+                res_dir = Path(processed_dir) / "image" / ("native" if res is None else str(res))
+                res_dir.mkdir(parents=True, exist_ok=True)
+                output_paths[res] = str(res_dir / output_name)
+
+            if input_path.suffix.lower() == ".zip":
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    extracted_tif = _extract_bb_zip_tif(input_path, Path(tmpdir))
+                    convert_jp2(
+                        extracted_tif,
+                        output_paths,
+                        region,
+                        year,
+                        resolutions,
+                        num_threads=num_threads,
+                        grid_size_km=grid_size_km,
+                        profiling=profiling,
+                    )
+            else:
                 convert_jp2(
-                    extracted_tif,
+                    input_path,
                     output_paths,
                     region,
                     year,
@@ -183,22 +228,7 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, str, int]:
                     grid_size_km=grid_size_km,
                     profiling=profiling,
                 )
-        else:
-            convert_jp2(
-                input_path,
-                output_paths,
-                region,
-                year,
-                resolutions,
-                num_threads=num_threads,
-                grid_size_km=grid_size_km,
-                profiling=profiling,
-            )
-
-        # Calculate output count: resolutions × split tiles
-        tile_km = get_tile_size_km(region)
-        split_factor = compute_split_factor(tile_km, grid_size_km)
-        outputs_count = len(resolutions) * split_factor
+            outputs_count += len(resolutions) * split_factor
 
         return (True, filename, outputs_count)
 
@@ -238,17 +268,50 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, str, int]:
 
     input_path = Path(laz_dir) / filename
     region = detect_region(filename)
-    year = resolve_source_year(filename, input_path, data_type="dsm", region=region)
+    year = None
+    if not (region == Region.BW and input_path.suffix.lower() == ".zip"):
+        year = resolve_source_year(filename, input_path, data_type="dsm", region=region)
 
     if input_path.suffix.lower() in (".tif", ".zip"):
-        output_paths: dict[int | None, str] = {}
-        for res in resolutions:
-            output_name = generate_output_name(filename, region, year, "dsm")
-            res_dir = Path(processed_dir) / "dsm" / str(res)
-            res_dir.mkdir(parents=True, exist_ok=True)
-            output_paths[res] = str(res_dir / output_name)
-
         try:
+            tile_km = get_tile_size_km(region)
+            split_factor = compute_split_factor(tile_km, grid_size_km)
+
+            if input_path.suffix.lower() == ".zip" and region == Region.BW:
+                outputs_count = 0
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    extracted_tifs = _extract_zip_tifs(input_path, Path(tmpdir))
+                    for tif_path in extracted_tifs:
+                        sub_name = tif_path.name
+                        sub_year = resolve_source_year(
+                            sub_name, tif_path, data_type="dsm", region=region
+                        )
+                        output_paths: dict[int | None, str] = {}
+                        for res in resolutions:
+                            output_name = generate_output_name(sub_name, region, sub_year, "dsm")
+                            res_dir = Path(processed_dir) / "dsm" / str(res)
+                            res_dir.mkdir(parents=True, exist_ok=True)
+                            output_paths[res] = str(res_dir / output_name)
+                        convert_dsm_raster(
+                            str(tif_path),
+                            output_paths,
+                            region,
+                            sub_year,
+                            target_sizes=resolutions,
+                            num_threads=num_threads,
+                            grid_size_km=grid_size_km,
+                            profiling=profiling,
+                        )
+                        outputs_count += len(resolutions) * split_factor
+                return (True, filename, outputs_count)
+
+            output_paths: dict[int | None, str] = {}
+            for res in resolutions:
+                output_name = generate_output_name(filename, region, year, "dsm")
+                res_dir = Path(processed_dir) / "dsm" / str(res)
+                res_dir.mkdir(parents=True, exist_ok=True)
+                output_paths[res] = str(res_dir / output_name)
+
             if input_path.suffix.lower() == ".zip":
                 with tempfile.TemporaryDirectory() as tmpdir:
                     extracted_tif = _extract_bb_zip_tif(input_path, Path(tmpdir))
@@ -274,10 +337,7 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, str, int]:
                     profiling=profiling,
                 )
 
-            tile_km = get_tile_size_km(region)
-            split_factor = compute_split_factor(tile_km, grid_size_km)
             outputs_count = len(resolutions) * split_factor
-
             return (True, filename, outputs_count)
         except Exception as e:
             raise RuntimeError(
@@ -588,3 +648,18 @@ def _extract_bb_zip_tif(input_path: Path, temp_dir: Path) -> Path:
         with zf.open(tif_name) as src, open(output_path, "wb") as dst:
             dst.write(src.read())
     return output_path
+
+
+def _extract_zip_tifs(input_path: Path, temp_dir: Path) -> list[Path]:
+    """Extract all GeoTIFFs from a ZIP to a temp directory."""
+    with zipfile.ZipFile(input_path) as zf:
+        tif_names = sorted(name for name in zf.namelist() if name.lower().endswith(".tif"))
+        if not tif_names:
+            raise RuntimeError(f"No GeoTIFFs found in {input_path.name}")
+        output_paths: list[Path] = []
+        for name in tif_names:
+            output_path = temp_dir / Path(name).name
+            with zf.open(name) as src, open(output_path, "wb") as dst:
+                dst.write(src.read())
+            output_paths.append(output_path)
+    return output_paths

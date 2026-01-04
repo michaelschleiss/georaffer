@@ -42,7 +42,10 @@ class WMSImagerySource:
         tile_size_m: int = RLP_GRID_SIZE,
         resolution_m: float = 0.2,
         image_format: str = "image/tiff-lzw",
+        coverage_format: str | None = None,
         crs: str = "EPSG:25832",
+        coverage_mode: str = "featureinfo",
+        preview_size: int = 64,
         session: requests.Session | None = None,
     ):
         """Initialize WMS imagery source.
@@ -54,7 +57,10 @@ class WMSImagerySource:
             tile_size_m: Tile size in meters (default 2000 for RLP 2km tiles)
             resolution_m: Native resolution in meters/pixel (default 0.2 for RLP)
             image_format: WMS output format (default "image/tiff-lzw" for lossless)
+            coverage_format: Optional GetMap format for coverage checks (defaults to image_format)
             crs: Coordinate reference system (default "EPSG:25832")
+            coverage_mode: "featureinfo" or "getmap" coverage detection
+            preview_size: Size in pixels for GetMap coverage checks
             session: Optional requests session for connection pooling
         """
         self.base_url = base_url
@@ -63,10 +69,16 @@ class WMSImagerySource:
         self.tile_size_m = tile_size_m
         self.resolution_m = resolution_m
         self.image_format = image_format
+        self.coverage_format = coverage_format or image_format
         self.crs = crs
+        self.coverage_mode = coverage_mode
+        self.preview_size = preview_size
         self._session = session or requests.Session()
         self._coverage_cache: dict[tuple[int, int, int], dict | None] = {}
         self._coverage_cache_lock = Lock()
+
+        if self.coverage_mode not in ("featureinfo", "getmap"):
+            raise ValueError(f"Unknown WMS coverage_mode '{coverage_mode}'.")
 
     def _rgb_layer(self, year: int) -> str:
         """Get RGB layer name for a year."""
@@ -117,6 +129,9 @@ class WMSImagerySource:
         Raises:
             RuntimeError: If WMS request fails after MAX_RETRIES attempts
         """
+        if self.coverage_mode == "getmap":
+            return self._check_coverage_getmap(year, grid_x, grid_y)
+
         cache_key = (year, grid_x, grid_y)
         with self._coverage_cache_lock:
             if cache_key in self._coverage_cache:
@@ -209,6 +224,64 @@ class WMSImagerySource:
 
         raise RuntimeError(
             f"WMS coverage check failed after {WMS_COVERAGE_RETRIES} attempts: {last_error}"
+        )
+
+    def _check_coverage_getmap(self, year: int, grid_x: int, grid_y: int) -> dict | None:
+        """Check coverage using GetMap + transparent pixel detection."""
+        cache_key = (year, grid_x, grid_y)
+        with self._coverage_cache_lock:
+            if cache_key in self._coverage_cache:
+                return self._coverage_cache[cache_key]
+
+        bbox = self._grid_to_bbox(grid_x, grid_y)
+        layer = self._rgb_layer(year)
+
+        params = {
+            "SERVICE": "WMS",
+            "VERSION": "1.3.0",
+            "REQUEST": "GetMap",
+            "LAYERS": layer,
+            "STYLES": "",
+            "CRS": self.crs,
+            "BBOX": f"{bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]}",
+            "WIDTH": str(self.preview_size),
+            "HEIGHT": str(self.preview_size),
+            "FORMAT": self.coverage_format,
+            "TRANSPARENT": "TRUE",
+            "TILED": "TRUE",
+        }
+
+        from PIL import Image
+        import io
+
+        last_error = None
+        for attempt in range(WMS_COVERAGE_RETRIES):
+            try:
+                response = self._session.get(
+                    self.base_url,
+                    params=params,
+                    timeout=WMS_TIMEOUT,
+                )
+                response.raise_for_status()
+                if not response.headers.get("Content-Type", "").startswith("image/"):
+                    with self._coverage_cache_lock:
+                        self._coverage_cache[cache_key] = None
+                    return None
+                img = Image.open(io.BytesIO(response.content)).convert("RGBA")
+                pixels = img.getdata()
+                has_coverage = any(p[3] != 0 for p in pixels)
+                result = {"acquisition_date": None, "tile_name": f"dop_{grid_x}_{grid_y}"}
+                with self._coverage_cache_lock:
+                    self._coverage_cache[cache_key] = result if has_coverage else None
+                return result if has_coverage else None
+            except requests.RequestException as e:
+                last_error = e
+                if attempt < WMS_COVERAGE_RETRIES - 1:
+                    wait_time = min(RETRY_BACKOFF_BASE**attempt, WMS_RETRY_MAX_WAIT)
+                    time.sleep(wait_time)
+
+        raise RuntimeError(
+            f"WMS GetMap coverage check failed after {WMS_COVERAGE_RETRIES} attempts: {last_error}"
         )
 
     def check_coverage_multi(

@@ -78,7 +78,10 @@ def _outputs_exist(
     input_path = Path(source_dir) / filename if source_dir is not None else Path(filename)
     # Match worker year logic as closely as possible to ensure we check
     # the exact output filenames that conversion would produce.
-    year = resolve_source_year(filename, input_path, data_type=data_type, region=region)
+    try:
+        year = resolve_source_year(filename, input_path, data_type=data_type, region=region)
+    except ValueError:
+        return False
 
     # Get base coordinates from filename
     coords = parse_tile_coords(filename)
@@ -196,7 +199,7 @@ def convert_tiles(
         elif os.path.exists(jp2_dir):
             jp2_files = sorted(
                 f for f in os.listdir(jp2_dir)
-                if f.endswith((".jp2", ".tif", ".zip"))
+                if f.endswith((".jp2", ".tif", ".zip", ".png", ".jpg", ".jpeg"))
             )
 
     laz_dir = os.path.join(raw_dir, "dsm")

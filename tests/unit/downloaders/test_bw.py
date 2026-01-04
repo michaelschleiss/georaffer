@@ -27,8 +27,8 @@ class TestBWDownloaderInit:
         assert downloader._to_year == 2020
 
     def test_init_with_early_year_raises(self, tmp_path):
-        with pytest.raises(ValueError, match="1960"):
-            BWDownloader(str(tmp_path), imagery_from=(1950, None))
+        with pytest.raises(ValueError, match="2010"):
+            BWDownloader(str(tmp_path), imagery_from=(2005, None))
 
 
 class TestBWUtmToGridCoords:
@@ -44,19 +44,17 @@ class TestBWUtmToGridCoords:
     def test_simple_conversion_odd_even(self, downloader):
         # Coords in tile with odd E, even N
         jp2_coords, laz_coords = downloader.utm_to_grid_coords(489500, 5420500)
-        assert jp2_coords == (489, 5420)  # 489 is odd, 5420 is even
+        assert jp2_coords == (489, 5420)
         assert laz_coords == (489, 5420)
 
     def test_even_easting_rounds_to_odd(self, downloader):
         # Even easting should round down to nearest odd
         jp2_coords, _ = downloader.utm_to_grid_coords(490000, 5420000)
-        # 490 is even, should become 489 (odd)
         assert jp2_coords[0] == 489
 
     def test_odd_northing_rounds_to_even(self, downloader):
         # Odd northing should round down to nearest even
         jp2_coords, _ = downloader.utm_to_grid_coords(489000, 5421000)
-        # 5421 is odd, should become 5420 (even)
         assert jp2_coords[1] == 5420
 
     def test_both_adjustments(self, downloader):
@@ -78,6 +76,9 @@ class TestBWFilenamePatterns:
             ("dop20rgb_32_489_5420_2_bw.zip", (489, 5420)),
             ("dop20rgb_32_391_5268_2_bw.zip", (391, 5268)),
             ("dop20rgb_32_609_5514_2_bw.zip", (609, 5514)),
+            ("dop20rgb_32_489_5420_1_bw_2024.tif", (489, 5420)),
+            ("dop20rgb_32_391_5268_1_bw_2019.tif", (391, 5268)),
+            ("dop20rgb_32_489_5420_1_bw_2024.jpg", (489, 5420)),
         ],
     )
     def test_dop_pattern_valid(self, filename, expected):
@@ -92,6 +93,8 @@ class TestBWFilenamePatterns:
         [
             ("dop20rgb_32_489_5420_2_bw_2015.zip", (489, 5420, "2015")),
             ("dop20rgb_32_391_5268_2_bw_2020.zip", (391, 5268, "2020")),
+            ("dop20rgb_32_489_5420_1_bw_2024.tif", (489, 5420, "2024")),
+            ("dop20rgb_32_489_5420_1_bw_2024.jpg", (489, 5420, "2024")),
         ],
     )
     def test_dop_pattern_with_year(self, filename, expected):
@@ -120,6 +123,7 @@ class TestBWFilenamePatterns:
             ("dom1_32_489_5420_2_bw.zip", (489, 5420)),
             ("dom1_32_391_5268_2_bw.zip", (391, 5268)),
             ("dom1_32_609_5514_2_bw.zip", (609, 5514)),
+            ("dom1_32_489_5420_1_bw_2019.tif", (489, 5420)),
         ],
     )
     def test_dom_pattern_valid(self, filename, expected):
@@ -237,10 +241,11 @@ class TestBWParseWfsFeatures:
                 }
             },
         ]
-        result = downloader._parse_wfs_features(features, "dop_kachel", "befliegungsdatum")
-        assert len(result) == 0
+        with pytest.raises(ValueError, match="UTM zone"):
+            downloader._parse_wfs_features(features, "dop_kachel", "befliegungsdatum")
 
-    def test_parse_handles_missing_date(self, downloader):
+    def test_parse_returns_none_for_missing_date(self, downloader):
+        """Missing date fields return None (caller handles fallback logic)."""
         features = [
             {
                 "properties": {
@@ -250,8 +255,7 @@ class TestBWParseWfsFeatures:
             },
         ]
         result = downloader._parse_wfs_features(features, "dop_kachel", "befliegungsdatum")
-        assert len(result) == 1
-        assert result[0] == (489, 5420, None)
+        assert result == [(489, 5420, None)]
 
     def test_parse_handles_short_tile_id(self, downloader):
         features = [
@@ -262,5 +266,94 @@ class TestBWParseWfsFeatures:
                 }
             },
         ]
-        result = downloader._parse_wfs_features(features, "dop_kachel", "befliegungsdatum")
-        assert len(result) == 0
+        with pytest.raises(ValueError, match="tile id"):
+            downloader._parse_wfs_features(features, "dop_kachel", "befliegungsdatum")
+
+
+class TestBWCatalog:
+    """Tests for BW catalog loading behavior."""
+
+    def test_missing_befliegungsdatum_raises(self, tmp_path, monkeypatch):
+        downloader = BWDownloader(str(tmp_path))
+
+        def fake_fetch(wfs_url, feature_type, id_field, date_field):
+            if date_field == "befliegungsdatum":
+                return [(489, 5420, None)]
+            return []
+
+        monkeypatch.setattr(downloader, "_fetch_wfs_tiles", fake_fetch)
+
+        with pytest.raises(ValueError, match="befliegungsdatum"):
+            downloader._load_catalog()
+
+    def test_missing_fortfuehrungsdatum_uses_dop_date(self, tmp_path, monkeypatch):
+        """When DOM date is missing, falls back to corresponding DOP date."""
+        downloader = BWDownloader(str(tmp_path))
+
+        def fake_fetch(wfs_url, feature_type, id_field, date_field):
+            if date_field == "befliegungsdatum":
+                return [(489, 5420, date(2022, 5, 1))]
+            if date_field == "fortfuehrungsdatum":
+                return [(489, 5420, None)]
+            return []
+
+        monkeypatch.setattr(downloader, "_fetch_wfs_tiles", fake_fetch)
+
+        catalog = downloader._load_catalog()
+        dom_years = catalog.dsm_tiles.get((489, 5420), {})
+        assert 2022 in dom_years
+        assert dom_years[2022]["acquisition_date"] == "2022-05-01"
+
+    def test_missing_fortfuehrungsdatum_without_dop_skips(self, tmp_path, monkeypatch):
+        """DOM tile without corresponding DOP is skipped (no date to fall back to)."""
+        downloader = BWDownloader(str(tmp_path))
+
+        def fake_fetch(wfs_url, feature_type, id_field, date_field):
+            if date_field == "befliegungsdatum":
+                return []
+            if date_field == "fortfuehrungsdatum":
+                return [(489, 5420, None)]
+            return []
+
+        monkeypatch.setattr(downloader, "_fetch_wfs_tiles", fake_fetch)
+
+        catalog = downloader._load_catalog()
+        assert (489, 5420) not in catalog.dsm_tiles
+
+    def test_dop_without_dom_is_dropped(self, tmp_path, monkeypatch):
+        """DOP tile without corresponding DOM is not included in catalog."""
+        downloader = BWDownloader(str(tmp_path))
+
+        def fake_fetch(wfs_url, feature_type, id_field, date_field):
+            if date_field == "befliegungsdatum":
+                return [(489, 5420, date(2022, 5, 1))]
+            if date_field == "fortfuehrungsdatum":
+                return []
+            return []
+
+        monkeypatch.setattr(downloader, "_fetch_wfs_tiles", fake_fetch)
+
+        catalog = downloader._load_catalog()
+        assert (489, 5420) not in catalog.image_tiles
+
+
+
+class TestBWWfsPagination:
+    """Tests for BW WFS pagination preflight behavior."""
+
+    def test_missing_numbermatched_raises(self, tmp_path, monkeypatch):
+        downloader = BWDownloader(str(tmp_path))
+
+        class DummyResponse:
+            text = "<wfs:FeatureCollection></wfs:FeatureCollection>"
+
+            def raise_for_status(self):
+                return None
+
+        def fake_get(*_args, **_kwargs):
+            return DummyResponse()
+
+        monkeypatch.setattr(downloader._session, "get", fake_get)
+
+        with pytest.raises(ValueError, match="numberMatched"):
+            downloader._fetch_wfs_tiles("https://example.com", "feat", "id", "date")
