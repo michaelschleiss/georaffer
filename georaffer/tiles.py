@@ -176,6 +176,7 @@ def build_filtered_download_list(
     """
     tile_set = TileSet()
     downloads: dict[str, list[tuple[str, str]]] = {}
+    seen_urls: set[str] = set()
 
     # Track which native tiles we've already processed (for deduplication)
     seen_jp2: dict[str, set[tuple[int, int]]] = {}
@@ -229,7 +230,9 @@ def build_filtered_download_list(
                             else:
                                 filename = _filename_from_url(url)
                             path = os.path.join(downloader.raw_dir, "image", filename)
-                            downloads[f"{name}_jp2"].append((url, path))
+                            if url not in seen_urls:
+                                downloads[f"{name}_jp2"].append((url, path))
+                                seen_urls.add(url)
                             tile_set.jp2[name].add(native_tile)
                 seen_jp2[name].add(native_tile)
 
@@ -246,7 +249,9 @@ def build_filtered_download_list(
                     else:
                         filename = os.path.basename(url)
                     path = os.path.join(downloader.raw_dir, "dsm", filename)
-                    downloads[f"{name}_laz"].append((url, path))
+                    if url not in seen_urls:
+                        downloads[f"{name}_laz"].append((url, path))
+                        seen_urls.add(url)
                     tile_set.laz[name].add(native_tile)
                 seen_laz[name].add(native_tile)
 
