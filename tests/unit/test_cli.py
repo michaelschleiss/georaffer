@@ -313,3 +313,40 @@ class TestLoadCoordinatesPygeon:
         assert source_zone == 33
         assert coords == [(1.0, 3.0), (2.0, 4.0)]
         assert mock_utm.call_args.kwargs["force_zone_number"] == 33
+
+
+class TestLoadCoordinatesCvl:
+    """Tests for load_coordinates with cvl source."""
+
+    def test_cvl_missing_path_raises(self):
+        """Test error when pose path doesn't exist."""
+        args = Namespace(command="cvl", poses_path="/nonexistent/path")
+
+        with pytest.raises(Exception):
+            load_coordinates(args)
+
+    def test_cvl_auto_detects_zone(self):
+        """Test auto-detecting UTM zone for CVL lat/lon coordinates."""
+        args = Namespace(command="cvl", poses_path="/fake/path")
+        raw_coords = [(49.0, 8.4, 100.0), (49.1, 8.5, 110.0)]
+
+        with patch("georaffer.cli.load_from_cvl") as mock_load:
+            with patch("georaffer.cli.latlon_array_to_utm") as mock_utm:
+                mock_load.return_value = raw_coords
+                mock_utm.return_value = ([1.0, 2.0], [3.0, 4.0])
+
+                coords, source_zone = load_coordinates(args)
+
+        assert source_zone == 32
+        assert coords == [(1.0, 3.0), (2.0, 4.0)]
+        assert mock_utm.call_args.kwargs["force_zone_number"] == 32
+
+    def test_cvl_rejects_utm_zone(self):
+        """CVL inputs should not accept --utm-zone."""
+        args = Namespace(command="cvl", poses_path="/fake/path", utm_zone=32)
+        raw_coords = [(49.0, 8.4, 100.0)]
+
+        with patch("georaffer.cli.load_from_cvl") as mock_load:
+            mock_load.return_value = raw_coords
+            with pytest.raises(ValueError, match="CVL pose inputs do not accept --utm-zone"):
+                load_coordinates(args)

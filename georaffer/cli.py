@@ -13,7 +13,13 @@ from georaffer import __version__
 from georaffer.align import align_to_reference
 from georaffer.config import DEFAULT_PIXEL_SIZE, DEFAULT_WORKERS, METERS_PER_KM, OUTPUT_TILE_SIZE_KM, UTM_ZONE, Region
 from georaffer.grids import dedupe_by_output_tile, latlon_array_to_utm, tile_to_utm_center
-from georaffer.inputs import load_from_bbox, load_from_csv, load_from_geotiff, load_from_pygeon
+from georaffer.inputs import (
+    load_from_bbox,
+    load_from_csv,
+    load_from_cvl,
+    load_from_geotiff,
+    load_from_pygeon,
+)
 from georaffer.pipeline import process_tiles
 from georaffer.runtime import install_interrupt_signal_handlers, restore_signal_handlers
 
@@ -177,6 +183,26 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
             )
             coords = list(zip(utm_x, utm_y))
 
+    elif args.command == "cvl":
+        raw_coords = load_from_cvl(args.poses_path)
+        # cvl returns (lat, lon, alt) - vectorized UTM conversion
+        coords_array = np.array(raw_coords)
+        if coords_array.size == 0:
+            coords = []
+        else:
+            if utm_zone is not None:
+                raise ValueError("CVL pose inputs do not accept --utm-zone.")
+            lons = coords_array[:, 1]
+            zone_candidates = np.floor((lons + 180) / 6).astype(int) + 1
+            unique_zones = set(zone_candidates.tolist())
+            if len(unique_zones) > 1:
+                raise ValueError("CVL pose data spans multiple UTM zones; split input by zone.")
+            source_zone = unique_zones.pop()
+            utm_x, utm_y = latlon_array_to_utm(
+                coords_array[:, 0], coords_array[:, 1], force_zone_number=source_zone
+            )
+            coords = list(zip(utm_x, utm_y))
+
     elif args.command == "tiles":
         source_zone = _require_utm_zone()
         # Parse tile coordinates: "350,5600 351,5601" (km indices)
@@ -329,6 +355,10 @@ Details:
 
     # pygeon-specific epilog
     pygeon_epilog = f"""\
+{shared_epilog}"""
+
+    # cvl-specific epilog
+    cvl_epilog = f"""\
 {shared_epilog}"""
 
     parser = argparse.ArgumentParser(
@@ -492,6 +522,24 @@ Details:
     )
     pygeon_parser.add_argument(
         "dataset_path", metavar="PATH", help="Folder with ins.csv or parent of campaign subfolders"
+    )
+
+    # cvl subcommand
+    cvl_parser = subparsers.add_parser(
+        "cvl",
+        parents=[shared],
+        help="Download tiles for CVL pose CSVs",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        usage="georaffer cvl PATH --output DIR [options]\n\n"
+        "   ex: georaffer cvl ./data --output ./tiles\n"
+        "       georaffer cvl ./data/kitti --output ./tiles\n"
+        "       georaffer cvl ./data/kitti/poses --output ./tiles",
+        epilog=cvl_epilog,
+    )
+    cvl_parser.add_argument(
+        "poses_path",
+        metavar="PATH",
+        help="Path to CVL pose CSVs (data dir, dataset dir, poses dir, or a pose CSV)",
     )
 
     # Don't let argparse auto-error on missing subcommand - we handle it manually
