@@ -838,8 +838,8 @@ packages:
   timestamp: 1734015193826
 - pypi: ./
   name: georaffer
-  version: 0.1.0
-  sha256: 37b46a311babbb3c62db970c73b7c3cfd31d240cef92266c33e58670f5e23413
+  version: 0.2.0
+  sha256: 9033fd7834e74c60cdd73e8e1d698dbea83e0d80fb8480a7c6c7fa9cc4d8f4db
   requires_dist:
   - requests>=2.20
   - truststore>=0.10
