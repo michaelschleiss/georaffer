@@ -3,7 +3,14 @@
 import numpy as np
 import utm
 
-from georaffer.config import METERS_PER_KM, UTM_ZONE, UTM_ZONE_BY_REGION, Region, get_tile_size_km
+from georaffer.config import (
+    CATALOG_GRANULARITY_KM,
+    METERS_PER_KM,
+    UTM_ZONE,
+    UTM_ZONE_BY_REGION,
+    Region,
+    get_tile_size_km,
+)
 
 
 def latlon_to_utm(
@@ -309,26 +316,32 @@ def get_regions_for_zone(zone: int) -> list[Region]:
 
 
 def expand_to_1km(coords: tuple[int, int], region: Region) -> list[tuple[int, int]]:
-    """Expand native tile coords to 1km grid cells.
+    """Expand catalog coords to 1km grid cells.
 
-    For regions with tiles larger than 1km (e.g., RLP with 2km tiles),
-    returns all 1km cells covered by the tile. For 1km regions, returns
-    the input coords as a single-element list.
+    For regions with catalog granularity > 1km (e.g., RLP with 2km catalog entries),
+    returns all 1km cells covered. For 1km catalog regions, returns the input
+    coords as a single-element list.
+
+    Note: This uses CATALOG_GRANULARITY_KM, not native tile size. BW has 2km
+    downloads but 1km catalog entries (WFS provides 1km metadata), so no
+    expansion is needed for BW.
 
     Args:
-        coords: Tile anchor coordinates (lower-left corner, km indices)
-        region: Region enum to determine native tile size
+        coords: Catalog coordinates (lower-left corner, km indices)
+        region: Region enum to determine catalog granularity
 
     Returns:
         List of (x, y) tuples for each 1km cell covered
 
     Example:
-        >>> expand_to_1km((362, 5604), Region.NRW)  # 1km tile
+        >>> expand_to_1km((362, 5604), Region.NRW)  # 1km catalog
         [(362, 5604)]
-        >>> expand_to_1km((362, 5604), Region.RLP)  # 2km tile -> 4 cells
+        >>> expand_to_1km((362, 5604), Region.RLP)  # 2km catalog -> 4 cells
         [(362, 5604), (362, 5605), (363, 5604), (363, 5605)]
+        >>> expand_to_1km((362, 5604), Region.BW)   # 1km catalog (pre-expanded)
+        [(362, 5604)]
     """
-    n = int(get_tile_size_km(region))
+    n = CATALOG_GRANULARITY_KM[region]
     return [(coords[0] + dx, coords[1] + dy) for dx in range(n) for dy in range(n)]
 
 

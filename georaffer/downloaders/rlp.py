@@ -66,6 +66,9 @@ class RLPDownloader(RegionDownloader):
     # sometimes returns year-only dates (e.g. "2000" not "2000-05-15").
     HISTORIC_YEARS: ClassVar[list[int]] = list(range(2010, 2025))
 
+    # RLP native tiles are 2km, so catalog coords are at 2km intervals
+    _catalog_granularity_km: int = 2
+
     def __init__(
         self,
         output_dir: str,

@@ -407,3 +407,38 @@ class RegionDownloader(ABC):
             for year in years
             if self._year_in_range(year, from_year, to_year)
         )
+
+    # Catalog coordinate granularity in km. Override in subclasses with larger native tiles.
+    _catalog_granularity_km: int = 1
+
+    def get_tiles(
+        self, coords: tuple[int, int], tile_type: str = "image"
+    ) -> list[dict]:
+        """Get available tiles at 1km grid coordinates.
+
+        On-demand query for tiles at a specific location. Returns all years
+        available at that coordinate. Handles coordinate mapping for regions
+        with larger native tile sizes (e.g., RLP 2km tiles).
+
+        Args:
+            coords: (grid_x, grid_y) in 1km grid coordinates
+            tile_type: "image" for orthophotos, "dsm" for elevation data
+
+        Returns:
+            List of tile info dicts, each with:
+                - "url": str (download URL)
+                - "acquisition_date": str | None (ISO format)
+                - "year": int
+        """
+        catalog = self.build_catalog()
+        tiles_dict = catalog.image_tiles if tile_type == "image" else catalog.dsm_tiles
+
+        # Map 1km query coords to catalog coords (e.g., 351 -> 350 for 2km granularity)
+        g = self._catalog_granularity_km
+        catalog_coords = ((coords[0] // g) * g, (coords[1] // g) * g)
+
+        years = tiles_dict.get(catalog_coords, {})
+        return [
+            {"url": info["url"], "acquisition_date": info.get("acquisition_date"), "year": year}
+            for year, info in years.items()
+        ]
