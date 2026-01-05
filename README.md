@@ -56,6 +56,31 @@ Alignment currently requires all processed tiles to share the same CRS; mixed-zo
 runs (for example NRW/RLP zone 32 plus BB zone 33) will fail and should be split
 by zone.
 
+## Python API
+
+```python
+from georaffer import TileStore
+
+store = TileStore(path="./tiles", regions=["NRW", "RLP"], imagery_from=(2015, None))
+
+# Query tiles at 1km grid coordinates
+tiles = store.query(coords=(350, 5600), tile_type="image")
+
+# Retrieve (downloads + converts if needed)
+path = store.get(tiles[0], resolution=2000)
+
+# Batch with pipelined download/convert
+paths = store.get_many(tiles, resolution=2000)
+```
+
+For single-file conversion without TileStore:
+
+```python
+from georaffer.conversion import convert_file
+
+convert_file("raw/image/tile.jp2", "processed", resolution=2000)
+```
+
 ## File name scheme
 
 Raw downloads keep the provider filenames:
