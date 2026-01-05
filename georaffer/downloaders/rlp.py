@@ -59,8 +59,6 @@ class RLPDownloader(RegionDownloader):
     WMS_CURRENT_URL = "https://geo4.service24.rlp.de/wms/rp_dop20.fcgi"
     WMS_CURRENT_INFO_LAYER = "rp_dop20_info"
 
-    # Alias for backward compatibility
-    WMS_BASE_URL = WMS_HISTORIC_URL
 
     # Historic years via WMS. Pre-2010 excluded due to compromised metadata: WMS
     # sometimes returns year-only dates (e.g. "2000" not "2000-05-15").
@@ -109,7 +107,7 @@ class RLPDownloader(RegionDownloader):
         """Lazy-init WMS imagery source."""
         if self._wms is None:
             self._wms = WMSImagerySource(
-                base_url=self.WMS_BASE_URL,
+                base_url=self.WMS_HISTORIC_URL,
                 rgb_layer_pattern=self.WMS_RGB_LAYER_PATTERN,
                 info_layer_pattern=self.WMS_INFO_LAYER_PATTERN,
                 tile_size_m=RLP_GRID_SIZE,
