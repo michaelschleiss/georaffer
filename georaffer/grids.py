@@ -3,7 +3,7 @@
 import numpy as np
 import utm
 
-from georaffer.config import METERS_PER_KM, UTM_ZONE, UTM_ZONE_BY_REGION, Region
+from georaffer.config import METERS_PER_KM, UTM_ZONE, UTM_ZONE_BY_REGION, Region, get_tile_size_km
 
 
 def latlon_to_utm(
@@ -306,3 +306,39 @@ def get_regions_for_zone(zone: int) -> list[Region]:
         List of Region enums that use this zone
     """
     return [region for region, z in UTM_ZONE_BY_REGION.items() if z == zone]
+
+
+def expand_to_1km(coords: tuple[int, int], region: Region) -> list[tuple[int, int]]:
+    """Expand native tile coords to 1km grid cells.
+
+    For regions with tiles larger than 1km (e.g., RLP with 2km tiles),
+    returns all 1km cells covered by the tile. For 1km regions, returns
+    the input coords as a single-element list.
+
+    Args:
+        coords: Tile anchor coordinates (lower-left corner, km indices)
+        region: Region enum to determine native tile size
+
+    Returns:
+        List of (x, y) tuples for each 1km cell covered
+
+    Example:
+        >>> expand_to_1km((362, 5604), Region.NRW)  # 1km tile
+        [(362, 5604)]
+        >>> expand_to_1km((362, 5604), Region.RLP)  # 2km tile -> 4 cells
+        [(362, 5604), (362, 5605), (363, 5604), (363, 5605)]
+    """
+    n = int(get_tile_size_km(region))
+    return [(coords[0] + dx, coords[1] + dy) for dx in range(n) for dy in range(n)]
+
+
+def coords_to_utm(coords: tuple[int, int]) -> tuple[int, int]:
+    """Convert 1km grid coords to UTM meters (lower-left corner).
+
+    Args:
+        coords: Grid coordinates (km indices)
+
+    Returns:
+        (easting, northing) in meters
+    """
+    return (coords[0] * METERS_PER_KM, coords[1] * METERS_PER_KM)
