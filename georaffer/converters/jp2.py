@@ -207,6 +207,11 @@ def convert_jp2(
                             if rgba_len == 4 and np.all(expanded[..., 3] == 255):
                                 expanded = expanded[..., :3]
                             data = expanded.transpose(2, 0, 1)
+
+                    # Strip alpha channel if present (4 bands -> 3 bands RGB)
+                    # This ensures cv2 can read the output correctly
+                    if data.shape[0] == 4:
+                        data = data[:3]
     
                     if split_factor > 1:
                         if not coords:
