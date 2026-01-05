@@ -38,6 +38,7 @@ class ConversionStats:
 
     converted: int = 0
     failed: int = 0
+    deleted: int = 0  # Raw files deleted after conversion
     jp2_sources: int = 0
     jp2_converted: int = 0
     jp2_failed: int = 0
@@ -153,6 +154,7 @@ def convert_tiles(
     reprocess: bool = False,
     image_files: list[str] | None = None,
     dsm_files: list[str] | None = None,
+    delete_raw: bool = False,
 ) -> ConversionStats:
     """Convert raw tiles to GeoTIFF using parallel workers.
 
@@ -171,6 +173,7 @@ def convert_tiles(
             scans raw_dir/image/ for all supported files.
         dsm_files: Optional list of DSM file paths to convert. If None,
             scans raw_dir/dsm/ for all supported files.
+        delete_raw: If True, delete raw source files after successful conversion.
 
     Returns:
         ConversionStats with results
@@ -348,11 +351,16 @@ def convert_tiles(
                             pending.discard(future)
                             stats.jp2_sources += 1  # Count source regardless of success
                             try:
-                                _, _filename, out_count = future.result()
+                                _, filename, out_count = future.result()
                                 stats.converted += out_count
                                 stats.jp2_converted += out_count
                                 if out_count > len(resolutions):
                                     stats.jp2_split_performed = True
+                                if delete_raw:
+                                    raw_path = os.path.join(jp2_dir, filename)
+                                    if os.path.exists(raw_path):
+                                        os.remove(raw_path)
+                                        stats.deleted += 1
                                 pbar.update(1)
                                 _update_files_per_second(pbar)
                             except Exception as e:
@@ -409,11 +417,16 @@ def convert_tiles(
                             pending.discard(future)
                             stats.laz_sources += 1  # Count source regardless of success
                             try:
-                                _, _filename, out_count = future.result()
+                                _, filename, out_count = future.result()
                                 stats.converted += out_count
                                 stats.laz_converted += out_count
                                 if out_count > len(resolutions):
                                     stats.laz_split_performed = True
+                                if delete_raw:
+                                    raw_path = os.path.join(laz_dir, filename)
+                                    if os.path.exists(raw_path):
+                                        os.remove(raw_path)
+                                        stats.deleted += 1
                                 pbar.update(1)
                                 _update_files_per_second(pbar)
                             except Exception as e:

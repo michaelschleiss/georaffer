@@ -98,6 +98,7 @@ class TileStore:
         regions: Sequence[str] | None = None,
         imagery_from: tuple[int, int | None] | None = None,
         quiet: bool = True,
+        delete_raw: bool = False,
     ) -> None:
         """Initialize TileStore.
 
@@ -108,11 +109,13 @@ class TileStore:
             imagery_from: Optional (from_year, to_year) filter for historic imagery.
                          None = latest only. (2010, None) = all from 2010.
             quiet: Suppress progress output during catalog building.
+            delete_raw: Delete raw source files after successful conversion.
         """
         self.path = Path(path)
         self.regions = list(regions) if regions else ["NRW", "RLP"]
         self.imagery_from = imagery_from
         self.quiet = quiet
+        self.delete_raw = delete_raw
 
         # Lazy-initialized downloaders
         self._downloaders: dict[Region, RegionDownloader] | None = None
@@ -383,6 +386,7 @@ class TileStore:
             process_pointclouds=(tile.tile_type == "dsm"),
             image_files=[str(raw_path)] if tile.tile_type == "image" else None,
             dsm_files=[str(raw_path)] if tile.tile_type == "dsm" else None,
+            delete_raw=self.delete_raw,
         )
 
     def _convert_batch(
@@ -406,4 +410,5 @@ class TileStore:
             process_pointclouds=bool(dsm_files),
             image_files=image_files if image_files else None,
             dsm_files=dsm_files if dsm_files else None,
+            delete_raw=self.delete_raw,
         )
