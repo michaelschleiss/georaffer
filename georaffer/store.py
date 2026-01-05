@@ -10,11 +10,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from queue import Queue
+from threading import Thread
 from typing import TYPE_CHECKING, Sequence
 
 from georaffer.config import Region, utm_zone_for_region
-from georaffer.conversion import convert_tiles
-from georaffer.downloading import DownloadTask, download_parallel_streams
+from georaffer.conversion import convert_file
 from georaffer.tiles import _filename_from_url
 
 if TYPE_CHECKING:
@@ -228,7 +229,7 @@ class TileStore:
             self._download_single(tile, raw_path)
 
         # Convert
-        self._convert_single(tile, raw_path, resolution)
+        self._convert_single(raw_path, resolution)
 
         return proc_path
 
@@ -236,22 +237,25 @@ class TileStore:
         self,
         tiles: Sequence[Tile],
         resolution: int,
+        max_pending: int = 4,
     ) -> dict[Tile, Path]:
-        """Batch retrieve multiple tiles with parallel download/convert.
+        """Batch retrieve multiple tiles with pipelined download/convert.
 
-        More efficient than calling get() repeatedly as it batches
-        downloads by region and converts in parallel.
+        Downloads and conversions run in parallel with backpressure:
+        downloads pause when `max_pending` tiles are waiting for conversion.
+        This overlaps network I/O with CPU-bound conversion work.
 
         Args:
             tiles: Tiles to retrieve
             resolution: Target resolution in pixels
+            max_pending: Max tiles downloaded but not yet converted (backpressure).
+                        Higher = more parallelism, lower = less disk usage.
 
         Returns:
             Dict mapping each Tile to its processed file Path
         """
         result: dict[Tile, Path] = {}
-        to_download: dict[Region, list[tuple[Tile, Path]]] = {}
-        to_convert: list[tuple[Tile, Path]] = []
+        to_process: list[tuple[Tile, Path, bool]] = []  # (tile, raw_path, needs_download)
 
         # Phase 1: Check caches and categorize work
         for tile in tiles:
@@ -261,23 +265,52 @@ class TileStore:
                 continue
 
             raw_path = self._raw_path(tile)
-            if raw_path.exists():
-                to_convert.append((tile, raw_path))
-            else:
-                if tile.region not in to_download:
-                    to_download[tile.region] = []
-                to_download[tile.region].append((tile, raw_path))
+            needs_download = not raw_path.exists()
+            to_process.append((tile, raw_path, needs_download))
 
-        # Phase 2: Parallel download by region
-        if to_download:
-            self._download_batch(to_download)
-            # Add downloaded tiles to convert queue
-            for region_tiles in to_download.values():
-                to_convert.extend(region_tiles)
+        if not to_process:
+            return result
 
-        # Phase 3: Batch convert
-        if to_convert:
-            self._convert_batch(to_convert, resolution)
+        # Phase 2: Pipelined download + convert with backpressure
+        # Queue holds tiles ready for conversion; bounded to limit pending work
+        ready_queue: Queue[tuple[Tile, Path] | None] = Queue(maxsize=max_pending)
+        errors: list[Exception] = []
+
+        def producer() -> None:
+            """Download tiles and enqueue for conversion."""
+            try:
+                for tile, raw_path, needs_download in to_process:
+                    if needs_download:
+                        self._download_single(tile, raw_path)
+                    ready_queue.put((tile, raw_path))  # Blocks if queue full
+            except Exception as e:
+                errors.append(e)
+            finally:
+                ready_queue.put(None)  # Sentinel signals completion
+
+        def consumer() -> None:
+            """Convert tiles from queue."""
+            try:
+                while True:
+                    item = ready_queue.get()  # Blocks until available
+                    if item is None:
+                        break
+                    tile, raw_path = item
+                    self._convert_single(raw_path, resolution)
+            except Exception as e:
+                errors.append(e)
+
+        producer_thread = Thread(target=producer, name="TileStore-producer")
+        consumer_thread = Thread(target=consumer, name="TileStore-consumer")
+
+        producer_thread.start()
+        consumer_thread.start()
+
+        producer_thread.join()
+        consumer_thread.join()
+
+        if errors:
+            raise errors[0]
 
         # Build result dict for all requested tiles
         for tile in tiles:
@@ -322,93 +355,10 @@ class TileStore:
         downloader = self.downloaders[tile.region]
         downloader.download_file(tile.url, str(raw_path))
 
-    def _download_batch(
-        self,
-        by_region: dict[Region, list[tuple[Tile, Path]]],
-    ) -> None:
-        """Batch download tiles by region using parallel streams."""
-        tasks: list[DownloadTask] = []
-
-        for region, tile_paths in by_region.items():
-            downloader = self.downloaders[region]
-
-            # Group by tile type
-            image_downloads: list[tuple[str, str]] = []
-            dsm_downloads: list[tuple[str, str]] = []
-
-            for tile, raw_path in tile_paths:
-                raw_path.parent.mkdir(parents=True, exist_ok=True)
-                download_entry = (tile.url, str(raw_path))
-                if tile.tile_type == "image":
-                    image_downloads.append(download_entry)
-                else:
-                    dsm_downloads.append(download_entry)
-
-            if image_downloads:
-                tasks.append(
-                    DownloadTask(
-                        name=f"{region.value} Imagery",
-                        downloads=image_downloads,
-                        downloader=downloader,
-                    )
-                )
-            if dsm_downloads:
-                tasks.append(
-                    DownloadTask(
-                        name=f"{region.value} DSM",
-                        downloads=dsm_downloads,
-                        downloader=downloader,
-                    )
-                )
-
-        if tasks:
-            _, stats = download_parallel_streams(tasks, force=False)
-            if stats.failed > 0:
-                raise RuntimeError(f"Download failed: {stats.failed} files")
-
     # =========================================================================
     # Private conversion helpers
     # =========================================================================
 
-    def _convert_single(
-        self,
-        tile: Tile,
-        raw_path: Path,
-        resolution: int,
-    ) -> None:
+    def _convert_single(self, raw_path: Path, resolution: int) -> None:
         """Convert a single raw tile to processed format."""
-        convert_tiles(
-            raw_dir=str(self.path / "raw"),
-            processed_dir=str(self.path / "processed"),
-            resolutions=[resolution],
-            max_workers=1,
-            process_images=(tile.tile_type == "image"),
-            process_pointclouds=(tile.tile_type == "dsm"),
-            image_files=[str(raw_path)] if tile.tile_type == "image" else None,
-            dsm_files=[str(raw_path)] if tile.tile_type == "dsm" else None,
-            delete_raw=self.delete_raw,
-        )
-
-    def _convert_batch(
-        self,
-        tiles_and_paths: list[tuple[Tile, Path]],
-        resolution: int,
-    ) -> None:
-        """Batch convert multiple raw tiles."""
-        image_files = [str(p) for t, p in tiles_and_paths if t.tile_type == "image"]
-        dsm_files = [str(p) for t, p in tiles_and_paths if t.tile_type == "dsm"]
-
-        if not image_files and not dsm_files:
-            return
-
-        convert_tiles(
-            raw_dir=str(self.path / "raw"),
-            processed_dir=str(self.path / "processed"),
-            resolutions=[resolution],
-            max_workers=4,
-            process_images=bool(image_files),
-            process_pointclouds=bool(dsm_files),
-            image_files=image_files if image_files else None,
-            dsm_files=dsm_files if dsm_files else None,
-            delete_raw=self.delete_raw,
-        )
+        convert_file(str(raw_path), str(self.path / "processed"), resolution, self.delete_raw)

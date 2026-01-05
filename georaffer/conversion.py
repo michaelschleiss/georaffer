@@ -464,3 +464,34 @@ def convert_tiles(
 
     stats.interrupted = interrupted
     return stats
+
+
+def convert_file(
+    input_path: str,
+    output_dir: str,
+    resolution: int,
+    delete_raw: bool = False,
+) -> None:
+    """Convert a single raw file to GeoTIFF.
+
+    Calls worker directly - no ProcessPoolExecutor overhead for single files.
+
+    Args:
+        input_path: Path to raw file (JP2/TIF/LAZ/ZIP)
+        output_dir: Base output directory (will use image/ or dsm/ subdirs)
+        resolution: Target resolution in pixels
+        delete_raw: Delete raw file after successful conversion
+    """
+    path = Path(input_path)
+    # Determine type from parent directory (raw/image vs raw/dsm)
+    is_image = path.parent.name == "image"
+
+    args = (path.name, str(path.parent), output_dir, [resolution], None, 1.0, False, None)
+
+    if is_image:
+        convert_jp2_worker(args)
+    else:
+        convert_dsm_worker(args)
+
+    if delete_raw:
+        path.unlink(missing_ok=True)
