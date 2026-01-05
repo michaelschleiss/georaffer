@@ -309,12 +309,10 @@ class RLPDownloader(RegionDownloader):
     def _parse_laz_tiles(self, root: ET.Element) -> dict[tuple[int, int], dict[int, dict]]:
         """Parse LAZ tiles from ATOM feed XML.
 
-        Note: RLP LAZ filenames don't include year. We use current year as placeholder;
-        actual year is extracted from LAZ header during conversion.
+        Note: RLP LAZ filenames don't include year. Year is assigned later from
+        the corresponding image tile (same campaign).
         """
-        from datetime import date as date_cls
-
-        current_year = date_cls.today().year
+        placeholder_year = 0  # Will be replaced with image year
         laz_tiles: dict[tuple[int, int], dict[int, dict]] = {}
         for link_elem in root.findall(".//link"):
             url = link_elem.get("href")
@@ -329,7 +327,7 @@ class RLPDownloader(RegionDownloader):
                 grid_x = int(match.group(1))
                 grid_y = int(match.group(2))
                 coords = (grid_x, grid_y)
-                laz_tiles.setdefault(coords, {})[current_year] = {
+                laz_tiles.setdefault(coords, {})[placeholder_year] = {
                     "url": url,
                     "acquisition_date": None,
                 }
@@ -415,9 +413,19 @@ class RLPDownloader(RegionDownloader):
         # (Historic WMS doesn't have layers for the newest year yet)
         self._fetch_current_wms_dates(tiles)
 
-        # 3. LAZ tiles
+        # 3. LAZ tiles - use year from current image (same campaign)
         root = fetch_xml_feed(self._session, self._laz_feed_url, wrap_content=True)
-        laz_tiles = self._parse_laz_tiles(root)
+        raw_laz = self._parse_laz_tiles(root)
+        laz_tiles: dict[tuple[int, int], dict[int, dict]] = {}
+        for coords, year_dict in raw_laz.items():
+            url = next(iter(year_dict.values()))["url"]
+            image_url = current_tiles.get(coords)
+            if not image_url:
+                raise ValueError(f"RLP LAZ tile at {coords} has no matching image tile")
+            year = self._extract_year_from_url(image_url)
+            if year is None:
+                raise ValueError(f"Cannot extract year from RLP image URL: {image_url}")
+            laz_tiles[coords] = {year: {"url": url, "acquisition_date": None}}
         if not self.quiet:
             print(f"  LAZ: {len(laz_tiles)} tiles")
 
