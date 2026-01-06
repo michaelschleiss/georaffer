@@ -118,7 +118,6 @@ With `--output ./tiles` the pipeline creates:
     │   └── <pixels>/      # Orthophoto GeoTIFFs (tile size in pixels, e.g. 2000 for 0.5 m/px on 1 km tiles)
     ├── dsm
     │   └── <pixels>/      # DSM GeoTIFFs with the same convention
-    └── provenance.csv     # Per-tile provenance metadata
 ```
 
 `<pixels>` matches the internal resolution derived from `--pixel-size` (meters per pixel). For example, with the default `--pixel-size 0.5` on a 1 km grid, georaffer produces `processed/image/2000/` and `processed/dsm/2000/`.

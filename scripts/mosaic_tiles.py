@@ -25,9 +25,9 @@ try:
     from PIL import Image, ImageColor, ImageDraw, ImageFont
 except Exception:  # pragma: no cover - optional dependency
     Image = None
+    ImageColor = None
+    ImageDraw = None
     ImageFont = None
-
-import csv
 
 # Allow running as standalone script without installing the package
 if __package__ is None or __package__ == "":  # pragma: no cover
@@ -67,17 +67,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--annotate-year",
         action="store_true",
-        help="Overlay year labels from provenance.csv (no color coding; outlines + text)",
+        help="Overlay year labels (requires catalog metadata; wiring pending)",
     )
     parser.add_argument(
         "--annotate-season",
         action="store_true",
-        help="Overlay season fills (Winter/Spring/Summer/Autumn) derived from acquisition_date in provenance.csv",
-    )
-    parser.add_argument(
-        "--provenance",
-        default=None,
-        help="Path to provenance.csv (defaults to <input-dir>/../provenance.csv)",
+        help="Overlay season fills from acquisition_date (requires catalog metadata; wiring pending)",
     )
     return parser.parse_args()
 
@@ -138,17 +133,8 @@ def _show_mosaic(array):
         print(f"[mosaic] PIL preview failed ({exc})", file=sys.stderr)
 
 
-def _load_provenance(path: str):
-    rows = []
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            rows.append(row)
-    return rows
-
-
 def _parse_coords(row):
-    """Return grid coords, trying provenance fields then filenames as fallback."""
+    """Return grid coords, trying metadata fields then filenames as fallback."""
 
     def _normalize_coords(coords):
         gx, gy = coords
@@ -173,7 +159,7 @@ def _parse_coords(row):
         return None, None
 
 
-def _annotate_year(mosaic_array, transform, provenance_rows, grid_size_m=1000):
+def _annotate_year(mosaic_array, transform, metadata_rows, grid_size_m=1000):
     """Draw year overlays using PIL; mosaic_array shape (bands, rows, cols)."""
     if Image is None:
         print("[mosaic] PIL not installed; skipping year annotation", file=sys.stderr)
@@ -200,7 +186,7 @@ def _annotate_year(mosaic_array, transform, provenance_rows, grid_size_m=1000):
         if font is None:
             try:
                 default = ImageFont.load_default()
-                # upscale default bitmap font by rendering via truetype fallback if path exists
+                # Upscale default bitmap font by rendering via truetype fallback if path exists.
                 if hasattr(default, "path"):
                     font = ImageFont.truetype(default.path, size=60)
                 else:
@@ -223,7 +209,7 @@ def _annotate_year(mosaic_array, transform, provenance_rows, grid_size_m=1000):
     ]
     seen_years = []
     tile_years = {}  # (gx, gy) -> set(years)
-    for row in provenance_rows:
+    for row in metadata_rows:
         yr = row.get("year") or row.get("acquisition_date") or "unknown"
         gx, gy = _parse_coords(row)
         if gx is None or gy is None:
@@ -295,7 +281,7 @@ def _annotate_year(mosaic_array, transform, provenance_rows, grid_size_m=1000):
 
     if skipped:
         print(
-            f"[mosaic] skipped {skipped} provenance rows without grid coords for annotation",
+            f"[mosaic] skipped {skipped} metadata rows without grid coords for annotation",
             file=sys.stderr,
         )
     print(f"[mosaic] drew {drawn} tile overlays" + (" (none drawn)" if drawn == 0 else ""))
@@ -386,7 +372,7 @@ def _season_from_date(date_str: str) -> str:
     return "unknown"
 
 
-def _annotate_season(mosaic_array, transform, provenance_rows, grid_size_m=1000):
+def _annotate_season(mosaic_array, transform, metadata_rows, grid_size_m=1000):
     """Draw season overlays using PIL; mosaic_array shape (bands, rows, cols)."""
     if Image is None:
         print("[mosaic] PIL not installed; skipping season annotation", file=sys.stderr)
@@ -426,7 +412,7 @@ def _annotate_season(mosaic_array, transform, provenance_rows, grid_size_m=1000)
 
     tile_seasons = {}
     seen_seasons = []
-    for row in provenance_rows:
+    for row in metadata_rows:
         season = _season_from_date(row.get("acquisition_date") or "")
         gx, gy = _parse_coords(row)
         if gx is None or gy is None:
@@ -493,7 +479,7 @@ def _annotate_season(mosaic_array, transform, provenance_rows, grid_size_m=1000)
 
     if skipped:
         print(
-            f"[mosaic] skipped {skipped} provenance rows without grid coords for season annotation",
+            f"[mosaic] skipped {skipped} metadata rows without grid coords for season annotation",
             file=sys.stderr,
         )
     print(f"[mosaic] drew {drawn} tile overlays" + (" (none drawn)" if drawn == 0 else ""))
@@ -568,7 +554,7 @@ def build_mosaic(
     show: bool = False,
     annotate_year: bool = False,
     annotate_season: bool = False,
-    provenance_path: str | None = None,
+    metadata_rows: list[dict] | None = None,
 ) -> None:
     env_opts = {
         "GDAL_NUM_THREADS": num_threads,
@@ -614,84 +600,82 @@ def build_mosaic(
                 mosaic = mosaic.astype("uint8")
                 profile["dtype"] = "uint8"
 
-        # Optional year annotation: draw on the mosaic array before writing
         if annotate_year and annotate_season:
             raise SystemExit("Choose only one of --annotate-year or --annotate-season.")
 
         if annotate_year or annotate_season:
-            prov_path = provenance_path
-            if not os.path.exists(prov_path):
+            if metadata_rows is None:
+                raise SystemExit(
+                    "[mosaic] annotation requested but no metadata rows provided; "
+                    "catalog wiring is pending."
+                )
+
+            rows = metadata_rows
+            # Restrict metadata rows to the tiles actually mosaicked.
+            # Prefer matching by processed filename (handles UTM-named split outputs),
+            # then fall back to grid coords when filename is unavailable.
+            tile_basenames = {os.path.basename(p) for p in tile_paths}
+            wanted_coords = set()
+            for p in tile_paths:
+                coords = parse_tile_coords(os.path.basename(p))
+                if coords:
+                    wanted_coords.add(coords)
+
+            filtered = []
+            seen_files = set()
+            seen_coords = set()
+            for r in rows:
+                processed_name = r.get("processed_file") or r.get("source_file")
+                processed_base = os.path.basename(processed_name) if processed_name else None
+
+                # Primary match: exact processed filename used in this mosaic
+                if (
+                    processed_base
+                    and processed_base in tile_basenames
+                    and processed_base not in seen_files
+                ):
+                    filtered.append(r)
+                    seen_files.add(processed_base)
+                    # Also mark its coords to avoid double-counting via fallback
+                    gx, gy = _parse_coords(r)
+                    if gx is not None and gy is not None:
+                        seen_coords.add((gx, gy))
+                    continue
+
+                # Fallback: coordinate match when filename isn't present in metadata
+                gx, gy = _parse_coords(r)
+                if gx is None or gy is None:
+                    continue
+                if wanted_coords and (gx, gy) not in wanted_coords:
+                    continue
+                if (gx, gy) in seen_coords:
+                    continue
+                filtered.append(r)
+                seen_coords.add((gx, gy))
+
+            if len(filtered) != len(rows):
                 print(
-                    f"[mosaic] provenance not found at {prov_path}; skipping annotation",
+                    f"[mosaic] filtered metadata rows to {len(filtered)}/{len(rows)} "
+                    "matching tiles",
                     file=sys.stderr,
                 )
+            if annotate_year:
+                annotated = _annotate_year(mosaic, transform, filtered)
+                anno_label = "Year"
             else:
-                rows = _load_provenance(prov_path)
-
-                # Restrict provenance to the tiles actually mosaicked.
-                # Prefer matching by processed filename (handles UTM-named split outputs),
-                # then fall back to grid coords when filename is unavailable.
-                tile_basenames = {os.path.basename(p) for p in tile_paths}
-                wanted_coords = set()
-                for p in tile_paths:
-                    coords = parse_tile_coords(os.path.basename(p))
-                    if coords:
-                        wanted_coords.add(coords)
-
-                filtered = []
-                seen_files = set()
-                seen_coords = set()
-                for r in rows:
-                    processed_name = r.get("processed_file") or r.get("source_file")
-                    processed_base = os.path.basename(processed_name) if processed_name else None
-
-                    # Primary match: exact processed filename used in this mosaic
-                    if (
-                        processed_base
-                        and processed_base in tile_basenames
-                        and processed_base not in seen_files
-                    ):
-                        filtered.append(r)
-                        seen_files.add(processed_base)
-                        # Also mark its coords to avoid double-counting via fallback
-                        gx, gy = _parse_coords(r)
-                        if gx is not None and gy is not None:
-                            seen_coords.add((gx, gy))
-                        continue
-
-                    # Fallback: coordinate match when filename isn't present in provenance
-                    gx, gy = _parse_coords(r)
-                    if gx is None or gy is None:
-                        continue
-                    if wanted_coords and (gx, gy) not in wanted_coords:
-                        continue
-                    if (gx, gy) in seen_coords:
-                        continue
-                    filtered.append(r)
-                    seen_coords.add((gx, gy))
-
-                if len(filtered) != len(rows):
-                    print(
-                        f"[mosaic] filtered provenance rows to {len(filtered)}/{len(rows)} matching tiles",
-                        file=sys.stderr,
-                    )
-                if annotate_year:
-                    annotated = _annotate_year(mosaic, transform, filtered)
-                    anno_label = "Year"
+                annotated = _annotate_season(mosaic, transform, filtered)
+                anno_label = "Season"
+            if annotated is not None:
+                annotated_np = np.array(annotated)
+                # Convert HWC -> CHW
+                if annotated_np.ndim == 2:  # single band
+                    mosaic = annotated_np[np.newaxis, ...]
+                    profile["count"] = 1
                 else:
-                    annotated = _annotate_season(mosaic, transform, filtered)
-                    anno_label = "Season"
-                if annotated is not None:
-                    annotated_np = np.array(annotated)
-                    # Convert HWC -> CHW
-                    if annotated_np.ndim == 2:  # single band
-                        mosaic = annotated_np[np.newaxis, ...]
-                        profile["count"] = 1
-                    else:
-                        mosaic = annotated_np.transpose(2, 0, 1)
-                        profile["count"] = mosaic.shape[0]
-                    profile["dtype"] = mosaic.dtype
-                    print(f"[mosaic] {anno_label} annotation applied to output (single file).")
+                    mosaic = annotated_np.transpose(2, 0, 1)
+                    profile["count"] = mosaic.shape[0]
+                profile["dtype"] = mosaic.dtype
+                print(f"[mosaic] {anno_label} annotation applied to output (single file).")
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
         with rasterio.open(output_path, "w", **profile) as dst:
@@ -705,12 +689,6 @@ def main() -> None:
     args = parse_args()
     tiles = find_tiles(args.input_dir, args.pattern)
     print(f"Found {len(tiles)} tiles. Building mosaic -> {args.output}")
-    prov_default = args.provenance
-    if prov_default is None:
-        # Default: provenance.csv next to the resolution folder's parent (processed/)
-        prov_default = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(args.input_dir))), "provenance.csv"
-        )
     build_mosaic(
         tiles,
         args.output,
@@ -719,7 +697,6 @@ def main() -> None:
         show=args.show,
         annotate_year=args.annotate_year,
         annotate_season=args.annotate_season,
-        provenance_path=prov_default,
     )
     print("Done.")
 
