@@ -245,12 +245,9 @@ class TestRLPParseLAZTiles:
         assert len(tiles) == 2
         assert (364, 5582) in tiles
         assert (366, 5584) in tiles
-        # Verify year-indexed tile_info format (RLP uses current year as placeholder)
-        from datetime import date
-        current_year = date.today().year
-        assert current_year in tiles[(364, 5582)]
-        assert tiles[(364, 5582)][current_year]["url"].endswith(".laz")
-        assert "acquisition_date" in tiles[(364, 5582)][current_year]
+        # Returns coords -> url mapping (year assigned later from image tile)
+        assert tiles[(364, 5582)].endswith(".laz")
+        assert tiles[(366, 5584)].endswith(".laz")
 
     def test_parse_feed_raises_on_invalid_filename(self, downloader):
         """Test that invalid filenames raise ValueError."""
@@ -356,6 +353,7 @@ class TestRLPLoadCatalog:
             (366, 5608): "http://example.com/dop20rgb_32_366_5608_2_rp_2023.jp2",
         }
         monkeypatch.setattr(downloader, "_parse_jp2_tiles", lambda root: current_tiles)
+        monkeypatch.setattr(downloader, "_parse_laz_tiles", lambda root: {})
 
         # Mock the XML feed fetch
         def mock_fetch_xml(session, url, wrap_content=False):
@@ -390,6 +388,7 @@ class TestRLPLoadCatalog:
             (364, 5606): "http://example.com/dop20rgb_32_364_5606_2_rp_2023.jp2",
         }
         monkeypatch.setattr(downloader, "_parse_jp2_tiles", lambda root: current_tiles)
+        monkeypatch.setattr(downloader, "_parse_laz_tiles", lambda root: {})
 
         def mock_fetch_xml(session, url, wrap_content=False):
             return ET.fromstring("<root></root>")

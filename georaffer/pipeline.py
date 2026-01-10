@@ -12,7 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
-from georaffer.config import UTM_ZONE_BY_REGION, Region, get_tile_size_km
+from georaffer.config import FILE_TILE_SIZE_KM, UTM_ZONE_BY_REGION, Region
 from georaffer.conversion import convert_tiles
 from georaffer.downloaders import BBDownloader, BWDownloader, BYDownloader, NRWDownloader, RLPDownloader
 from georaffer.downloading import DownloadTask, download_parallel_streams
@@ -293,11 +293,12 @@ def process_tiles(
     by_laz_count = len(downloads_by_source.get("by_laz", []))
 
     # Calculate split factors per region (only for regions with tiles)
-    nrw_tile_km = get_tile_size_km(Region.NRW)
-    rlp_tile_km = get_tile_size_km(Region.RLP)
-    bb_tile_km = get_tile_size_km(Region.BB)
-    bw_tile_km = get_tile_size_km(Region.BW)
-    by_tile_km = get_tile_size_km(Region.BY)
+    # Use FILE_TILE_SIZE_KM (size of files after extraction) for split calculations
+    nrw_tile_km = FILE_TILE_SIZE_KM[Region.NRW]
+    rlp_tile_km = FILE_TILE_SIZE_KM[Region.RLP]
+    bb_tile_km = FILE_TILE_SIZE_KM[Region.BB]
+    bw_tile_km = FILE_TILE_SIZE_KM[Region.BW]
+    by_tile_km = FILE_TILE_SIZE_KM[Region.BY]
     nrw_has_tiles = nrw_jp2_count > 0 or nrw_laz_count > 0
     rlp_has_tiles = rlp_jp2_count > 0 or rlp_laz_count > 0
     bb_has_tiles = bb_jp2_count > 0 or bb_laz_count > 0

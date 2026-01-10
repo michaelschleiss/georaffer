@@ -17,7 +17,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from georaffer.config import Region, get_tile_size_km
+from georaffer.config import FILE_TILE_SIZE_KM, Region
 from georaffer.converters import convert_jp2, convert_laz
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
@@ -91,7 +91,7 @@ def _outputs_exist(
         return False
 
     base_x, base_y = coords
-    tile_km = get_tile_size_km(region)
+    tile_km = FILE_TILE_SIZE_KM[region]
 
     try:
         split_factor = compute_split_factor(tile_km, grid_size_km)

@@ -202,6 +202,10 @@ class TestBYFilenames:
 class TestBYCatalogDates:
     """Tests for BY catalog acquisition dates."""
 
+    @pytest.fixture
+    def downloader(self, tmp_path):
+        return BYDownloader(str(tmp_path))
+
     def test_current_tile_uses_latest_wms_year(self, tmp_path, monkeypatch):
         """Metalink tiles should inherit the latest WMS year/date."""
         downloader = BYDownloader(str(tmp_path))

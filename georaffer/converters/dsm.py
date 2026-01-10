@@ -12,10 +12,10 @@ from rasterio.transform import Affine
 from georaffer.config import (
     DSM_DTYPE,
     DSM_NODATA,
+    FILE_TILE_SIZE_KM,
     METERS_PER_KM,
     REPROJECT_THREADS,
     Region,
-    get_tile_size_km,
     utm_zone_str_for_region,
 )
 from georaffer.converters.utils import (
@@ -50,7 +50,7 @@ def convert_dsm_raster(
         target_sizes = list(output_paths.keys())
 
     threads = num_threads or REPROJECT_THREADS
-    tile_km = get_tile_size_km(region)
+    tile_km = FILE_TILE_SIZE_KM[region]
     ratio_int = round(tile_km / grid_size_km) if grid_size_km > 0 else 1
     split_factor = compute_split_factor(tile_km, grid_size_km)
     utm_zone = utm_zone_str_for_region(region)

@@ -37,27 +37,20 @@ class Region(str, Enum):
 UTM_ZONE = 32
 METERS_PER_KM = 1000
 
-# Native tile sizes from data providers (meters)
-# Used for WMS requests and conversion splitting.
+# *_GRID_SIZE (meters): Download tile size. Used for WMS/download URLs.
+# FILE_TILE_SIZE_KM (km): File size after extraction. Used for conversion/splitting.
+# These differ for BW: downloads are 2km ZIPs containing 1km sub-tiles.
 NRW_GRID_SIZE = 1000  # 1km
 RLP_GRID_SIZE = 2000  # 2km
 BB_GRID_SIZE = 1000  # 1km
-BW_GRID_SIZE = 2000  # 2km
+BW_GRID_SIZE = 2000  # 2km ZIPs (contain 1km sub-tiles)
 BY_GRID_SIZE = 1000  # 1km
 
-# Catalog granularity (km) - the coordinate resolution in build_catalog() output.
-#
-# This differs from native tile size when a downloader pre-expands coordinates:
-# - Most regions: catalog granularity == native tile size
-# - BW: WFS provides 1km metadata, so catalog is already at 1km granularity
-#   (multiple 1km entries share one 2km download URL)
-#
-# Used by expand_to_1km() to determine if expansion is needed.
-CATALOG_GRANULARITY_KM: dict[Region, int] = {
+FILE_TILE_SIZE_KM: dict[Region, int] = {
     Region.NRW: 1,
     Region.RLP: 2,
     Region.BB: 1,
-    Region.BW: 1,  # WFS provides 1km metadata (pre-expanded)
+    Region.BW: 1,  # Extracted from 2km ZIPs
     Region.BY: 1,
 }
 
@@ -168,21 +161,6 @@ BY_DOM_PATTERN = re.compile(r"32(\d{3})_(\d{4})_20_DOM\.tif$")
 # =============================================================================
 # Helper Functions
 # =============================================================================
-
-
-def get_tile_size_km(region: Region) -> float:
-    """Native tile size in kilometers."""
-    if region == Region.RLP:
-        tile_size_m = RLP_GRID_SIZE
-    elif region == Region.BB:
-        tile_size_m = BB_GRID_SIZE
-    elif region == Region.BW:
-        tile_size_m = BW_GRID_SIZE
-    elif region == Region.BY:
-        tile_size_m = BY_GRID_SIZE
-    else:
-        tile_size_m = NRW_GRID_SIZE
-    return tile_size_m / METERS_PER_KM
 
 
 UTM_ZONE_BY_REGION = {

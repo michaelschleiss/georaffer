@@ -306,14 +306,14 @@ class RLPDownloader(RegionDownloader):
                 jp2_tiles[(grid_x, grid_y)] = url
         return jp2_tiles
 
-    def _parse_laz_tiles(self, root: ET.Element) -> dict[tuple[int, int], dict[int, dict]]:
+    def _parse_laz_tiles(self, root: ET.Element) -> dict[tuple[int, int], str]:
         """Parse LAZ tiles from ATOM feed XML.
 
-        Note: RLP LAZ filenames don't include year. Year is assigned later from
-        the corresponding image tile (same campaign).
+        Returns:
+            Mapping of (grid_x, grid_y) -> url. Year is assigned later from
+            the corresponding image tile (same campaign).
         """
-        placeholder_year = 0  # Will be replaced with image year
-        laz_tiles: dict[tuple[int, int], dict[int, dict]] = {}
+        laz_tiles: dict[tuple[int, int], str] = {}
         for link_elem in root.findall(".//link"):
             url = link_elem.get("href")
             if url and url.endswith(".laz"):
@@ -326,11 +326,7 @@ class RLPDownloader(RegionDownloader):
                     )
                 grid_x = int(match.group(1))
                 grid_y = int(match.group(2))
-                coords = (grid_x, grid_y)
-                laz_tiles.setdefault(coords, {})[placeholder_year] = {
-                    "url": url,
-                    "acquisition_date": None,
-                }
+                laz_tiles[(grid_x, grid_y)] = url
         return laz_tiles
 
     def _load_catalog(self) -> Catalog:
@@ -417,8 +413,7 @@ class RLPDownloader(RegionDownloader):
         root = fetch_xml_feed(self._session, self._laz_feed_url, wrap_content=True)
         raw_laz = self._parse_laz_tiles(root)
         laz_tiles: dict[tuple[int, int], dict[int, dict]] = {}
-        for coords, year_dict in raw_laz.items():
-            url = next(iter(year_dict.values()))["url"]
+        for coords, url in raw_laz.items():
             image_url = current_tiles.get(coords)
             if not image_url:
                 raise ValueError(f"RLP LAZ tile at {coords} has no matching image tile")

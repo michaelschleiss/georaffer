@@ -242,7 +242,7 @@ class TestTileStoreGet:
         result = store.get(tile, resolution=2000)
         assert result == proc_path
 
-    @patch("georaffer.store.convert_tiles")
+    @patch("georaffer.store.convert_file")
     def test_get_converts_if_raw_exists(self, mock_convert, tmp_path):
         """get() converts if raw exists but processed doesn't."""
         store = TileStore(path=tmp_path, regions=["NRW"])
@@ -263,11 +263,10 @@ class TestTileStoreGet:
 
         store.get(tile, resolution=2000)
 
-        # Verify convert_tiles was called
+        # Verify convert_file was called with correct args
         mock_convert.assert_called_once()
-        call_kwargs = mock_convert.call_args.kwargs
-        assert call_kwargs["resolutions"] == [2000]
-        assert call_kwargs["process_images"] is True
+        call_args = mock_convert.call_args
+        assert call_args[0][2] == 2000  # resolution
 
 
 class TestTileStoreGetMany:

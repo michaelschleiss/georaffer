@@ -50,13 +50,13 @@ from georaffer.config import (
     BW_DOP_PATTERN,
     BY_DOM_PATTERN,
     BY_DOP_PATTERN,
+    FILE_TILE_SIZE_KM,
     METERS_PER_KM,
     NRW_JP2_PATTERN,
     NRW_LAZ_PATTERN,
     RLP_JP2_PATTERN,
     RLP_LAZ_PATTERN,
     Region,
-    get_tile_size_km,
     utm_zone_str_for_region,
 )
 from georaffer.converters import convert_dsm_raster, convert_jp2, convert_laz, get_laz_year
@@ -166,7 +166,7 @@ def convert_jp2_worker(args: tuple) -> tuple[bool, str, int]:
     try:
         # Setup output paths for each resolution
         outputs_count = 0
-        tile_km = get_tile_size_km(region)
+        tile_km = FILE_TILE_SIZE_KM[region]
         split_factor = compute_split_factor(tile_km, grid_size_km)
 
         if input_path.suffix.lower() == ".zip" and region == Region.BW:
@@ -274,7 +274,7 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, str, int]:
 
     if input_path.suffix.lower() in (".tif", ".zip"):
         try:
-            tile_km = get_tile_size_km(region)
+            tile_km = FILE_TILE_SIZE_KM[region]
             split_factor = compute_split_factor(tile_km, grid_size_km)
 
             if input_path.suffix.lower() == ".zip" and region == Region.BW:
@@ -364,7 +364,7 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, str, int]:
             profiling=profiling,
         )
 
-        tile_km = get_tile_size_km(region)
+        tile_km = FILE_TILE_SIZE_KM[region]
         split_factor = compute_split_factor(tile_km, grid_size_km)
         outputs_count = len(resolutions) * split_factor
 

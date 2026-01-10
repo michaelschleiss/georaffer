@@ -361,7 +361,8 @@ class TestFetchCatalog:
 
     def test_build_catalog_ignores_stale_disk_cache(self, downloader, tmp_path):
         """Test that stale disk cache triggers reload."""
-        old_time = datetime.now() - timedelta(days=60)
+        from georaffer.config import CATALOG_TTL_DAYS
+        old_time = datetime.now() - timedelta(days=CATALOG_TTL_DAYS + 1)
         cache_data = {
             "created_at": old_time.isoformat(),
             "image_tiles": {"350,5600": {"2020": {"url": "http://stale.com", "acquisition_date": None}}},

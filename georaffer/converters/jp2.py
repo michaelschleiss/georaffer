@@ -13,10 +13,10 @@ from rasterio.enums import ColorInterp, Resampling
 from rasterio.transform import Affine, from_bounds
 
 from georaffer.config import (
+    FILE_TILE_SIZE_KM,
     METERS_PER_KM,
     REPROJECT_THREADS,
     Region,
-    get_tile_size_km,
     utm_zone_str_for_region,
 )
 from georaffer.converters.utils import (
@@ -112,7 +112,7 @@ def convert_jp2(
         max_req = None if want_native else max(resolutions)
         year_int_val = int(year) if isinstance(year, str) and year.isdigit() else None
 
-        tile_km = get_tile_size_km(region)
+        tile_km = FILE_TILE_SIZE_KM[region]
         ratio_int = round(tile_km / grid_size_km) if grid_size_km > 0 else 1
         split_factor = compute_split_factor(tile_km, grid_size_km)
 
@@ -182,7 +182,7 @@ def convert_jp2(
                     coords = parse_tile_coords(filename)
     
                     if (crs is None or transform == Affine.identity()) and coords:
-                        tile_m = get_tile_size_km(region) * METERS_PER_KM
+                        tile_m = FILE_TILE_SIZE_KM[region] * METERS_PER_KM
                         left = coords[0] * METERS_PER_KM
                         bottom = coords[1] * METERS_PER_KM
                         right = left + tile_m
