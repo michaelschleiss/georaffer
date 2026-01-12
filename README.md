@@ -1,6 +1,6 @@
 # georaffer
 
-Download German orthophotos and DSM tiles (NRW, RLP, BB) as GeoTIFF.
+Download German orthophotos and DSM tiles as GeoTIFF. Supports NRW, RLP, BB, BW, BY, and TH.
 
 ## Installation
 
@@ -48,7 +48,7 @@ georaffer tiles 362,5604 --output ./tiles
 ```
 
 See `georaffer --help` for all options.
-By default, downloads target NRW + RLP; add `--region bb` to include Brandenburg.
+By default, downloads target NRW + RLP; use `--region` to select others (e.g., `--region bb,bw,by,th`).
 
 When using the `tif` command, aligned outputs are written to `./tiles/aligned/` and
 match the reference GeoTIFF grid (CRS, pixel size, width/height, and bounds).
@@ -89,7 +89,12 @@ Raw downloads keep the provider filenames:
 - NRW DSM (LAZ): `bdom50_32_<grid_x>_<grid_y>_<n>_nw_<year>.laz`
 - RLP orthophotos (JP2): `dop20rgb_32_<grid_x>_<grid_y>_2_rp_<year>.jp2`
 - RLP DSM (LAZ): `bdom20rgbi_32_<grid_x>_<grid_y>_2_rp.laz`
-- BB DSM (ZIP → TIF): `bdom_<zone><grid_x>-<grid_y>.zip` (extracts to `.tif`)
+- BB DOP/DSM (ZIP): `dop_<zone><grid_x>-<grid_y>.zip`, `bdom_<zone><grid_x>-<grid_y>.zip`
+- BW DOP/DSM (ZIP): `dop20rgb_32_<grid_x>_<grid_y>_2_bw.zip`, `dom1_32_<grid_x>_<grid_y>_2_bw.zip`
+- BY DOP (TIF): `32<grid_x>_<grid_y>.tif` or `32<grid_x>_<grid_y>_<year>.tif`
+- BY DSM (TIF): `32<grid_x>_<grid_y>_20_DOM.tif`
+- TH DOP (ZIP): `dop20rgb_32_<grid_x>_<grid_y>_<n>_th_<year>.zip`
+- TH DSM (ZIP): `las_32_<grid_x>_<grid_y>_1_th_<year_range>.zip`
 
 Processed GeoTIFFs use a unified UTM-based pattern:
 
@@ -97,8 +102,8 @@ Processed GeoTIFFs use a unified UTM-based pattern:
 
 where:
 
-- `<region>` is `nrw`, `rlp`, or `bb`
-- `<zone>` is the UTM zone (`32` for NRW/RLP, `33` for BB)
+- `<region>` is `nrw`, `rlp`, `bb`, `bw`, `by`, or `th`
+- `<zone>` is the UTM zone (`32` for NRW/RLP/BW/BY/TH, `33` for BB)
 - `<easting>` and `<northing>` are UTM coordinates of the tile’s south‑west corner in meters (for example `350000,5600000`)
 - `<year>` is the acquisition year inferred from the source filename or LAZ header (falls back to `latest` when no year is available)
 
@@ -111,8 +116,8 @@ With `--output ./tiles` the pipeline creates:
 ```text
 ./tiles
 ├── raw
-│   ├── image        # Provider JP2 orthophotos (NRW, RLP)
-│   └── dsm          # Provider DSM tiles (LAZ for NRW/RLP, TIF for BB)
+│   ├── image        # Provider orthophotos (JP2, TIF, or ZIP depending on region)
+│   └── dsm          # Provider DSM tiles (LAZ, TIF, or ZIP depending on region)
 └── processed
     ├── image
     │   └── <pixels>/      # Orthophoto GeoTIFFs (tile size in pixels, e.g. 2000 for 0.5 m/px on 1 km tiles)
@@ -143,8 +148,14 @@ German states publish orthophotos and elevation models as open data—free for c
 | NRW | [Geobasis NRW](https://www.opengeodata.nrw.de) | [dl-de/zero-2-0](https://www.govdata.de/dl-de/zero-2-0) |
 | RLP | [LVermGeo RLP](https://lvermgeo.rlp.de) | [dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0) ¹ |
 | BB | [LGB Brandenburg](https://geobasis-bb.de) | [dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0) ¹ |
+| BW | [LGL BW](https://www.lgl-bw.de) | [dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0) ² |
+| BY | [LDBV Bayern](https://geodaten.bayern.de) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) ³ |
+| TH | [GDI-Th](https://geoportal.thueringen.de) | [dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0) ⁴ |
 
-¹ Attribution required: `©GeoBasis-DE/<provider> (<year>), dl-de/by-2-0`
+¹ Attribution: `© GeoBasis-DE / <provider>, <year>, dl-de/by-2-0`
+² Attribution: `Datenquelle: LGL, www.lgl-bw.de`
+³ Attribution: `Bayerische Vermessungsverwaltung – www.geodaten.bayern.de`
+⁴ Attribution: `© GDI-Th`
 
 ## License
 

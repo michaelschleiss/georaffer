@@ -7,7 +7,7 @@ import os as _os
 _os.environ.setdefault("OMP_MAX_ACTIVE_LEVELS", "1")
 
 from georaffer.converters import convert_dsm_raster, convert_jp2, convert_laz
-from georaffer.downloaders import BBDownloader, NRWDownloader, RLPDownloader
+from georaffer.downloaders import BBDownloader, NRWDownloader, RLPDownloader, THDownloader
 from georaffer.grids import latlon_to_utm
 from georaffer.pipeline import process_tiles
 from georaffer.store import Tile, TileStore
@@ -17,6 +17,7 @@ __all__ = [
     "BBDownloader",
     "NRWDownloader",
     "RLPDownloader",
+    "THDownloader",
     "Tile",
     "TileStore",
     "convert_dsm_raster",

@@ -56,6 +56,8 @@ from georaffer.config import (
     NRW_LAZ_PATTERN,
     RLP_JP2_PATTERN,
     RLP_LAZ_PATTERN,
+    TH_DOP_PATTERN,
+    TH_LAZ_PATTERN,
     Region,
     utm_zone_str_for_region,
 )
@@ -89,6 +91,8 @@ def detect_region(filename: str) -> Region:
         return Region.BW
     if BY_DOP_PATTERN.match(filename) or BY_DOM_PATTERN.match(filename):
         return Region.BY
+    if TH_DOP_PATTERN.match(filename_lower) or TH_LAZ_PATTERN.match(filename_lower):
+        return Region.TH
     if NRW_JP2_PATTERN.match(filename) or NRW_LAZ_PATTERN.match(filename):
         return Region.NRW
     raise ValueError(f"Unrecognized tile filename: {filename}")

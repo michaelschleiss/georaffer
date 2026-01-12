@@ -5,6 +5,7 @@ import os
 import time
 import warnings
 from abc import ABC, abstractmethod
+from typing import ClassVar
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field

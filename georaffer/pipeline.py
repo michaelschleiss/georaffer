@@ -14,7 +14,14 @@ import numpy as np
 
 from georaffer.config import FILE_TILE_SIZE_KM, UTM_ZONE_BY_REGION, Region
 from georaffer.conversion import convert_tiles
-from georaffer.downloaders import BBDownloader, BWDownloader, BYDownloader, NRWDownloader, RLPDownloader
+from georaffer.downloaders import (
+    BBDownloader,
+    BWDownloader,
+    BYDownloader,
+    NRWDownloader,
+    RLPDownloader,
+    THDownloader,
+)
 from georaffer.downloading import DownloadTask, download_parallel_streams
 from georaffer.grids import compute_split_factor, generate_tiles_by_zone
 from georaffer.reporting import (
@@ -161,6 +168,11 @@ def process_tiles(
         if Region.BY in selected_regions
         else None
     )
+    th_downloader = (
+        THDownloader(output_dir, imagery_from=imagery_from)
+        if Region.TH in selected_regions
+        else None
+    )
 
     # Create output directories
     for subdir in ["raw/image", "raw/dsm", "processed/image", "processed/dsm"]:
@@ -201,7 +213,13 @@ def process_tiles(
     catalog_rows: list[tuple[str, int, int]] = []
     downloaders: list = []
 
-    for name, dl in [("NRW", nrw_downloader), ("RLP", rlp_downloader), ("BW", bw_downloader), ("BY", by_downloader)]:
+    for name, dl in [
+        ("NRW", nrw_downloader),
+        ("RLP", rlp_downloader),
+        ("BW", bw_downloader),
+        ("BY", by_downloader),
+        ("TH", th_downloader),
+    ]:
         if dl is None:
             continue
         cat = dl.build_catalog(refresh=refresh_catalog)
@@ -291,6 +309,8 @@ def process_tiles(
     bw_laz_count = len(downloads_by_source.get("bw_laz", []))
     by_jp2_count = len(downloads_by_source.get("by_jp2", []))
     by_laz_count = len(downloads_by_source.get("by_laz", []))
+    th_jp2_count = len(downloads_by_source.get("th_jp2", []))
+    th_laz_count = len(downloads_by_source.get("th_laz", []))
 
     # Calculate split factors per region (only for regions with tiles)
     # Use FILE_TILE_SIZE_KM (size of files after extraction) for split calculations
@@ -299,21 +319,25 @@ def process_tiles(
     bb_tile_km = FILE_TILE_SIZE_KM[Region.BB]
     bw_tile_km = FILE_TILE_SIZE_KM[Region.BW]
     by_tile_km = FILE_TILE_SIZE_KM[Region.BY]
+    th_tile_km = FILE_TILE_SIZE_KM[Region.TH]
     nrw_has_tiles = nrw_jp2_count > 0 or nrw_laz_count > 0
     rlp_has_tiles = rlp_jp2_count > 0 or rlp_laz_count > 0
     bb_has_tiles = bb_jp2_count > 0 or bb_laz_count > 0
     bw_has_tiles = bw_jp2_count > 0 or bw_laz_count > 0
     by_has_tiles = by_jp2_count > 0 or by_laz_count > 0
+    th_has_tiles = th_jp2_count > 0 or th_laz_count > 0
     nrw_split = compute_split_factor(nrw_tile_km, grid_size_km) if nrw_has_tiles else 1
     rlp_split = compute_split_factor(rlp_tile_km, grid_size_km) if rlp_has_tiles else 1
     bb_split = compute_split_factor(bb_tile_km, grid_size_km) if bb_has_tiles else 1
     bw_split = compute_split_factor(bw_tile_km, grid_size_km) if bw_has_tiles else 1
     by_split = compute_split_factor(by_tile_km, grid_size_km) if by_has_tiles else 1
+    th_split = compute_split_factor(th_tile_km, grid_size_km) if th_has_tiles else 1
     nrw_split_side = int(nrw_split**0.5)  # e.g., 4 -> 2×2
     rlp_split_side = int(rlp_split**0.5)
     bb_split_side = int(bb_split**0.5)
     bw_split_side = int(bw_split**0.5)
     by_split_side = int(by_split**0.5)
+    th_split_side = int(th_split**0.5)
 
     # Calculate outputs per region
     nrw_jp2_out = nrw_jp2_count * nrw_split
@@ -326,8 +350,14 @@ def process_tiles(
     bw_laz_out = bw_laz_count * bw_split
     by_jp2_out = by_jp2_count * by_split
     by_laz_out = by_laz_count * by_split
-    total_jp2_out = nrw_jp2_out + rlp_jp2_out + bb_jp2_out + bw_jp2_out + by_jp2_out
-    total_laz_out = nrw_laz_out + rlp_laz_out + bb_laz_out + bw_laz_out + by_laz_out
+    th_jp2_out = th_jp2_count * th_split
+    th_laz_out = th_laz_count * th_split
+    total_jp2_out = (
+        nrw_jp2_out + rlp_jp2_out + bb_jp2_out + bw_jp2_out + by_jp2_out + th_jp2_out
+    )
+    total_laz_out = (
+        nrw_laz_out + rlp_laz_out + bb_laz_out + bw_laz_out + by_laz_out + th_laz_out
+    )
 
     print()
     print(f"Conversion Plan (target: {grid_size_km}km grid)")
@@ -374,6 +404,14 @@ def process_tiles(
                 f"{by_jp2_count} → {by_jp2_out}",
                 f"{by_laz_count} → {by_laz_out}",
             ),
+            (
+                "TH",
+                f"{th_tile_km:.0f}km",
+                f"{grid_size_km}km",
+                f"{th_split_side}×{th_split_side}",
+                f"{th_jp2_count} → {th_jp2_out}",
+                f"{th_laz_count} → {th_laz_out}",
+            ),
             ("", "", "", "Total", str(total_jp2_out), str(total_laz_out)),
         ],
     )
@@ -414,6 +452,9 @@ def process_tiles(
         by_jp2_downloads = downloads_by_source.get("by_jp2", [])
         if by_jp2_downloads:
             download_tasks.append(DownloadTask("BY Imagery", by_jp2_downloads, by_downloader))
+        th_jp2_downloads = downloads_by_source.get("th_jp2", [])
+        if th_jp2_downloads:
+            download_tasks.append(DownloadTask("TH Imagery", th_jp2_downloads, th_downloader))
     if process_pointclouds:
         nrw_laz_downloads = downloads_by_source.get("nrw_laz", [])
         if nrw_laz_downloads:
@@ -430,6 +471,9 @@ def process_tiles(
         by_laz_downloads = downloads_by_source.get("by_laz", [])
         if by_laz_downloads:
             download_tasks.append(DownloadTask("BY DSM", by_laz_downloads, by_downloader))
+        th_laz_downloads = downloads_by_source.get("th_laz", [])
+        if th_laz_downloads:
+            download_tasks.append(DownloadTask("TH DSM", th_laz_downloads, th_downloader))
 
     print_step_header(3, "Downloading Raw Tiles")
 

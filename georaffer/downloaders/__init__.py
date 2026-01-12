@@ -6,6 +6,7 @@ from georaffer.downloaders.bw import BWDownloader
 from georaffer.downloaders.by import BYDownloader
 from georaffer.downloaders.nrw import NRWDownloader
 from georaffer.downloaders.rlp import RLPDownloader
+from georaffer.downloaders.th import THDownloader
 
 __all__ = [
     "BBDownloader",
@@ -13,5 +14,6 @@ __all__ = [
     "BYDownloader",
     "NRWDownloader",
     "RLPDownloader",
+    "THDownloader",
     "RegionDownloader",
 ]

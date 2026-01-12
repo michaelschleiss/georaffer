@@ -22,11 +22,15 @@ from georaffer.config import (
     NRW_LAZ_PATTERN,
     RLP_JP2_PATTERN,
     RLP_LAZ_PATTERN,
+    TH_DOP_PATTERN,
+    TH_LAZ_PATTERN,
 )
 
 # Pattern for processed output files: {region}_{zone}_{easting}_{northing}_{year}.tif
 # Easting is 6 digits, northing is 7 digits.
-OUTPUT_FILE_PATTERN = re.compile(r"(?:nrw|rlp|bb|bw|by)_(?:32|33)_(\d{6})_(\d{7})_\d{4}(?:_\d+)?\.tif$")
+OUTPUT_FILE_PATTERN = re.compile(
+    r"(?:nrw|rlp|bb|bw|by|th)_(?:32|33)_(\d{6})_(\d{7})_\d{4}(?:_\d+)?\.tif$"
+)
 
 
 @contextmanager
@@ -94,6 +98,8 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
     - BY DOP: 32679_5392.tif → (679, 5392) [raw input tile coords]
     - BY DOP historic: 32679_5392_2018.tif → (679, 5392) [raw input tile coords]
     - BY DOM: 32686_5369_20_DOM.tif → (686, 5369) [raw input tile coords]
+    - TH DOP: dop20rgb_32666_5658_2_th_2008.zip → (666, 5658) [raw input tile coords]
+    - TH LAZ: las_32_666_5658_1_th_2020-2022.zip → (666, 5658) [raw input tile coords]
     - Output files: nrw_32_350500_5600000_2021.tif → (350500, 5600000) [UTM coordinates]
 
     Pattern matching strategy:
@@ -106,7 +112,7 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
       7. Return None if no match (signals invalid/unexpected filename)
 
     Returns None for:
-      - Wrong region prefix (e.g., "hessen_..." instead of nrw/rlp/bb/bw/by)
+      - Wrong region prefix (e.g., "hessen_..." instead of nrw/rlp/bb/bw/by/th)
       - Malformed coordinates (non-numeric, wrong format)
       - Missing required components (zone, year, coordinates)
       - Completely unrecognized filename patterns
@@ -142,6 +148,12 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
     # Try BY patterns (zone prefix + km coords in filename)
     for pattern in (BY_DOP_PATTERN, BY_DOM_PATTERN):
         match = pattern.match(filename)
+        if match:
+            return int(match.group(1)), int(match.group(2))
+
+    # Try TH patterns (zone prefix optionally combined with km coords)
+    for pattern in (TH_DOP_PATTERN, TH_LAZ_PATTERN):
+        match = pattern.match(filename.lower())
         if match:
             return int(match.group(1)), int(match.group(2))
 

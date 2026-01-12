@@ -136,6 +136,7 @@ class TileStore:
                 BYDownloader,
                 NRWDownloader,
                 RLPDownloader,
+                THDownloader,
             )
 
             downloader_classes: dict[str, type[RegionDownloader]] = {
@@ -144,6 +145,7 @@ class TileStore:
                 "BB": BBDownloader,
                 "BW": BWDownloader,
                 "BY": BYDownloader,
+                "TH": THDownloader,
             }
 
             self._downloaders = {}
