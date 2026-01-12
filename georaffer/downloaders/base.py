@@ -46,6 +46,8 @@ class Catalog:
     tile_info is a dict with keys:
         - "url": str (download URL)
         - "acquisition_date": str | None (ISO format, e.g. "2023-05-27")
+        - "source_kind": str | None ("direct", "wms", "wcs", "other")
+        - "source_age": str | None ("current", "historic")
     """
 
     image_tiles: dict[tuple[int, int], dict[int, dict]] = field(default_factory=dict)
@@ -134,6 +136,22 @@ class RegionDownloader(ABC):
         # Catalog cache (subclass sets _cache_path in its __init__)
         self._catalog: Catalog | None = None
         self._cache_path: Path | None = None
+
+    def _tile_info(
+        self,
+        url: str,
+        acquisition_date: str | None = None,
+        *,
+        source_kind: str = "direct",
+        source_age: str = "current",
+    ) -> dict:
+        """Build a catalog tile_info dict with consistent metadata."""
+        return {
+            "url": url,
+            "acquisition_date": acquisition_date,
+            "source_kind": source_kind,
+            "source_age": source_age,
+        }
 
     @property
     def session(self) -> requests.Session:
@@ -430,6 +448,8 @@ class RegionDownloader(ABC):
                 - "url": str (download URL)
                 - "acquisition_date": str | None (ISO format)
                 - "year": int
+                - "source_kind": str | None
+                - "source_age": str | None
         """
         catalog = self.build_catalog()
         tiles_dict = catalog.image_tiles if tile_type == "image" else catalog.dsm_tiles
@@ -439,7 +459,16 @@ class RegionDownloader(ABC):
         catalog_coords = ((coords[0] // g) * g, (coords[1] // g) * g)
 
         years = tiles_dict.get(catalog_coords, {})
-        return [
-            {"url": info["url"], "acquisition_date": info.get("acquisition_date"), "year": year}
-            for year, info in years.items()
-        ]
+        results: list[dict] = []
+        for year, info in years.items():
+            entry = {
+                "url": info["url"],
+                "acquisition_date": info.get("acquisition_date"),
+                "year": year,
+            }
+            if "source_kind" in info:
+                entry["source_kind"] = info.get("source_kind")
+            if "source_age" in info:
+                entry["source_age"] = info.get("source_age")
+            results.append(entry)
+        return results

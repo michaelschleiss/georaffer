@@ -194,6 +194,18 @@ def download_files(
     Raises:
         Exception: If download fails (propagates from downloader)
     """
+    # De-duplicate exact (url, path) pairs to avoid redundant checks/skips.
+    if downloads:
+        seen_pairs: set[tuple[str, str]] = set()
+        unique_downloads: list[tuple[str, str]] = []
+        for url, path in downloads:
+            key = (url, path)
+            if key in seen_pairs:
+                continue
+            seen_pairs.add(key)
+            unique_downloads.append((url, path))
+        downloads = unique_downloads
+
     stats = DownloadStats()
 
     if not downloads:

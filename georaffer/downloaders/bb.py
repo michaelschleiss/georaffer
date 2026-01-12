@@ -93,10 +93,12 @@ class BBDownloader(RegionDownloader):
             coords = self._parse_coords(east, north)
             if coords:
                 year = creation_date.year
-                image_tiles.setdefault(coords, {})[year] = {
-                    "url": f"{self.DOP_BASE_URL}dop_{sheetnr}.zip",
-                    "acquisition_date": creation_date.isoformat(),
-                }
+                image_tiles.setdefault(coords, {})[year] = self._tile_info(
+                    f"{self.DOP_BASE_URL}dop_{sheetnr}.zip",
+                    acquisition_date=creation_date.isoformat(),
+                    source_kind="direct",
+                    source_age="current",
+                )
         if not self.quiet:
             print(f"    {len(image_tiles)} tiles")
 
@@ -109,10 +111,12 @@ class BBDownloader(RegionDownloader):
             coords = self._parse_coords(east, north)
             if coords:
                 year = creation_date.year
-                dsm_tiles.setdefault(coords, {})[year] = {
-                    "url": f"{self.BDOM_BASE_URL}bdom_{sheetnr}.zip",
-                    "acquisition_date": creation_date.isoformat(),
-                }
+                dsm_tiles.setdefault(coords, {})[year] = self._tile_info(
+                    f"{self.BDOM_BASE_URL}bdom_{sheetnr}.zip",
+                    acquisition_date=creation_date.isoformat(),
+                    source_kind="direct",
+                    source_age="current",
+                )
         if not self.quiet:
             print(f"    {len(dsm_tiles)} tiles")
             missing_count = len(image_tiles) - len(dsm_tiles)

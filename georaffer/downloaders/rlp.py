@@ -345,7 +345,12 @@ class RLPDownloader(RegionDownloader):
         for coords, url in current_tiles.items():
             year = self._extract_year_from_url(url)
             if year:
-                tiles.setdefault(coords, {})[year] = {"url": url, "acquisition_date": None}
+                tiles.setdefault(coords, {})[year] = self._tile_info(
+                    url,
+                    acquisition_date=None,
+                    source_kind="direct",
+                    source_age="current",
+                )
         if not self.quiet:
             print(f"  Current: {len(current_tiles)} tiles")
 
@@ -387,7 +392,12 @@ class RLPDownloader(RegionDownloader):
                     if year not in tiles.get(coords, {}):
                         url = self.wms.get_tile_url(year, grid_x, grid_y)
                         acq_date = meta.get("acquisition_date") if meta else None
-                        tiles.setdefault(coords, {})[year] = {"url": url, "acquisition_date": acq_date}
+                        tiles.setdefault(coords, {})[year] = self._tile_info(
+                            url,
+                            acquisition_date=acq_date,
+                            source_kind="wms",
+                            source_age="historic",
+                        )
                         historic_found += 1
 
                 if not self.quiet and (checked % 100 == 0 or checked == len(all_coords)):
@@ -420,7 +430,14 @@ class RLPDownloader(RegionDownloader):
             year = self._extract_year_from_url(image_url)
             if year is None:
                 raise ValueError(f"Cannot extract year from RLP image URL: {image_url}")
-            laz_tiles[coords] = {year: {"url": url, "acquisition_date": None}}
+            laz_tiles[coords] = {
+                year: self._tile_info(
+                    url,
+                    acquisition_date=None,
+                    source_kind="direct",
+                    source_age="current",
+                )
+            }
         if not self.quiet:
             print(f"  LAZ: {len(laz_tiles)} tiles")
 

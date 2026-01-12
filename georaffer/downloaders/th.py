@@ -114,10 +114,12 @@ class THDownloader(RegionDownloader):
 
         # Populate DSM tiles from LAS feed
         for coords, year, url in las_tiles.values():
-            dsm_tiles.setdefault(coords, {})[year] = {
-                "url": url,
-                "acquisition_date": None,
-            }
+            dsm_tiles.setdefault(coords, {})[year] = self._tile_info(
+                url,
+                acquisition_date=None,
+                source_kind="direct",
+                source_age="current",
+            )
 
         if not self.quiet:
             print(f"  TH: Querying DOP overview for {len(las_tiles)} LAS tiles...")
@@ -135,10 +137,12 @@ class THDownloader(RegionDownloader):
                     break
                 results = fut.result()
                 for coords, year, url, acq_date in results:
-                    image_tiles.setdefault(coords, {})[year] = {
-                        "url": url,
-                        "acquisition_date": acq_date,
-                    }
+                    image_tiles.setdefault(coords, {})[year] = self._tile_info(
+                        url,
+                        acquisition_date=acq_date,
+                        source_kind="direct",
+                        source_age="current",
+                    )
                 completed += 1
                 if not self.quiet and completed % 1000 == 0:
                     elapsed = time.perf_counter() - start

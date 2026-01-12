@@ -166,12 +166,17 @@ class TileStore:
         self,
         coords: tuple[int, int],
         tile_type: str = "image",
+        *,
+        only_recent: bool = False,
     ) -> list[Tile]:
         """Query available tiles at 1km grid coordinates.
 
         Args:
             coords: (grid_x, grid_y) in 1km coordinates
             tile_type: "image" for orthophotos, "dsm" for elevation data
+            only_recent: If True, filter out historic tiles (e.g., WMS) and
+                prefer current sources only. Falls back to URL-based inference
+                if catalog metadata does not include source_age/source_kind.
 
         Returns:
             List of Tile objects available at this location (may include
@@ -179,9 +184,27 @@ class TileStore:
         """
         tiles: list[Tile] = []
 
+        def _is_wms_url(url: str) -> bool:
+            lowered = url.lower()
+            return "service=wms" in lowered and "request=getmap" in lowered
+
         for region, downloader in self.downloaders.items():
             zone = utm_zone_for_region(region)
             for info in downloader.get_tiles(coords, tile_type):
+                if only_recent:
+                    source_kind = info.get("source_kind")
+                    if not source_kind:
+                        source_kind = "wms" if _is_wms_url(info["url"]) else "direct"
+
+                    source_age = info.get("source_age")
+                    if not source_age:
+                        source_age = "historic" if source_kind == "wms" else "current"
+
+                    if source_age != "current":
+                        continue
+                    if source_kind == "wms":
+                        continue
+
                 year = info.get("year")
                 acq_date = None
                 if acq_str := info.get("acquisition_date"):

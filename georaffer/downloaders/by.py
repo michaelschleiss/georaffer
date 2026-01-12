@@ -329,20 +329,24 @@ class BYDownloader(RegionDownloader):
                             continue
                         url = self.wms.get_tile_url(year, grid_x, grid_y)
                         acq_date = meta.get("acquisition_date") if meta else None
-                        image_tiles.setdefault((grid_x, grid_y), {})[year] = {
-                            "url": url,
-                            "acquisition_date": acq_date,
-                        }
+                        image_tiles.setdefault((grid_x, grid_y), {})[year] = self._tile_info(
+                            url,
+                            acquisition_date=acq_date,
+                            source_kind="wms",
+                            source_age="historic",
+                        )
                         historic_found += 1
                     if coverage:
                         current_url = current_urls.get((grid_x, grid_y))
                         if current_url:
                             latest_year = max(coverage)
                             meta = coverage[latest_year]
-                            image_tiles.setdefault((grid_x, grid_y), {})[latest_year] = {
-                                "url": current_url,
-                                "acquisition_date": meta.get("acquisition_date") if meta else None,
-                            }
+                            image_tiles.setdefault((grid_x, grid_y), {})[latest_year] = self._tile_info(
+                                current_url,
+                                acquisition_date=meta.get("acquisition_date") if meta else None,
+                                source_kind="direct",
+                                source_age="current",
+                            )
                             current_assigned.add((grid_x, grid_y))
 
                     if not self.quiet and total and (checked % 100 == 0 or checked == total):
@@ -369,10 +373,12 @@ class BYDownloader(RegionDownloader):
                     continue
                 if fallback_year in image_tiles.get(coords, {}):
                     continue
-                image_tiles.setdefault(coords, {})[fallback_year] = {
-                    "url": url,
-                    "acquisition_date": None,
-                }
+                image_tiles.setdefault(coords, {})[fallback_year] = self._tile_info(
+                    url,
+                    acquisition_date=None,
+                    source_kind="direct",
+                    source_age="current",
+                )
 
         # DOM tiles
         if not self.quiet:
@@ -384,10 +390,12 @@ class BYDownloader(RegionDownloader):
                 from datetime import date
 
                 year = date.today().year
-                dsm_tiles.setdefault(coords, {})[year] = {
-                    "url": url,
-                    "acquisition_date": None,
-                }
+                dsm_tiles.setdefault(coords, {})[year] = self._tile_info(
+                    url,
+                    acquisition_date=None,
+                    source_kind="direct",
+                    source_age="current",
+                )
 
         if not self.quiet:
             print(f"    {len(dsm_tiles)} tiles")

@@ -331,7 +331,12 @@ class NRWDownloader(RegionDownloader):
                 self._session, self.CURRENT_JP2_FEED_URL, self.CURRENT_JP2_BASE_URL
             )
             for coords, (url, year) in current_tiles.items():
-                tiles.setdefault(coords, {})[year] = {"url": url, "acquisition_date": None}
+                tiles.setdefault(coords, {})[year] = self._tile_info(
+                    url,
+                    acquisition_date=None,
+                    source_kind="direct",
+                    source_age="current",
+                )
             if not self.quiet:
                 print(f"  Current: {len(current_tiles)} tiles")
         except Exception as e:
@@ -363,7 +368,12 @@ class NRWDownloader(RegionDownloader):
             added = 0
             for coords, (url, year) in historic_tiles.items():
                 if year not in tiles.get(coords, {}):
-                    tiles.setdefault(coords, {})[year] = {"url": url, "acquisition_date": None}
+                    tiles.setdefault(coords, {})[year] = self._tile_info(
+                        url,
+                        acquisition_date=None,
+                        source_kind="direct",
+                        source_age="historic",
+                    )
                     added += 1
             successful_years.append(f"{hist_year}:+{added}")
 
@@ -400,8 +410,10 @@ class NRWDownloader(RegionDownloader):
                 grid_y = int(match.group(2))
                 year = int(match.group(3))
                 coords = (grid_x, grid_y)
-                laz_tiles.setdefault(coords, {})[year] = {
-                    "url": self._laz_base_url + filename,
-                    "acquisition_date": None,
-                }
+                laz_tiles.setdefault(coords, {})[year] = self._tile_info(
+                    self._laz_base_url + filename,
+                    acquisition_date=None,
+                    source_kind="direct",
+                    source_age="current",
+                )
         return laz_tiles

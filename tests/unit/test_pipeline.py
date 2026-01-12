@@ -522,6 +522,26 @@ class TestDownloadFiles:
         assert stats.skipped == 0
         assert stats.failed == 0
 
+    def test_dedupe_exact_pairs(self, tmp_path):
+        """Exact (url, path) duplicates are de-duplicated."""
+        mock_downloader = Mock()
+        mock_downloader.download_file.return_value = True
+
+        target = str(tmp_path / "a.jp2")
+        downloads = [
+            ("http://example.com/a.jp2", target),
+            ("http://example.com/a.jp2", target),
+        ]
+
+        stats = download_files(downloads, mock_downloader)
+
+        assert stats.downloaded == 1
+        assert stats.skipped == 0
+        assert stats.failed == 0
+        mock_downloader.download_file.assert_called_once_with(
+            "http://example.com/a.jp2", target, on_progress=None
+        )
+
     def test_skip_existing(self, tmp_path):
         """Test skipping existing files."""
         # Create existing file

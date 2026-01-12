@@ -299,121 +299,54 @@ def process_tiles(
     )
 
     # Coverage breakdown by region - use actual download counts (includes multi-year)
-    nrw_jp2_count = len(downloads_by_source.get("nrw_jp2", []))
-    nrw_laz_count = len(downloads_by_source.get("nrw_laz", []))
-    rlp_jp2_count = len(downloads_by_source.get("rlp_jp2", []))
-    rlp_laz_count = len(downloads_by_source.get("rlp_laz", []))
-    bb_jp2_count = len(downloads_by_source.get("bb_jp2", []))
-    bb_laz_count = len(downloads_by_source.get("bb_laz", []))
-    bw_jp2_count = len(downloads_by_source.get("bw_jp2", []))
-    bw_laz_count = len(downloads_by_source.get("bw_laz", []))
-    by_jp2_count = len(downloads_by_source.get("by_jp2", []))
-    by_laz_count = len(downloads_by_source.get("by_laz", []))
-    th_jp2_count = len(downloads_by_source.get("th_jp2", []))
-    th_laz_count = len(downloads_by_source.get("th_laz", []))
-
-    # Calculate split factors per region (only for regions with tiles)
+    # Calculate split factors and output counts per region
     # Use FILE_TILE_SIZE_KM (size of files after extraction) for split calculations
-    nrw_tile_km = FILE_TILE_SIZE_KM[Region.NRW]
-    rlp_tile_km = FILE_TILE_SIZE_KM[Region.RLP]
-    bb_tile_km = FILE_TILE_SIZE_KM[Region.BB]
-    bw_tile_km = FILE_TILE_SIZE_KM[Region.BW]
-    by_tile_km = FILE_TILE_SIZE_KM[Region.BY]
-    th_tile_km = FILE_TILE_SIZE_KM[Region.TH]
-    nrw_has_tiles = nrw_jp2_count > 0 or nrw_laz_count > 0
-    rlp_has_tiles = rlp_jp2_count > 0 or rlp_laz_count > 0
-    bb_has_tiles = bb_jp2_count > 0 or bb_laz_count > 0
-    bw_has_tiles = bw_jp2_count > 0 or bw_laz_count > 0
-    by_has_tiles = by_jp2_count > 0 or by_laz_count > 0
-    th_has_tiles = th_jp2_count > 0 or th_laz_count > 0
-    nrw_split = compute_split_factor(nrw_tile_km, grid_size_km) if nrw_has_tiles else 1
-    rlp_split = compute_split_factor(rlp_tile_km, grid_size_km) if rlp_has_tiles else 1
-    bb_split = compute_split_factor(bb_tile_km, grid_size_km) if bb_has_tiles else 1
-    bw_split = compute_split_factor(bw_tile_km, grid_size_km) if bw_has_tiles else 1
-    by_split = compute_split_factor(by_tile_km, grid_size_km) if by_has_tiles else 1
-    th_split = compute_split_factor(th_tile_km, grid_size_km) if th_has_tiles else 1
-    nrw_split_side = int(nrw_split**0.5)  # e.g., 4 -> 2×2
-    rlp_split_side = int(rlp_split**0.5)
-    bb_split_side = int(bb_split**0.5)
-    bw_split_side = int(bw_split**0.5)
-    by_split_side = int(by_split**0.5)
-    th_split_side = int(th_split**0.5)
-
-    # Calculate outputs per region
-    nrw_jp2_out = nrw_jp2_count * nrw_split
-    nrw_laz_out = nrw_laz_count * nrw_split
-    rlp_jp2_out = rlp_jp2_count * rlp_split
-    rlp_laz_out = rlp_laz_count * rlp_split
-    bb_jp2_out = bb_jp2_count * bb_split
-    bb_laz_out = bb_laz_count * bb_split
-    bw_jp2_out = bw_jp2_count * bw_split
-    bw_laz_out = bw_laz_count * bw_split
-    by_jp2_out = by_jp2_count * by_split
-    by_laz_out = by_laz_count * by_split
-    th_jp2_out = th_jp2_count * th_split
-    th_laz_out = th_laz_count * th_split
-    total_jp2_out = (
-        nrw_jp2_out + rlp_jp2_out + bb_jp2_out + bw_jp2_out + by_jp2_out + th_jp2_out
-    )
-    total_laz_out = (
-        nrw_laz_out + rlp_laz_out + bb_laz_out + bw_laz_out + by_laz_out + th_laz_out
-    )
+    region_stats = {}
+    for region in [Region.NRW, Region.RLP, Region.BB, Region.BW, Region.BY, Region.TH]:
+        region_key = region.value.lower()
+        jp2_count = len(downloads_by_source.get(f"{region_key}_jp2", []))
+        laz_count = len(downloads_by_source.get(f"{region_key}_laz", []))
+        
+        tile_km = FILE_TILE_SIZE_KM[region]
+        has_tiles = jp2_count > 0 or laz_count > 0
+        split = compute_split_factor(tile_km, grid_size_km) if has_tiles else 1
+        split_side = int(split**0.5)  # e.g., 4 -> 2×2
+        
+        region_stats[region_key] = {
+            "jp2_count": jp2_count,
+            "laz_count": laz_count,
+            "tile_km": tile_km,
+            "split": split,
+            "split_side": split_side,
+            "jp2_out": jp2_count * split,
+            "laz_out": laz_count * split,
+        }
+    
+    # Calculate totals
+    total_jp2_out = sum(stats["jp2_out"] for stats in region_stats.values())
+    total_laz_out = sum(stats["laz_out"] for stats in region_stats.values())
 
     print()
     print(f"Conversion Plan (target: {grid_size_km}km grid)")
+    
+    # Build table rows from region_stats
+    table_rows = []
+    for region in [Region.NRW, Region.RLP, Region.BB, Region.BW, Region.BY, Region.TH]:
+        region_key = region.value.lower()
+        stats = region_stats[region_key]
+        table_rows.append((
+            region.value,
+            f"{stats['tile_km']:.0f}km",
+            f"{grid_size_km}km",
+            f"{stats['split_side']}×{stats['split_side']}",
+            f"{stats['jp2_count']} → {stats['jp2_out']}",
+            f"{stats['laz_count']} → {stats['laz_out']}",
+        ))
+    table_rows.append(("", "", "", "Total", str(total_jp2_out), str(total_laz_out)))
+    
     table = render_table(
         ["Region", "Native", "Target", "Split", "Imagery", "Elevation"],
-        [
-            (
-                "NRW",
-                f"{nrw_tile_km:.0f}km",
-                f"{grid_size_km}km",
-                f"{nrw_split_side}×{nrw_split_side}",
-                f"{nrw_jp2_count} → {nrw_jp2_out}",
-                f"{nrw_laz_count} → {nrw_laz_out}",
-            ),
-            (
-                "RLP",
-                f"{rlp_tile_km:.0f}km",
-                f"{grid_size_km}km",
-                f"{rlp_split_side}×{rlp_split_side}",
-                f"{rlp_jp2_count} → {rlp_jp2_out}",
-                f"{rlp_laz_count} → {rlp_laz_out}",
-            ),
-            (
-                "BB",
-                f"{bb_tile_km:.0f}km",
-                f"{grid_size_km}km",
-                f"{bb_split_side}×{bb_split_side}",
-                f"{bb_jp2_count} → {bb_jp2_out}",
-                f"{bb_laz_count} → {bb_laz_out}",
-            ),
-            (
-                "BW",
-                f"{bw_tile_km:.0f}km",
-                f"{grid_size_km}km",
-                f"{bw_split_side}×{bw_split_side}",
-                f"{bw_jp2_count} → {bw_jp2_out}",
-                f"{bw_laz_count} → {bw_laz_out}",
-            ),
-            (
-                "BY",
-                f"{by_tile_km:.0f}km",
-                f"{grid_size_km}km",
-                f"{by_split_side}×{by_split_side}",
-                f"{by_jp2_count} → {by_jp2_out}",
-                f"{by_laz_count} → {by_laz_out}",
-            ),
-            (
-                "TH",
-                f"{th_tile_km:.0f}km",
-                f"{grid_size_km}km",
-                f"{th_split_side}×{th_split_side}",
-                f"{th_jp2_count} → {th_jp2_out}",
-                f"{th_laz_count} → {th_laz_out}",
-            ),
-            ("", "", "", "Total", str(total_jp2_out), str(total_laz_out)),
-        ],
+        table_rows,
     )
     print(table)
 
@@ -436,44 +369,31 @@ def process_tiles(
     download_tasks = []
 
     # Filter downloads based on --type flag
-    if process_images:
-        nrw_jp2_downloads = downloads_by_source.get("nrw_jp2", [])
-        if nrw_jp2_downloads:
-            download_tasks.append(DownloadTask("NRW Imagery", nrw_jp2_downloads, nrw_downloader))
-        rlp_jp2_downloads = downloads_by_source.get("rlp_jp2", [])
-        if rlp_jp2_downloads:
-            download_tasks.append(DownloadTask("RLP Imagery", rlp_jp2_downloads, rlp_downloader))
-        bb_jp2_downloads = downloads_by_source.get("bb_jp2", [])
-        if bb_jp2_downloads:
-            download_tasks.append(DownloadTask("BB Imagery", bb_jp2_downloads, bb_downloader))
-        bw_jp2_downloads = downloads_by_source.get("bw_jp2", [])
-        if bw_jp2_downloads:
-            download_tasks.append(DownloadTask("BW Imagery", bw_jp2_downloads, bw_downloader))
-        by_jp2_downloads = downloads_by_source.get("by_jp2", [])
-        if by_jp2_downloads:
-            download_tasks.append(DownloadTask("BY Imagery", by_jp2_downloads, by_downloader))
-        th_jp2_downloads = downloads_by_source.get("th_jp2", [])
-        if th_jp2_downloads:
-            download_tasks.append(DownloadTask("TH Imagery", th_jp2_downloads, th_downloader))
-    if process_pointclouds:
-        nrw_laz_downloads = downloads_by_source.get("nrw_laz", [])
-        if nrw_laz_downloads:
-            download_tasks.append(DownloadTask("NRW DSM", nrw_laz_downloads, nrw_downloader))
-        rlp_laz_downloads = downloads_by_source.get("rlp_laz", [])
-        if rlp_laz_downloads:
-            download_tasks.append(DownloadTask("RLP DSM", rlp_laz_downloads, rlp_downloader))
-        bb_laz_downloads = downloads_by_source.get("bb_laz", [])
-        if bb_laz_downloads:
-            download_tasks.append(DownloadTask("BB DSM", bb_laz_downloads, bb_downloader))
-        bw_laz_downloads = downloads_by_source.get("bw_laz", [])
-        if bw_laz_downloads:
-            download_tasks.append(DownloadTask("BW DSM", bw_laz_downloads, bw_downloader))
-        by_laz_downloads = downloads_by_source.get("by_laz", [])
-        if by_laz_downloads:
-            download_tasks.append(DownloadTask("BY DSM", by_laz_downloads, by_downloader))
-        th_laz_downloads = downloads_by_source.get("th_laz", [])
-        if th_laz_downloads:
-            download_tasks.append(DownloadTask("TH DSM", th_laz_downloads, th_downloader))
+    # Create download tasks per region and data type
+    region_downloaders = {
+        "nrw": nrw_downloader,
+        "rlp": rlp_downloader,
+        "bb": bb_downloader,
+        "bw": bw_downloader,
+        "by": by_downloader,
+        "th": th_downloader,
+    }
+    
+    for region_key, downloader in region_downloaders.items():
+        if downloader is None:
+            continue
+        
+        if process_images:
+            jp2_downloads = downloads_by_source.get(f"{region_key}_jp2", [])
+            if jp2_downloads:
+                region_name = region_key.upper()
+                download_tasks.append(DownloadTask(f"{region_name} Imagery", jp2_downloads, downloader))
+        
+        if process_pointclouds:
+            laz_downloads = downloads_by_source.get(f"{region_key}_laz", [])
+            if laz_downloads:
+                region_name = region_key.upper()
+                download_tasks.append(DownloadTask(f"{region_name} DSM", laz_downloads, downloader))
 
     print_step_header(3, "Downloading Raw Tiles")
 

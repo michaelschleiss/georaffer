@@ -47,7 +47,10 @@ def nrw_catalogs(nrw_downloader):
     for coords, years in catalog.image_tiles.items():
         if years:
             jp2_catalog[coords] = years[max(years)]["url"]
-    laz_catalog = {coords: tile["url"] for coords, tile in catalog.dsm_tiles.items()}
+    laz_catalog = {}
+    for coords, years in catalog.dsm_tiles.items():
+        if years:
+            laz_catalog[coords] = years[max(years)]["url"]
     return jp2_catalog, laz_catalog
 
 
@@ -157,7 +160,10 @@ def rlp_catalogs(rlp_downloader):
     for coords, years in catalog.image_tiles.items():
         if years:
             jp2_catalog[coords] = years[max(years)]["url"]
-    laz_catalog = {coords: tile["url"] for coords, tile in catalog.dsm_tiles.items()}
+    laz_catalog = {}
+    for coords, years in catalog.dsm_tiles.items():
+        if years:
+            laz_catalog[coords] = years[max(years)]["url"]
     return jp2_catalog, laz_catalog
 
 

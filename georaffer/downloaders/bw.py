@@ -178,10 +178,12 @@ class BWDownloader(RegionDownloader):
             if download_coords:
                 year = flight_date.year
                 url = self._build_dop_url(download_coords[0], download_coords[1])
-                image_tiles.setdefault((grid_x, grid_y), {})[year] = {
-                    "url": url,
-                    "acquisition_date": flight_date.isoformat(),
-                }
+                image_tiles.setdefault((grid_x, grid_y), {})[year] = self._tile_info(
+                    url,
+                    acquisition_date=flight_date.isoformat(),
+                    source_kind="direct",
+                    source_age="current",
+                )
 
         if not self.quiet:
             print(f"    {len(image_tiles)} download tiles (from 1km WFS catalog)")
@@ -251,10 +253,12 @@ class BWDownloader(RegionDownloader):
                         for year in years:
                             if year in image_tiles.get((grid_x, grid_y), {}):
                                 continue
-                            image_tiles.setdefault((grid_x, grid_y), {})[year] = {
-                                "url": url,
-                                "acquisition_date": None,
-                            }
+                            image_tiles.setdefault((grid_x, grid_y), {})[year] = self._tile_info(
+                                url,
+                                acquisition_date=None,
+                                source_kind="wms",
+                                source_age="historic",
+                            )
                         found += 1
 
                     if not self.quiet and (checked % 500 == 0 or checked == total):
@@ -294,10 +298,12 @@ class BWDownloader(RegionDownloader):
             if download_coords:
                 year = flight_date.year
                 url = self._build_dom_url(download_coords[0], download_coords[1])
-                dsm_tiles.setdefault((grid_x, grid_y), {})[year] = {
-                    "url": url,
-                    "acquisition_date": flight_date.isoformat(),
-                }
+                dsm_tiles.setdefault((grid_x, grid_y), {})[year] = self._tile_info(
+                    url,
+                    acquisition_date=flight_date.isoformat(),
+                    source_kind="direct",
+                    source_age="current",
+                )
 
         if not self.quiet:
             print(f"    {len(dsm_tiles)} download tiles")
