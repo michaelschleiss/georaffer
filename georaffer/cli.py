@@ -80,6 +80,32 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
             raise ValueError(f"{context} spans multiple UTM zones; split input by zone.")
         return min_x, min_y, max_x, max_y, min_zone
 
+    def _convert_latlon_array_to_utm(
+        raw_coords: list[tuple[float, float, float]],
+        context_inputs: str,
+        context_span: str,
+    ) -> tuple[list[tuple[float, float]], int]:
+        """Convert lat/lon array to UTM coordinates, auto-detecting zone."""
+        coords_array = np.array(raw_coords)
+        if coords_array.size == 0:
+            return [], source_zone
+        
+        if utm_zone is not None:
+            raise ValueError(f"{context_inputs} inputs do not accept --utm-zone.")
+        
+        lons = coords_array[:, 1]
+        zone_candidates = np.floor((lons + 180) / 6).astype(int) + 1
+        unique_zones = set(zone_candidates.tolist())
+        
+        if len(unique_zones) > 1:
+            raise ValueError(f"{context_span} spans multiple UTM zones; split input by zone.")
+        
+        detected_zone = unique_zones.pop()
+        utm_x, utm_y = latlon_array_to_utm(
+            coords_array[:, 0], coords_array[:, 1], force_zone_number=detected_zone
+        )
+        return list(zip(utm_x, utm_y)), detected_zone
+
     if args.command == "csv":
         # Validate --cols format: must be exactly two comma-separated names
         parts = [p.strip() for p in args.cols.split(",")]
@@ -165,43 +191,11 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
 
     elif args.command == "pygeon":
         raw_coords = load_from_pygeon(args.dataset_path)
-        # pygeon returns (lat, lon, alt) - vectorized UTM conversion
-        coords_array = np.array(raw_coords)
-        if coords_array.size == 0:
-            coords = []
-        else:
-            if utm_zone is not None:
-                raise ValueError("Pygeon inputs do not accept --utm-zone.")
-            lons = coords_array[:, 1]
-            zone_candidates = np.floor((lons + 180) / 6).astype(int) + 1
-            unique_zones = set(zone_candidates.tolist())
-            if len(unique_zones) > 1:
-                raise ValueError("Pygeon dataset spans multiple UTM zones; split input by zone.")
-            source_zone = unique_zones.pop()
-            utm_x, utm_y = latlon_array_to_utm(
-                coords_array[:, 0], coords_array[:, 1], force_zone_number=source_zone
-            )
-            coords = list(zip(utm_x, utm_y))
+        coords, source_zone = _convert_latlon_array_to_utm(raw_coords, "Pygeon", "Pygeon dataset")
 
     elif args.command == "cvl":
         raw_coords = load_from_cvl(args.poses_path)
-        # cvl returns (lat, lon, alt) - vectorized UTM conversion
-        coords_array = np.array(raw_coords)
-        if coords_array.size == 0:
-            coords = []
-        else:
-            if utm_zone is not None:
-                raise ValueError("CVL pose inputs do not accept --utm-zone.")
-            lons = coords_array[:, 1]
-            zone_candidates = np.floor((lons + 180) / 6).astype(int) + 1
-            unique_zones = set(zone_candidates.tolist())
-            if len(unique_zones) > 1:
-                raise ValueError("CVL pose data spans multiple UTM zones; split input by zone.")
-            source_zone = unique_zones.pop()
-            utm_x, utm_y = latlon_array_to_utm(
-                coords_array[:, 0], coords_array[:, 1], force_zone_number=source_zone
-            )
-            coords = list(zip(utm_x, utm_y))
+        coords, source_zone = _convert_latlon_array_to_utm(raw_coords, "CVL pose", "CVL pose data")
 
     elif args.command == "tiles":
         source_zone = _require_utm_zone()
@@ -337,29 +331,7 @@ Details:
                 Examples: --from 2015 (2015 to present), --from 2015 --to 2018
 """
 
-    # bbox-specific epilog
-    bbox_epilog = f"""\
-{shared_epilog}"""
 
-    # tif-specific epilog
-    tif_epilog = f"""\
-{shared_epilog}"""
-
-    # tiles-specific epilog
-    tiles_epilog = f"""\
-{shared_epilog}"""
-
-    # csv-specific epilog
-    csv_epilog = f"""\
-{shared_epilog}"""
-
-    # pygeon-specific epilog
-    pygeon_epilog = f"""\
-{shared_epilog}"""
-
-    # cvl-specific epilog
-    cvl_epilog = f"""\
-{shared_epilog}"""
 
     parser = argparse.ArgumentParser(
         prog="georaffer",
@@ -459,7 +431,7 @@ Details:
         help="Download tiles covering a bounding box",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         usage="georaffer bbox XMIN,YMIN,XMAX,YMAX --output DIR [options]\n\n   ex: georaffer bbox 6.9,50.9,7.1,51.1 --output ./tiles\n                      └─ lon/lat\n       georaffer bbox 350000,5600000,360000,5610000 --output ./tiles\n                      └─ UTM meters",
-        epilog=bbox_epilog,
+        epilog=shared_epilog,
     )
     bbox_parser.add_argument(
         "bbox", metavar="BBOX", help="Bounding box: XMIN,YMIN,XMAX,YMAX (UTM meters or lon/lat)"
@@ -472,7 +444,7 @@ Details:
         help="Download tiles covering a GeoTIFF footprint",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         usage="georaffer tif PATH --output DIR [options]\n\n   ex: georaffer tif ./area.tif --output ./tiles",
-        epilog=tif_epilog,
+        epilog=shared_epilog,
     )
     tif_parser.add_argument(
         "tif", metavar="PATH", help="GeoTIFF path used to derive bounds (CRS required)"
@@ -485,7 +457,7 @@ Details:
         help="Download specific tiles by grid coordinates",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         usage="georaffer tiles TILE... --output DIR [options]\n\n   ex: georaffer tiles 350,5600 --output ./tiles\n                       └─ X,Y grid index (350km E, 5600km N)\n       georaffer tiles 350,5600 351,5601 --output ./tiles\n                       └─ multiple tiles",
-        epilog=tiles_epilog,
+        epilog=shared_epilog,
     )
     tiles_parser.add_argument(
         "tiles",
@@ -501,7 +473,7 @@ Details:
         help="Download tiles from CSV coordinates",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         usage="georaffer csv FILE --cols X,Y --output DIR [options]\n\n   ex: georaffer csv coords.csv --cols lon,lat --output ./tiles\n       georaffer csv coords.csv --cols easting,northing --output ./tiles\n\n       X,Y = column names from your CSV (auto-detects lat/lon vs UTM)",
-        epilog=csv_epilog,
+        epilog=shared_epilog,
     )
     csv_parser.add_argument("file", metavar="FILE", help="CSV file with coordinates")
     csv_parser.add_argument(
@@ -518,7 +490,7 @@ Details:
         help="Download tiles for 4Seasons dataset",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         usage="georaffer pygeon PATH --output DIR [options]\n\n   ex: georaffer pygeon /data/4seasons/campaign --output ./tiles   # has ins.csv\n       georaffer pygeon /data/4seasons --output ./tiles            # has */ins.csv",
-        epilog=pygeon_epilog,
+        epilog=shared_epilog,
     )
     pygeon_parser.add_argument(
         "dataset_path", metavar="PATH", help="Folder with ins.csv or parent of campaign subfolders"
@@ -534,7 +506,7 @@ Details:
         "   ex: georaffer cvl ./data --output ./tiles\n"
         "       georaffer cvl ./data/kitti --output ./tiles\n"
         "       georaffer cvl ./data/kitti/poses --output ./tiles",
-        epilog=cvl_epilog,
+        epilog=shared_epilog,
     )
     cvl_parser.add_argument(
         "poses_path",
