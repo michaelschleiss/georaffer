@@ -12,6 +12,7 @@ os.environ.setdefault("OMP_MAX_ACTIVE_LEVELS", "1")
 os.environ.setdefault("KMP_WARNINGS", "0")
 
 import re
+import shutil
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
@@ -56,18 +57,28 @@ from georaffer.config import (
     NRW_LAZ_PATTERN,
     RLP_JP2_PATTERN,
     RLP_LAZ_PATTERN,
+    TH_DOM_PATTERN,
     TH_DOP_PATTERN,
     TH_LAZ_PATTERN,
     Region,
     utm_zone_str_for_region,
 )
 from georaffer.converters import convert_dsm_raster, convert_jp2, convert_laz, get_laz_year
+from georaffer.converters.dom_xyz import convert_dom_xyz_to_geotiff
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
 
 
 def extract_year_from_filename(filename: str) -> str | None:
-    """Extract 4-digit year from filename (e.g., 'tile_2021.jp2' -> '2021')."""
+    """Extract 4-digit year from filename (e.g., 'tile_2021.jp2' -> '2021').
+
+    For TH DOM files with year-ranges (e.g., '2020-2025'), extracts the end year.
+    """
+    # Try year-range pattern first (e.g., _2020-2025.zip -> 2025)
+    match = re.search(r"_(\d{4})-(\d{4})\.", filename)
+    if match:
+        return match.group(2)  # Return end year
+    # Fall back to single year (e.g., _2021.jp2 -> 2021)
     match = re.search(r"_(\d{4})\.", filename)
     return match.group(1) if match else None
 
@@ -91,7 +102,9 @@ def detect_region(filename: str) -> Region:
         return Region.BW
     if BY_DOP_PATTERN.match(filename) or BY_DOM_PATTERN.match(filename):
         return Region.BY
-    if TH_DOP_PATTERN.match(filename_lower) or TH_LAZ_PATTERN.match(filename_lower):
+    if (TH_DOP_PATTERN.match(filename_lower) or
+        TH_LAZ_PATTERN.match(filename_lower) or
+        TH_DOM_PATTERN.match(filename_lower)):
         return Region.TH
     if NRW_JP2_PATTERN.match(filename) or NRW_LAZ_PATTERN.match(filename):
         return Region.NRW
@@ -272,12 +285,84 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, str, int]:
 
     input_path = Path(laz_dir) / filename
     region = detect_region(filename)
-    year = None
-    if not (region == Region.BW and input_path.suffix.lower() == ".zip"):
-        year = resolve_source_year(filename, input_path, data_type="dsm", region=region)
+
+    def _convert_laz_source(source_path: Path, source_name: str) -> tuple[bool, str, int]:
+        year = resolve_source_year(source_name, source_path, data_type="dsm", region=region)
+        output_paths: dict[int | None, str] = {}
+        for res in resolutions:
+            output_name = generate_output_name(source_name, region, year, "dsm")
+            res_dir = Path(processed_dir) / "dsm" / str(res)
+            res_dir.mkdir(parents=True, exist_ok=True)
+            output_paths[res] = str(res_dir / output_name)
+
+        try:
+            convert_laz(
+                source_path,
+                output_paths,
+                region,
+                target_sizes=resolutions,
+                num_threads=num_threads,
+                grid_size_km=grid_size_km,
+                profiling=profiling,
+            )
+
+            tile_km = FILE_TILE_SIZE_KM[region]
+            split_factor = compute_split_factor(tile_km, grid_size_km)
+            outputs_count = len(resolutions) * split_factor
+
+            return (True, filename, outputs_count)
+
+        except Exception as e:
+            raise RuntimeError(
+                f"LAZ conversion failed for {filename} "
+                f"(region={region}, year={year}, resolutions={resolutions}): {e}"
+            ) from e
+
+    if input_path.suffix.lower() == ".zip" and region == Region.TH:
+        # Check if it's a DOM file (starts with "dom") or LAZ file
+        if filename.lower().startswith("dom"):
+            # TH DOM1: Extract XYZ, convert to GeoTIFF, then process as raster
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tif_path = _extract_th_zip_dom(input_path, Path(tmpdir))
+                # Now process the GeoTIFF like other raster DSM files
+                year = resolve_source_year(filename, input_path, data_type="dsm", region=region)
+                output_paths: dict[int | None, str] = {}
+                for res in resolutions:
+                    output_name = generate_output_name(filename, region, year, "dsm")
+                    res_dir = Path(processed_dir) / "dsm" / str(res)
+                    res_dir.mkdir(parents=True, exist_ok=True)
+                    output_paths[res] = str(res_dir / output_name)
+
+                convert_dsm_raster(
+                    str(tif_path),
+                    output_paths,
+                    region,
+                    year,
+                    target_sizes=resolutions,
+                    num_threads=num_threads,
+                    grid_size_km=grid_size_km,
+                    profiling=profiling,
+                )
+
+                tile_km = FILE_TILE_SIZE_KM[region]
+                split_factor = compute_split_factor(tile_km, grid_size_km)
+                outputs_count = len(resolutions) * split_factor
+                return (True, filename, outputs_count)
+        else:
+            # TH LAZ: Extract and convert LAZ
+            with tempfile.TemporaryDirectory() as tmpdir:
+                laz_path = _extract_th_zip_laz(input_path, Path(tmpdir))
+                return _convert_laz_source(laz_path, laz_path.name)
+
+    if input_path.suffix.lower() == ".laz":
+        return _convert_laz_source(input_path, filename)
 
     if input_path.suffix.lower() in (".tif", ".zip"):
         try:
+            year = None
+            if not (region == Region.BW and input_path.suffix.lower() == ".zip"):
+                year = resolve_source_year(filename, input_path, data_type="dsm", region=region)
+
             tile_km = FILE_TILE_SIZE_KM[region]
             split_factor = compute_split_factor(tile_km, grid_size_km)
 
@@ -349,36 +434,7 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, str, int]:
                 f"(region={region}, year={year}, resolutions={resolutions})"
             ) from e
 
-    # LAZ file path
-    output_paths: dict[int | None, str] = {}
-    for res in resolutions:
-        output_name = generate_output_name(filename, region, year, "dsm")
-        res_dir = Path(processed_dir) / "dsm" / str(res)
-        res_dir.mkdir(parents=True, exist_ok=True)
-        output_paths[res] = str(res_dir / output_name)
-
-    try:
-        convert_laz(
-            input_path,
-            output_paths,
-            region,
-            target_sizes=resolutions,
-            num_threads=num_threads,
-            grid_size_km=grid_size_km,
-            profiling=profiling,
-        )
-
-        tile_km = FILE_TILE_SIZE_KM[region]
-        split_factor = compute_split_factor(tile_km, grid_size_km)
-        outputs_count = len(resolutions) * split_factor
-
-        return (True, filename, outputs_count)
-
-    except Exception as e:
-        raise RuntimeError(
-            f"LAZ conversion failed for {filename} "
-            f"(region={region}, year={year}, resolutions={resolutions}): {e}"
-        ) from e
+    raise RuntimeError(f"Unsupported DSM file type: {input_path.name}")
 
 
 def resolve_source_year(
@@ -429,10 +485,21 @@ def resolve_source_year(
 
     if data_type == "dsm":
         if input_path.suffix.lower() == ".laz":
+            if region == Region.TH:
+                meta_year = _normalize_year(_extract_th_meta_year(input_path))
+                if meta_year:
+                    return meta_year
             header_year = _normalize_year(get_laz_year(str(input_path)))
             if header_year:
                 return header_year
         if input_path.suffix.lower() == ".zip":
+            # TH DOM files: extract year from .meta file inside ZIP
+            if region == Region.TH:
+                meta_year = _normalize_year(_extract_th_dom_meta_year(input_path))
+                if meta_year:
+                    return meta_year
+                raise ValueError(f"Year not found in TH DOM metadata: {filename}")
+            # BB/BW files: use standard ZIP metadata extraction
             meta_year = _normalize_year(_extract_zip_meta_year(input_path))
             if meta_year:
                 return meta_year
@@ -445,6 +512,54 @@ def resolve_source_year(
         raise ValueError(f"Year not found in filename or source metadata: {filename}")
 
     raise ValueError(f"Unknown data_type '{data_type}' for year resolution.")
+
+
+def _extract_th_meta_year(input_path: Path) -> str | None:
+    """Extract year from TH .meta sidecar files (Erfassungsdatum)."""
+    if input_path.suffix.lower() != ".laz":
+        return None
+    meta_path = input_path.with_suffix(".meta")
+    if not meta_path.exists():
+        return None
+    try:
+        text = meta_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return None
+    match = re.search(r"Erfassungsdatum:\s*(\d{4})", text, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _extract_th_dom_meta_year(input_path: Path) -> str | None:
+    """Extract year from TH DOM ZIP .meta files (Erfassungsdatum).
+
+    Args:
+        input_path: Path to dom1_*.zip file
+
+    Returns:
+        4-digit year string if found, None otherwise
+    """
+    if input_path.suffix.lower() != ".zip":
+        return None
+
+    try:
+        with zipfile.ZipFile(input_path) as zf:
+            # Find .meta file in ZIP
+            meta_name = _find_zip_member(zf, ".meta")
+            if not meta_name:
+                return None
+
+            # Read and parse .meta file
+            with zf.open(meta_name) as meta_file:
+                text = meta_file.read().decode("utf-8", errors="ignore")
+                match = re.search(r"Erfassungsdatum:\s*(\d{4})", text, re.IGNORECASE)
+                if match:
+                    return match.group(1)
+    except (OSError, zipfile.BadZipFile):
+        return None
+
+    return None
 
 
 def _extract_zip_meta_year(input_path: Path) -> str | None:
@@ -650,6 +765,50 @@ def _find_zip_member(zf: zipfile.ZipFile, suffix: str) -> str | None:
         if name.lower().endswith(suffix):
             return name
     return None
+
+
+def _extract_th_zip_laz(input_path: Path, temp_dir: Path) -> Path:
+    """Extract a LAZ file from a TH DSM ZIP to a temp directory."""
+    with zipfile.ZipFile(input_path) as zf:
+        laz_name = _find_zip_member(zf, ".laz")
+        if not laz_name:
+            raise RuntimeError(f"No LAZ found in {input_path.name}")
+        output_path = temp_dir / Path(laz_name).name
+        with zf.open(laz_name) as src, open(output_path, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+    return output_path
+
+
+def _extract_th_zip_dom(input_path: Path, temp_dir: Path) -> Path:
+    """Extract DOM XYZ and metadata from TH ZIP, convert to GeoTIFF.
+
+    Args:
+        input_path: Path to dom1_*.zip file
+        temp_dir: Temporary directory for extraction
+
+    Returns:
+        Path to converted GeoTIFF file
+    """
+    with zipfile.ZipFile(input_path) as zf:
+        # Extract XYZ file
+        xyz_name = _find_zip_member(zf, ".xyz")
+        if not xyz_name:
+            raise RuntimeError(f"No XYZ found in {input_path.name}")
+        xyz_path = temp_dir / Path(xyz_name).name
+        with zf.open(xyz_name) as src, open(xyz_path, "wb") as dst:
+            shutil.copyfileobj(src, dst)
+
+        # Extract metadata if present (optional)
+        meta_name = _find_zip_member(zf, ".meta")
+        if meta_name:
+            meta_path = temp_dir / Path(meta_name).name
+            with zf.open(meta_name) as src, open(meta_path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+
+    # Convert XYZ to GeoTIFF
+    tif_path = xyz_path.with_suffix(".tif")
+    convert_dom_xyz_to_geotiff(xyz_path, tif_path, expected_resolution=1.0, quiet=True)
+    return tif_path
 
 
 def _extract_bb_zip_tif(input_path: Path, temp_dir: Path) -> Path:

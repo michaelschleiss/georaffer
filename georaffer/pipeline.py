@@ -226,7 +226,7 @@ def process_tiles(
         if process_images and process_pointclouds:
             jp2, laz = set(cat.image_tiles.keys()), set(cat.dsm_tiles.keys())
             if jp2 != laz:
-                # For TH, allow 40 known gaps where LAZ exists but DOP doesn't
+                # For TH, allow 40 known gaps where DOM exists but DOP doesn't
                 if name == "TH" and hasattr(dl, 'KNOWN_DOP_GAPS'):
                     missing_dop = laz - jp2
                     if missing_dop == dl.KNOWN_DOP_GAPS:

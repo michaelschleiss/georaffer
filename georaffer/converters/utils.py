@@ -22,6 +22,7 @@ from georaffer.config import (
     NRW_LAZ_PATTERN,
     RLP_JP2_PATTERN,
     RLP_LAZ_PATTERN,
+    TH_DOM_PATTERN,
     TH_DOP_PATTERN,
     TH_LAZ_PATTERN,
 )
@@ -99,7 +100,8 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
     - BY DOP historic: 32679_5392_2018.tif → (679, 5392) [raw input tile coords]
     - BY DOM: 32686_5369_20_DOM.tif → (686, 5369) [raw input tile coords]
     - TH DOP: dop20rgb_32666_5658_2_th_2008.zip → (666, 5658) [raw input tile coords]
-    - TH LAZ: las_32_666_5658_1_th_2020-2022.zip → (666, 5658) [raw input tile coords]
+    - TH LAZ: las_32_666_5658_1_th_2020-2022.(zip|laz) → (666, 5658) [raw input tile coords]
+    - TH DOM: dom1_32_666_5658_1_th_2020-2025.zip → (666, 5658) [raw input tile coords]
     - Output files: nrw_32_350500_5600000_2021.tif → (350500, 5600000) [UTM coordinates]
 
     Pattern matching strategy:
@@ -152,7 +154,7 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
             return int(match.group(1)), int(match.group(2))
 
     # Try TH patterns (zone prefix optionally combined with km coords)
-    for pattern in (TH_DOP_PATTERN, TH_LAZ_PATTERN):
+    for pattern in (TH_DOP_PATTERN, TH_LAZ_PATTERN, TH_DOM_PATTERN):
         match = pattern.match(filename.lower())
         if match:
             return int(match.group(1)), int(match.group(2))

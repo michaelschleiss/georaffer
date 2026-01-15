@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import re
+import shutil
 import threading
 import time
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import suppress
+from pathlib import Path
 from typing import ClassVar
 from urllib.parse import parse_qs, urlparse
 
@@ -14,8 +18,11 @@ import requests
 from georaffer.config import (
     CATALOG_CACHE_DIR,
     FEED_TIMEOUT,
+    MAX_RETRIES,
     METERS_PER_KM,
+    MIN_FILE_SIZE,
     Region,
+    RETRY_BACKOFF_BASE,
     TH_GRID_SIZE,
 )
 from georaffer.downloaders.base import Catalog, RegionDownloader
@@ -24,12 +31,18 @@ from georaffer.runtime import InterruptManager
 
 
 class THDownloader(RegionDownloader):
-    """TH (Thüringen) DOP downloader (Orthophotos) using LAS tiles as mask."""
+    """TH (Thüringen) DOP + DOM downloader (Orthophotos + Digital Surface Model)."""
 
-    # LAS Atom dataset feed (INSPIRE)
+    # LAS Atom dataset feed (INSPIRE) - for spatial coverage mask only
     LAS_DATASET_URL: ClassVar[str] = (
         "https://geoportal.geoportal-th.de/dienste/atom_th_hoehendaten_las"
         "?type=dataset&id=c8363eb8-7f2a-49b5-bb59-a1571f40a21f"
+    )
+
+    # DOM Atom dataset feed (INSPIRE) - Digital Surface Model (DSM)
+    DOM_DATASET_URL: ClassVar[str] = (
+        "https://geoportal.geoportal-th.de/dienste/atom_th_hoehendaten_dom"
+        "?type=dataset&id=3b5d8d9c-775d-4617-8dfe-71480d6472a6"
     )
 
     # DOP downloader endpoints (GaiaLight)
@@ -46,6 +59,13 @@ class THDownloader(RegionDownloader):
         re.IGNORECASE,
     )
 
+    # DOM feed link pattern (captures year-range, x, y)
+    # Example: /dom_2020-2025/dom1_32_663_5657_1_th_2020-2025.zip
+    DOM_LINK_PATTERN: ClassVar[re.Pattern[str]] = re.compile(
+        r"/dom_(\d{4}-\d{4})/dom1_(?:32_)?(\d{3})_(\d{4})_1_th_\1\.zip",
+        re.IGNORECASE,
+    )
+
     # DOP tile id pattern (e.g. 32666_5658 or 666_5658)
     BILDNR_PATTERN: ClassVar[re.Pattern[str]] = re.compile(r"^(?:32)?(\d{3})_(\d{4})$")
 
@@ -53,7 +73,8 @@ class THDownloader(RegionDownloader):
     MIN_YEAR: ClassVar[int] = 2020
 
     # Concurrency for DOP overview queries (server rate-limits to ~2-4 req/s)
-    QUERY_WORKERS: ClassVar[int] = 16
+    # Reduced to 8 to avoid rate limiting after DOM feed fetch
+    QUERY_WORKERS: ClassVar[int] = 8
 
     # Thread-local storage for sessions (requests.Session is not thread-safe)
     _thread_local: ClassVar[threading.local] = threading.local()
@@ -126,19 +147,79 @@ class THDownloader(RegionDownloader):
             return f"dop20rgb_th_{safe}_{year}.zip"
         return "dop20rgb_th_unknown.zip"
 
+    def dsm_filename_from_url(self, url: str) -> str:
+        """Generate a stable filename for DSM downloads.
+
+        DOM: Keep .zip extension (contains .xyz file to be converted)
+        LAS: Change .zip to .laz (for extracted LAZ file)
+        """
+        parsed = urlparse(url)
+        filename = Path(parsed.path).name
+        if filename.lower().startswith("dom"):
+            # DOM files: keep as ZIP (will be processed to extract XYZ)
+            return filename
+        elif filename.lower().startswith("las"):
+            # LAS files: extract LAZ from ZIP
+            if filename.lower().endswith(".zip"):
+                return f"{filename[:-4]}.laz"
+        return filename
+
+    def _extract_laz_zip(self, zip_path: Path, output_path: Path) -> None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(zip_path) as zf:
+            laz_name = next((n for n in zf.namelist() if n.lower().endswith(".laz")), None)
+            if not laz_name:
+                raise RuntimeError(f"No LAZ found in {zip_path.name}")
+            tmp_path = output_path.with_suffix(".tmp")
+            with zf.open(laz_name) as src, tmp_path.open("wb") as dst:
+                shutil.copyfileobj(src, dst)
+            tmp_path.replace(output_path)
+
+            meta_name = next((n for n in zf.namelist() if n.lower().endswith(".meta")), None)
+            if meta_name:
+                meta_path = output_path.with_suffix(".meta")
+                tmp_meta = meta_path.with_suffix(".tmp")
+                with zf.open(meta_name) as src, tmp_meta.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                tmp_meta.replace(meta_path)
+
+    def download_file(self, url: str, output_path: str, on_progress=None) -> bool:
+        output = Path(output_path)
+        if output.suffix.lower() == ".laz":
+            zip_path = output.with_suffix(".zip")
+            if zip_path.exists() and zip_path.stat().st_size >= MIN_FILE_SIZE:
+                try:
+                    self._extract_laz_zip(zip_path, output)
+                    with suppress(OSError):
+                        zip_path.unlink()
+                    return True
+                except Exception:
+                    with suppress(OSError):
+                        zip_path.unlink()
+            super().download_file(url, str(zip_path), on_progress=on_progress)
+            self._extract_laz_zip(zip_path, output)
+            with suppress(OSError):
+                zip_path.unlink()
+            return True
+        return super().download_file(url, output_path, on_progress=on_progress)
+
     # =========================== Catalog loading ===========================
 
     def _load_catalog(self) -> Catalog:
-        """Build DOP and DSM catalog from LAS feed and DOP overview queries."""
+        """Build DOP and DSM catalog from DOM/LAS feeds and DOP overview queries."""
+        # Use LAS feed for spatial coverage mask (all 17,127 tiles)
         las_tiles = self._fetch_las_tiles()
+        # Use DOM feed for actual DSM tiles (1m resolution DOM1)
+        dom_tiles = self._fetch_dom_tiles()
+
         image_tiles: dict[tuple[int, int], dict[int, dict]] = {}
         dsm_tiles: dict[tuple[int, int], dict[int, dict]] = {}
 
         if not las_tiles:
             return Catalog(image_tiles=image_tiles, dsm_tiles=dsm_tiles)
 
-        # Populate DSM tiles from LAS feed
-        for coords, year, url in las_tiles.values():
+        # Populate DSM tiles from DOM feed (1m resolution)
+        for coords, year, url in dom_tiles.values():
             dsm_tiles.setdefault(coords, {})[year] = self._tile_info(
                 url,
                 acquisition_date=None,
@@ -251,6 +332,56 @@ class THDownloader(RegionDownloader):
 
         return tiles
 
+    def _fetch_dom_tiles(self) -> dict[tuple[int, int], tuple[tuple[int, int], int, str]]:
+        """Parse DOM Atom dataset feed and return tile info keyed by coords.
+
+        Returns:
+            Dict mapping (grid_x, grid_y) to (coords, year, url) tuples.
+            Year is extracted from the year-range in the URL (uses end year).
+            Uses both 2014-2019 and 2020-2025 vintages for full coverage:
+            - 2014-2019: Full coverage (17,127 tiles), 1m resolution DOM1
+            - 2020-2025: Reduced coverage (14,869 tiles), 1m resolution DOM1
+            Where both exist, 2020-2025 takes priority (newer data).
+        """
+        tiles: dict[tuple[int, int], tuple[tuple[int, int], int, str]] = {}
+
+        if not self.quiet:
+            print("  TH: Fetching DOM feed...", flush=True)
+        root = fetch_xml_feed(self._session, self.DOM_DATASET_URL, timeout=FEED_TIMEOUT)
+        ns = {"atom": "http://www.w3.org/2005/Atom"}
+
+        # Collect tiles from both vintages
+        tiles_2014_2019 = []
+        tiles_2020_2025 = []
+
+        for link in root.findall(".//atom:link", ns):
+            if InterruptManager.get().is_set():
+                break
+            if link.attrib.get("rel") != "section":
+                continue
+            href = link.attrib.get("href", "")
+            match = self.DOM_LINK_PATTERN.search(href)
+            if not match:
+                continue
+            year_range = match.group(1)  # e.g., "2020-2025"
+            year = int(year_range.split("-")[1])  # Use end year
+            coords = (int(match.group(2)), int(match.group(3)))
+
+            if year_range == "2014-2019":
+                tiles_2014_2019.append((coords, year, href))
+            elif year_range == "2020-2025":
+                tiles_2020_2025.append((coords, year, href))
+
+        # First, populate with 2014-2019 vintage (full coverage)
+        for coords, year, href in tiles_2014_2019:
+            tiles[coords] = (coords, year, href)
+
+        # Then override with 2020-2025 where available (newer data)
+        for coords, year, href in tiles_2020_2025:
+            tiles[coords] = (coords, year, href)
+
+        return tiles
+
     def _compute_bbox_chunks(
         self, coords: set[tuple[int, int]]
     ) -> list[tuple[int, int, int, int]]:
@@ -339,24 +470,44 @@ class THDownloader(RegionDownloader):
             "type[]": "op",
         }
 
-        try:
-            session = self._get_thread_session()
-            resp = session.get(self.DOP_OVERVIEW_URL, params=params, timeout=FEED_TIMEOUT)
-            resp.raise_for_status()
-            payload = resp.json()
-        except Exception:
-            return []
+        # Retry with exponential backoff to handle rate limiting
+        session = self._get_thread_session()
+        for attempt in range(MAX_RETRIES):
+            if InterruptManager.get().is_set():
+                return []
 
-        if not payload.get("success"):
-            return []
+            try:
+                resp = session.get(self.DOP_OVERVIEW_URL, params=params, timeout=FEED_TIMEOUT)
+                resp.raise_for_status()
+                payload = resp.json()
 
-        features = payload.get("result", {}).get("features", [])
-        results: list[tuple[tuple[int, int], int, str, str | None]] = []
-        for feature in features:
-            items = self._parse_dop_feature_with_expansion(feature)
-            if items:
-                results.extend(items)
-        return results
+                if not payload.get("success"):
+                    return []
+
+                features = payload.get("result", {}).get("features", [])
+                results: list[tuple[tuple[int, int], int, str, str | None]] = []
+                for feature in features:
+                    items = self._parse_dop_feature_with_expansion(feature)
+                    if items:
+                        results.extend(items)
+                return results
+            except (requests.Timeout, requests.ConnectionError) as e:
+                # Network errors - retry with backoff
+                if attempt < MAX_RETRIES - 1:
+                    wait = RETRY_BACKOFF_BASE ** attempt
+                    time.sleep(min(wait, 10))  # Cap at 10s for bbox queries
+                    continue
+                # Last attempt failed - log and return empty
+                if not self.quiet:
+                    print(f"  ⚠ DOP query failed for bbox {bbox}: {e}", flush=True)
+                return []
+            except Exception as e:
+                # Other errors (JSON parse, HTTP error) - don't retry
+                if not self.quiet:
+                    print(f"  ⚠ DOP query error for bbox {bbox}: {e}", flush=True)
+                return []
+
+        return []
 
     def _parse_dop_feature_with_expansion(
         self, feature: dict
