@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from georaffer.downloaders.base import Catalog
 from georaffer.downloaders.nrw import NRW_JP2_PATTERN, NRW_LAZ_PATTERN, NRWDownloader
 
 
@@ -303,3 +304,75 @@ class TestNRWLoadCatalog:
 
         with pytest.raises(requests.HTTPError):
             downloader._load_catalog()
+
+
+class TestNRWCurrentUrlRecovery:
+    """Tests for NRW current-feed URL replacement and cache patching."""
+
+    def test_resolve_current_url_replacement_uses_feed_cache(self, tmp_path, monkeypatch):
+        """Current feed is parsed once and reused across replacement lookups."""
+        downloader = NRWDownloader(str(tmp_path), quiet=True)
+        stale_url = (
+            "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/akt/"
+            "dop/dop_jp2_f10/dop10rgbi_32_354_5668_1_nw_2023.jp2"
+        )
+        call_count = {"count": 0}
+
+        def mock_parse(*args, **kwargs):
+            call_count["count"] += 1
+            return {(354, 5668): ("https://example.com/dop10rgbi_32_354_5668_1_nw_2025.jp2", 2025)}
+
+        monkeypatch.setattr(downloader, "_parse_jp2_feed_with_year", mock_parse)
+
+        replacement_1 = downloader.resolve_current_url_replacement(stale_url)
+        replacement_2 = downloader.resolve_current_url_replacement(stale_url)
+
+        assert replacement_1 == ("https://example.com/dop10rgbi_32_354_5668_1_nw_2025.jp2", 2025)
+        assert replacement_2 == ("https://example.com/dop10rgbi_32_354_5668_1_nw_2025.jp2", 2025)
+        assert call_count["count"] == 1
+
+    def test_update_catalog_current_tile_url_uses_read_cache_fast_path(
+        self, tmp_path, monkeypatch
+    ):
+        """Catalog patching uses disk cache read path and avoids network catalog builds."""
+        downloader = NRWDownloader(str(tmp_path), quiet=True)
+        stale_url = (
+            "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/akt/"
+            "dop/dop_jp2_f10/dop10rgbi_32_354_5668_1_nw_2023.jp2"
+        )
+        new_url = (
+            "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/akt/"
+            "dop/dop_jp2_f10/dop10rgbi_32_354_5668_1_nw_2025.jp2"
+        )
+        cached_catalog = Catalog(
+            image_tiles={
+                (354, 5668): {
+                    2023: {
+                        "url": stale_url,
+                        "acquisition_date": "2023-05-01",
+                        "source_kind": None,
+                        "source_age": None,
+                    }
+                }
+            },
+            dsm_tiles={},
+        )
+
+        monkeypatch.setattr(downloader, "_read_cache", lambda: cached_catalog)
+        mock_build_catalog = Mock(side_effect=AssertionError("build_catalog must not be called"))
+        monkeypatch.setattr(downloader, "build_catalog", mock_build_catalog)
+        mock_write_cache = Mock()
+        monkeypatch.setattr(downloader, "_write_cache", mock_write_cache)
+
+        downloader.update_catalog_current_tile_url(
+            stale_url=stale_url,
+            new_url=new_url,
+            new_year=2025,
+        )
+
+        years = downloader._catalog.image_tiles[(354, 5668)]
+        assert 2023 not in years
+        assert years[2025]["url"] == new_url
+        assert years[2025]["source_age"] == "current"
+        mock_build_catalog.assert_not_called()
+        mock_write_cache.assert_called_once()

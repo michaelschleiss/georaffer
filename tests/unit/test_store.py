@@ -2,7 +2,7 @@
 
 from datetime import date
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 
@@ -267,6 +267,111 @@ class TestTileStoreGet:
         mock_convert.assert_called_once()
         call_args = mock_convert.call_args
         assert call_args[0][2] == 2000  # resolution
+
+
+class TestTileStoreDownloadRecovery:
+    """Tests for NRW stale current-url recovery during downloads."""
+
+    def test_download_single_recovers_nrw_stale_current_url(self, tmp_path):
+        """Stale NRW current URL is replaced before download retry loop."""
+        stale_url = (
+            "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/akt/"
+            "dop/dop_jp2_f10/dop10rgbi_32_354_5668_1_nw_2023.jp2"
+        )
+        replacement_url = (
+            "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/akt/"
+            "dop/dop_jp2_f10/dop10rgbi_32_354_5668_1_nw_2025.jp2"
+        )
+        tile = Tile(
+            region=Region.NRW,
+            zone=32,
+            x=354,
+            y=5668,
+            tile_type="image",
+            url=stale_url,
+            year=2023,
+        )
+        store = TileStore(path=tmp_path, regions=["NRW"])
+        raw_path = store._raw_path(tile)
+
+        mock_downloader = Mock()
+        mock_downloader.download_file.return_value = True
+        mock_downloader.resolve_current_url_replacement.return_value = (replacement_url, 2025)
+        store._downloaders = {Region.NRW: mock_downloader}
+
+        store._download_single(tile, raw_path)
+
+        assert mock_downloader.download_file.call_args_list == [
+            call(replacement_url, str(raw_path)),
+        ]
+        mock_downloader.resolve_current_url_replacement.assert_called_once_with(stale_url)
+        mock_downloader.update_catalog_current_tile_url.assert_called_once_with(
+            stale_url=stale_url,
+            new_url=replacement_url,
+            new_year=2025,
+        )
+
+    def test_download_single_reraises_original_404_when_no_replacement(self, tmp_path):
+        """If no replacement exists, original 404 RuntimeError is re-raised."""
+        stale_url = (
+            "https://www.opengeodata.nrw.de/produkte/geobasis/lusat/akt/"
+            "dop/dop_jp2_f10/dop10rgbi_32_354_5668_1_nw_2023.jp2"
+        )
+        tile = Tile(
+            region=Region.NRW,
+            zone=32,
+            x=354,
+            y=5668,
+            tile_type="image",
+            url=stale_url,
+            year=2023,
+        )
+        store = TileStore(path=tmp_path, regions=["NRW"])
+        raw_path = store._raw_path(tile)
+
+        not_found_error = RuntimeError(
+            f"Download failed after 3 retries for {stale_url}: "
+            "404 Client Error: Not Found for url"
+        )
+        mock_downloader = Mock()
+        mock_downloader.download_file.side_effect = not_found_error
+        mock_downloader.resolve_current_url_replacement.return_value = None
+        store._downloaders = {Region.NRW: mock_downloader}
+
+        with pytest.raises(RuntimeError, match="404 Client Error: Not Found"):
+            store._download_single(tile, raw_path)
+
+        assert mock_downloader.download_file.call_count == 1
+        assert mock_downloader.resolve_current_url_replacement.call_args_list == [
+            call(stale_url),
+            call(stale_url),
+        ]
+
+    def test_download_single_does_not_try_recovery_for_non_404(self, tmp_path):
+        """Non-404 download errors are propagated directly."""
+        tile = Tile(
+            region=Region.NRW,
+            zone=32,
+            x=354,
+            y=5668,
+            tile_type="image",
+            url="https://example.com/tile.jp2",
+            year=2023,
+        )
+        store = TileStore(path=tmp_path, regions=["NRW"])
+        raw_path = store._raw_path(tile)
+
+        timeout_error = RuntimeError("Download failed: connection timeout")
+        mock_downloader = Mock()
+        mock_downloader.download_file.side_effect = timeout_error
+        mock_downloader.resolve_current_url_replacement.return_value = None
+        store._downloaders = {Region.NRW: mock_downloader}
+
+        with pytest.raises(RuntimeError, match="connection timeout"):
+            store._download_single(tile, raw_path)
+
+        assert mock_downloader.download_file.call_count == 1
+        mock_downloader.resolve_current_url_replacement.assert_called_once_with(tile.url)
 
 
 class TestTileStoreGetMany:

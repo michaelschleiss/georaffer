@@ -83,6 +83,7 @@ class NRWDownloader(RegionDownloader):
         self._laz_base_url = (
             "https://www.opengeodata.nrw.de/produkte/geobasis/hm/bdom50_las/bdom50_las/"
         )
+        self._current_feed_tiles_cache: dict[tuple[int, int], tuple[str, int]] | None = None
 
     def utm_to_grid_coords(
         self, utm_x: float, utm_y: float
@@ -314,6 +315,85 @@ class NRWDownloader(RegionDownloader):
                 jp2_tiles[(grid_x, grid_y)] = (base_url + filename, tile_year)
 
         return jp2_tiles
+
+    @staticmethod
+    def _parse_nrw_jp2_url(url: str) -> tuple[int, int, int] | None:
+        """Parse (grid_x, grid_y, year) from NRW JP2 URL, if possible."""
+        filename = url.split("?", 1)[0].rsplit("/", 1)[-1]
+        match = NRW_JP2_PATTERN.match(filename)
+        if not match:
+            return None
+        return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+    def resolve_current_url_replacement(
+        self,
+        stale_url: str,
+    ) -> tuple[str, int] | None:
+        """Resolve stale NRW current-feed URL to latest current-feed URL.
+
+        Returns:
+            (new_url, new_year) when replacement is available and differs, else None.
+        """
+        if "/akt/" not in stale_url:
+            return None
+        parsed = self._parse_nrw_jp2_url(stale_url)
+        if parsed is None:
+            return None
+        x, y, _old_year = parsed
+        coords = (x, y)
+
+        if self._current_feed_tiles_cache is None:
+            self._current_feed_tiles_cache = self._parse_jp2_feed_with_year(
+                self._session,
+                self.CURRENT_JP2_FEED_URL,
+                self.CURRENT_JP2_BASE_URL,
+            )
+
+        replacement = self._current_feed_tiles_cache.get(coords)
+        if replacement is None:
+            return None
+        new_url, new_year = replacement
+        if new_url == stale_url:
+            return None
+        return new_url, new_year
+
+    def update_catalog_current_tile_url(
+        self,
+        *,
+        stale_url: str,
+        new_url: str,
+        new_year: int,
+    ) -> None:
+        """Patch in-memory/disk catalog entry for one stale current-feed URL."""
+        parsed = self._parse_nrw_jp2_url(stale_url)
+        if parsed is None:
+            return
+        x, y, old_year = parsed
+        coords = (x, y)
+
+        if self._catalog is None:
+            # Fast path: patch cache only when an in-memory or disk cache exists.
+            self._catalog = self._read_cache()
+        if self._catalog is None:
+            return
+
+        years = self._catalog.image_tiles.setdefault(coords, {})
+        old = years.get(old_year)
+        if old is not None and old.get("url") == stale_url:
+            del years[old_year]
+
+        preserved_acq = None
+        existing_new = years.get(int(new_year))
+        if existing_new is not None:
+            preserved_acq = existing_new.get("acquisition_date")
+
+        years[int(new_year)] = self._tile_info(
+            new_url,
+            acquisition_date=preserved_acq,
+            source_kind="direct",
+            source_age="current",
+        )
+        self._write_cache()
 
     def _load_catalog(self) -> Catalog:
         """Load NRW catalog from ATOM feeds (current + historic).

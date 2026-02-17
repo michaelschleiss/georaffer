@@ -378,7 +378,52 @@ class TileStore:
         """Download a single tile."""
         raw_path.parent.mkdir(parents=True, exist_ok=True)
         downloader = self.downloaders[tile.region]
-        downloader.download_file(tile.url, str(raw_path))
+        resolve_replacement = getattr(downloader, "resolve_current_url_replacement", None)
+        update_catalog_url = getattr(downloader, "update_catalog_current_tile_url", None)
+
+        if tile.region == Region.NRW and tile.tile_type == "image" and callable(resolve_replacement):
+            replacement = resolve_replacement(tile.url)
+            if replacement is not None:
+                new_url, new_year = replacement
+                downloader.download_file(new_url, str(raw_path))
+                if callable(update_catalog_url):
+                    update_catalog_url(
+                        stale_url=tile.url,
+                        new_url=new_url,
+                        new_year=new_year,
+                    )
+                return
+
+        original_error: RuntimeError | None = None
+        try:
+            downloader.download_file(tile.url, str(raw_path))
+            return
+        except RuntimeError as e:
+            # Fast-path recovery for stale NRW current-feed URLs in cached catalogs.
+            if tile.region != Region.NRW or tile.tile_type != "image" or "404" not in str(e):
+                raise
+            original_error = e
+
+        if not callable(resolve_replacement):
+            if original_error is not None:
+                raise original_error
+            raise RuntimeError("NRW recovery failed without original error context")
+
+        replacement = resolve_replacement(tile.url)
+        if replacement is None:
+            if original_error is not None:
+                raise original_error
+            raise RuntimeError("NRW recovery failed without original error context")
+
+        new_url, new_year = replacement
+        downloader.download_file(new_url, str(raw_path))
+
+        if callable(update_catalog_url):
+            update_catalog_url(
+                stale_url=tile.url,
+                new_url=new_url,
+                new_year=new_year,
+            )
 
     # =========================================================================
     # Private conversion helpers
