@@ -168,6 +168,10 @@ TH_LAZ_PATTERN = re.compile(
     r"las_(?:32_)?(\d{3})_(\d{4})_1_th_(\d{4}-\d{4})\.zip$",
     re.IGNORECASE,
 )
+TH_DOM_PATTERN = re.compile(
+    r"dom1_(?:32_)?(\d{3})_(\d{4})_1_th_(\d{4}-\d{4})\.zip$",
+    re.IGNORECASE,
+)
 
 
 # =============================================================================
