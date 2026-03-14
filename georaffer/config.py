@@ -18,7 +18,7 @@ class Region(str, Enum):
                     NRW                 RLP                 BB                  BW                  BY                 TH
     Tile size       1km x 1km           2km x 2km           1km x 1km           2km x 2km           1km x 1km          1km x 1km
     Orthophoto      0.1 m/px            0.2 m/px            (not available)     0.2 m/px            0.2 m/px           0.2 m/px
-    DSM spacing     0.5 m               0.2 m               0.2 m (raster)      1.0 m (raster)      0.2 m (raster)     0.2 m (raster)
+    DSM spacing     0.5 m               0.2 m               0.2 m (raster)      1.0 m (raster)      0.2 m (raster)     1.0 m (raster)
 
     NRW/RLP/BW/BY/TH use EPSG:25832 (UTM Zone 32N). BB uses EPSG:25833 (UTM Zone 33N).
     """
@@ -117,15 +117,15 @@ DSM_DTYPE = "float32"  # 0.06mm precision, 50% smaller than float64
 DSM_NODATA = -9999.0
 DEFAULT_PIXEL_SIZE = 0.5  # meters per pixel
 
-# LAZ point spacing by region (meters)
-# Note: BB, BW, BY use raster DSM (not LAZ), but spacing is still needed for grid calculations
+# DSM/LAZ spacing by region (meters)
+# Note: BB, BW, BY, TH use raster DSM (not LAZ), but spacing is still needed for grid calculations
 LAZ_SPACING_BY_REGION = {
     Region.NRW: 0.5,
     Region.RLP: 0.2,
     Region.BB: 0.2,
     Region.BW: 1.0,  # DOM1 is 1m raster
     Region.BY: 0.2,  # DOM20 is 0.2m raster
-    Region.TH: 0.2,
+    Region.TH: 1.0,  # DOM1 is 1m raster (2020-2025 vintage)
 }
 
 LAZ_SAMPLE_SIZE = 10000  # Points to sample for verification
@@ -165,7 +165,11 @@ TH_DOP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 TH_LAZ_PATTERN = re.compile(
-    r"las_(?:32_)?(\d{3})_(\d{4})_1_th_(\d{4}-\d{4})\.zip$",
+    r"las_(?:32_)?(\d{3})_(\d{4})_1_th_(\d{4}-\d{4})\.(zip|laz)$",
+    re.IGNORECASE,
+)
+TH_DOM_PATTERN = re.compile(
+    r"dom1_(?:32_)?(\d{3})_(\d{4})_1_th_(\d{4}-\d{4})\.zip$",
     re.IGNORECASE,
 )
 TH_DOM_PATTERN = re.compile(
