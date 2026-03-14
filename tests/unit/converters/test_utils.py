@@ -60,6 +60,11 @@ class TestParseTileCoords:
         coords = parse_tile_coords("dop_33250-5888.zip")
         assert coords == (250, 5888)
 
+    def test_th_laz(self):
+        """TH LAZ files (extracted from ZIP)."""
+        coords = parse_tile_coords("las_32_666_5658_1_th_2020-2025.laz")
+        assert coords == (666, 5658)
+
     def test_output_file_nrw(self):
         """Processed NRW output files."""
         assert parse_tile_coords("nrw_32_350000_5600000_2021.tif") == (350000, 5600000)
@@ -290,5 +295,4 @@ class TestResampleRaster:
         assert out_transform.a == 2.0
         assert out_transform.e == -2.0
         assert out_data.max() > 0
-
 

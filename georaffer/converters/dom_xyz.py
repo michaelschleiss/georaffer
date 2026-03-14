@@ -82,19 +82,22 @@ def convert_dom_xyz_to_geotiff(
             f"Incomplete grid: expected {expected_points} points, got {len(data)}"
         )
 
-    # Reshape to 2D grid
+    # Reshape to 2D grid.
+    # Normalize point order explicitly instead of inferring scan direction from
+    # adjacent samples. TH XYZ exports may be row-major in either top-to-bottom
+    # or bottom-to-top order, and the first row usually has constant Y.
     nx, ny = len(x_unique), len(y_unique)
+    sort_order = np.lexsort((x, -y))
+    x_sorted = x[sort_order].reshape((ny, nx))
+    y_sorted = y[sort_order].reshape((ny, nx))
+    expected_x = np.tile(x_unique, (ny, 1))
+    expected_y = np.repeat(y_unique[::-1][:, np.newaxis], nx, axis=1)
+    if not np.allclose(x_sorted, expected_x) or not np.allclose(y_sorted, expected_y):
+        raise ValueError("XYZ points do not form a regular row-major grid")
+    grid = z[sort_order].reshape((ny, nx))
 
-    # XYZ files typically scan bottom-to-top (Y increasing)
-    # GeoTIFF requires top-to-bottom, so flip if needed
-    if y[1] > y[0]:  # Y increases as we read (bottom-to-top)
-        grid = z.reshape((ny, nx))
-        grid = np.flipud(grid)
-        y_origin = y_unique[-1]  # Top edge for GeoTIFF
-    else:  # Y decreases (already top-to-bottom)
-        grid = z.reshape((ny, nx))
-        y_origin = y_unique[0]
-
+    # GeoTIFF y_origin is always the top (maximum Y)
+    y_origin = y_unique[-1]
     x_origin = x_unique[0]
 
     # XYZ coordinates are pixel centers. Adjust to top-left corner for GeoTIFF transform.
