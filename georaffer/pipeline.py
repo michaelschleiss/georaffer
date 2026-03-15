@@ -505,19 +505,14 @@ def process_tiles(
 
     total_stats.converted = convert_stats.converted
     total_stats.failed_convert = convert_stats.failed
-    total_stats.jp2_sources = convert_stats.jp2_sources
-    total_stats.jp2_converted = convert_stats.jp2_converted
-    total_stats.jp2_failed = convert_stats.jp2_failed
-    total_stats.jp2_skipped = convert_stats.jp2_skipped
-    total_stats.laz_sources = convert_stats.laz_sources
-    total_stats.laz_converted = convert_stats.laz_converted
-    total_stats.laz_failed = convert_stats.laz_failed
-    total_stats.laz_skipped = convert_stats.laz_skipped
-    total_stats.jp2_duration = convert_stats.jp2_duration
-    total_stats.laz_duration = convert_stats.laz_duration
-    total_stats.jp2_split_performed = convert_stats.jp2_split_performed
-    total_stats.laz_split_performed = convert_stats.laz_split_performed
-    total_stats.interrupted = convert_stats.interrupted
+    # Copy all shared fields from ConversionStats to ProcessingStats
+    for field_name in (
+        "jp2_sources", "jp2_converted", "jp2_failed", "jp2_skipped",
+        "laz_sources", "laz_converted", "laz_failed", "laz_skipped",
+        "jp2_duration", "laz_duration",
+        "jp2_split_performed", "laz_split_performed", "interrupted",
+    ):
+        setattr(total_stats, field_name, getattr(convert_stats, field_name))
 
     # Print conversion summary
     jp2_rate = (

@@ -562,55 +562,38 @@ def _extract_th_dom_meta_year(input_path: Path) -> str | None:
     return None
 
 
-def _extract_zip_meta_year(input_path: Path) -> str | None:
-    """Extract year from ZIP metadata (BB or BW formats)."""
+def _read_zip_metadata_text(input_path: Path) -> str | None:
+    """Read metadata text from a ZIP file (BB or BW formats)."""
     if input_path.suffix.lower() != ".zip":
         return None
-
-    texts: list[str] = []
     try:
         with zipfile.ZipFile(input_path) as zf:
-            # Try XML metadata first, then HTML (BB provides .html since 2025)
             meta_name = (
                 _find_zip_member(zf, "_meta.xml")
                 or _find_zip_member(zf, ".xml")
                 or _find_zip_member(zf, ".html")
             )
             if meta_name:
-                texts.append(zf.read(meta_name).decode("utf-8", errors="ignore"))
+                return zf.read(meta_name).decode("utf-8", errors="ignore")
     except Exception:
-        return None
-
-    for text in texts:
-        year = _extract_zip_year_from_text(text)
-        if year:
-            return year
+        pass
     return None
+
+
+def _extract_zip_meta_year(input_path: Path) -> str | None:
+    """Extract year from ZIP metadata (BB or BW formats)."""
+    text = _read_zip_metadata_text(input_path)
+    if text is None:
+        return None
+    return _extract_zip_year_from_text(text)
 
 
 def _extract_zip_meta_date(input_path: Path) -> str | None:
     """Extract date from ZIP metadata (BB or BW formats)."""
-    if input_path.suffix.lower() != ".zip":
+    text = _read_zip_metadata_text(input_path)
+    if text is None:
         return None
-
-    texts: list[str] = []
-    try:
-        with zipfile.ZipFile(input_path) as zf:
-            meta_name = (
-                _find_zip_member(zf, "_meta.xml")
-                or _find_zip_member(zf, ".xml")
-                or _find_zip_member(zf, ".html")
-            )
-            if meta_name:
-                texts.append(zf.read(meta_name).decode("utf-8", errors="ignore"))
-    except Exception:
-        return None
-
-    for text in texts:
-        date = _extract_zip_date_from_text(text)
-        if date:
-            return date
-    return None
+    return _extract_zip_date_from_text(text)
 
 
 def _extract_zip_year_from_text(text: str) -> str | None:
@@ -676,7 +659,8 @@ def _extract_zip_date_from_text(text: str) -> str | None:
     return None
 
 
-def _extract_iso_metadata_year(text: str, date_type: str) -> str | None:
+def _find_iso_date_value(text: str, date_type: str) -> str | None:
+    """Find the raw date string from ISO 19115 metadata for a given date type."""
     try:
         root = ET.fromstring(text)
     except Exception:
@@ -698,38 +682,23 @@ def _extract_iso_metadata_year(text: str, date_type: str) -> str | None:
             date_el = ci_date.find("gmd:date/gco:Date", ns)
         if date_el is None or not date_el.text:
             continue
-        match = re.match(r"(19\d{2}|20\d{2})", date_el.text.strip())
-        if match:
-            return match.group(1)
+        return date_el.text.strip()
     return None
+
+
+def _extract_iso_metadata_year(text: str, date_type: str) -> str | None:
+    value = _find_iso_date_value(text, date_type)
+    if value is None:
+        return None
+    match = re.match(r"(19\d{2}|20\d{2})", value)
+    return match.group(1) if match else None
 
 
 def _extract_iso_metadata_date(text: str, date_type: str) -> str | None:
-    try:
-        root = ET.fromstring(text)
-    except Exception:
+    value = _find_iso_date_value(text, date_type)
+    if value is None:
         return None
-
-    ns = {
-        "gmd": "http://www.isotc211.org/2005/gmd",
-        "gco": "http://www.isotc211.org/2005/gco",
-    }
-
-    for ci_date in root.findall(".//gmd:CI_Date", ns):
-        type_el = ci_date.find("gmd:dateType/gmd:CI_DateTypeCode", ns)
-        if type_el is None or not type_el.text:
-            continue
-        if type_el.text.strip() != date_type:
-            continue
-        date_el = ci_date.find("gmd:date/gco:DateTime", ns)
-        if date_el is None:
-            date_el = ci_date.find("gmd:date/gco:Date", ns)
-        if date_el is None or not date_el.text:
-            continue
-        normalized = _normalize_metadata_date(date_el.text.strip())
-        if normalized:
-            return normalized
-    return None
+    return _normalize_metadata_date(value)
 
 
 def _normalize_metadata_date(value: str) -> str | None:

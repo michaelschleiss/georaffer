@@ -17,7 +17,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from georaffer.config import FILE_TILE_SIZE_KM, Region
+from georaffer.config import FILE_TILE_SIZE_KM
 from georaffer.converters import convert_jp2, convert_laz
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
@@ -300,6 +300,72 @@ def convert_tiles(
                 return
             pbar.set_description_str(f"{rate:0.1f} files/s", refresh=False)
 
+        def _run_conversion_phase(
+            files: list[str],
+            source_dir: str,
+            data_type: str,
+            worker_fn,
+            pbar: tqdm,
+        ) -> tuple[int, int, int, int, bool]:
+            """Submit and collect conversion futures for a file type.
+
+            Returns:
+                (sources, converted, failed, skipped, split_performed)
+            """
+            sources = converted = failed = skipped = 0
+            split_performed = False
+
+            file_args = [
+                (f, source_dir, processed_dir, resolutions,
+                 threads_per_worker, grid_size_km, profiling, None)
+                for f in files
+            ]
+
+            futures = []
+            for args in file_args:
+                if stop_event.is_set():
+                    break
+                f = args[0]
+                if not reprocess and _outputs_exist(
+                    f, processed_dir, data_type, resolutions,
+                    grid_size_km, source_dir=source_dir,
+                ):
+                    skipped += 1
+                    pbar.update(1)
+                    _update_files_per_second(pbar)
+                    continue
+                futures.append(executor.submit(worker_fn, args))
+
+            pending = set(futures)
+            while pending and not stop_event.is_set():
+                try:
+                    for future in as_completed(pending, timeout=0.1):
+                        pending.discard(future)
+                        sources += 1
+                        try:
+                            _, filename, out_count = future.result()
+                            stats.converted += out_count
+                            converted += out_count
+                            if out_count > len(resolutions):
+                                split_performed = True
+                            if delete_raw:
+                                raw_path = os.path.join(source_dir, filename)
+                                if os.path.exists(raw_path):
+                                    os.remove(raw_path)
+                                    stats.deleted += 1
+                            pbar.update(1)
+                            _update_files_per_second(pbar)
+                        except Exception as e:
+                            failed += 1
+                            stats.failed += 1
+                            print(f"\nConversion failed: {e}", file=sys.stderr)
+                            pbar.update(1)
+                            _update_files_per_second(pbar)
+                except TimeoutError:
+                    continue
+
+            return sources, converted, failed, skipped, split_performed
+
         with tqdm(
             total=total_files,
             desc="0.0 files/s",
@@ -308,135 +374,26 @@ def convert_tiles(
             bar_format="Converting: [{bar:23}] {n}/{total} | ⏱ {elapsed} | {desc}",
             mininterval=0.1,
         ) as pbar:
-            # Convert JP2 files first (fail fast on missing GDAL driver)
             if jp2_files:
-                jp2_args = []
-                for f in jp2_files:
-                    jp2_args.append(
-                        (
-                            f,
-                            jp2_dir,
-                            processed_dir,
-                            resolutions,
-                            threads_per_worker,
-                            grid_size_km,
-                            profiling,
-                            None,  # unused
-                        )
-                    )
+                s, c, f, sk, sp = _run_conversion_phase(
+                    jp2_files, jp2_dir, "image", convert_jp2_worker, pbar,
+                )
+                stats.jp2_sources += s
+                stats.jp2_converted += c
+                stats.jp2_failed += f
+                stats.jp2_skipped += sk
+                stats.jp2_split_performed = sp
 
-                jp2_futures = []
-                for args in jp2_args:
-                    if stop_event.is_set():
-                        break
-                    f = args[0]
-                    if not reprocess and _outputs_exist(
-                        f,
-                        processed_dir,
-                        "image",
-                        resolutions,
-                        grid_size_km,
-                        source_dir=jp2_dir,
-                    ):
-                        stats.jp2_skipped += 1
-                        pbar.update(1)
-                        _update_files_per_second(pbar)
-                        continue
-                    jp2_futures.append(executor.submit(convert_jp2_worker, args))
-
-                pending = set(jp2_futures)
-                while pending and not stop_event.is_set():
-                    try:
-                        for future in as_completed(pending, timeout=0.1):
-                            pending.discard(future)
-                            stats.jp2_sources += 1  # Count source regardless of success
-                            try:
-                                _, filename, out_count = future.result()
-                                stats.converted += out_count
-                                stats.jp2_converted += out_count
-                                if out_count > len(resolutions):
-                                    stats.jp2_split_performed = True
-                                if delete_raw:
-                                    raw_path = os.path.join(jp2_dir, filename)
-                                    if os.path.exists(raw_path):
-                                        os.remove(raw_path)
-                                        stats.deleted += 1
-                                pbar.update(1)
-                                _update_files_per_second(pbar)
-                            except Exception as e:
-                                stats.jp2_failed += 1
-                                stats.failed += 1
-                                print(f"\nConversion failed: {e}", file=sys.stderr)
-                                pbar.update(1)
-                                _update_files_per_second(pbar)
-                    except TimeoutError:
-                        continue
-
-            # Convert LAZ files
             if laz_files:
                 laz_start = time.perf_counter()
-
-                laz_args = []
-                for f in laz_files:
-                    laz_args.append(
-                        (
-                            f,
-                            laz_dir,
-                            processed_dir,
-                            resolutions,
-                            threads_per_worker,
-                            grid_size_km,
-                            profiling,
-                            None,  # unused
-                        )
-                    )
-
-                laz_futures = []
-                for args in laz_args:
-                    if stop_event.is_set():
-                        break
-                    f = args[0]
-                    if not reprocess and _outputs_exist(
-                        f,
-                        processed_dir,
-                        "dsm",
-                        resolutions,
-                        grid_size_km,
-                        source_dir=laz_dir,
-                    ):
-                        stats.laz_skipped += 1
-                        pbar.update(1)
-                        _update_files_per_second(pbar)
-                        continue
-                    laz_futures.append(executor.submit(convert_dsm_worker, args))
-
-                pending = set(laz_futures)
-                while pending and not stop_event.is_set():
-                    try:
-                        for future in as_completed(pending, timeout=0.1):
-                            pending.discard(future)
-                            stats.laz_sources += 1  # Count source regardless of success
-                            try:
-                                _, filename, out_count = future.result()
-                                stats.converted += out_count
-                                stats.laz_converted += out_count
-                                if out_count > len(resolutions):
-                                    stats.laz_split_performed = True
-                                if delete_raw:
-                                    raw_path = os.path.join(laz_dir, filename)
-                                    if os.path.exists(raw_path):
-                                        os.remove(raw_path)
-                                        stats.deleted += 1
-                                pbar.update(1)
-                                _update_files_per_second(pbar)
-                            except Exception as e:
-                                stats.laz_failed += 1
-                                stats.failed += 1
-                                print(f"\nConversion failed: {e}", file=sys.stderr)
-                                pbar.update(1)
-                                _update_files_per_second(pbar)
-                    except TimeoutError:
-                        continue
+                s, c, f, sk, sp = _run_conversion_phase(
+                    laz_files, laz_dir, "dsm", convert_dsm_worker, pbar,
+                )
+                stats.laz_sources += s
+                stats.laz_converted += c
+                stats.laz_failed += f
+                stats.laz_skipped += sk
+                stats.laz_split_performed = sp
 
     except KeyboardInterrupt:
         interrupted = True

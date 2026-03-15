@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -14,12 +13,7 @@ from rasterio.merge import merge
 from rasterio.warp import reproject, transform_bounds
 
 from georaffer.config import DSM_NODATA
-
-
-def _extract_year_from_filename(filename: str) -> str | None:
-    """Extract 4-digit year from filename (e.g., 'tile_2021.tif' -> '2021')."""
-    match = re.search(r"_(\d{4})\.", filename)
-    return match.group(1) if match else None
+from georaffer.workers import extract_year_from_filename as _extract_year_from_filename
 
 
 def _select_highest_resolution_dir(base_dir: Path) -> Path:

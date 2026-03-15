@@ -121,16 +121,15 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
         if is_latlon:
             if utm_zone is not None:
                 raise ValueError("CSV lat/lon inputs do not accept --utm-zone.")
-            coords = []
-            zones: set[int] = set()
-            for lon, lat in raw_coords:
-                easting, northing, zone, _ = utm.from_latlon(lat, lon)
-                coords.append((easting, northing))
-                zones.add(zone)
-            if len(zones) > 1:
+            arr = np.array(raw_coords)  # shape (N, 2): lon, lat
+            lons, lats = arr[:, 0], arr[:, 1]
+            zone_candidates = np.floor((lons + 180) / 6).astype(int) + 1
+            unique_zones = set(zone_candidates.tolist())
+            if len(unique_zones) > 1:
                 raise ValueError("CSV coordinates span multiple UTM zones; split input by zone.")
-            if zones:
-                source_zone = zones.pop()
+            source_zone = unique_zones.pop()
+            utm_x, utm_y = latlon_array_to_utm(lats, lons, force_zone_number=source_zone)
+            coords = list(zip(np.atleast_1d(utm_x), np.atleast_1d(utm_y)))
         else:
             source_zone = _require_utm_zone()
             coords = [(c[0], c[1]) for c in raw_coords]
