@@ -86,6 +86,10 @@ class TestNormalizeRegions:
         regions = normalize_regions(["BB"])
         assert regions == [Region.BB]
 
+    def test_supports_cz(self):
+        regions = normalize_regions(["cz"])
+        assert regions == [Region.CZ]
+
 
 class TestLoadCoordinatesBbox:
     """Tests for load_coordinates with bbox source."""

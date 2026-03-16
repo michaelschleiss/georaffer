@@ -103,8 +103,12 @@ pyinstrument = ">=4.6"
 ruff = ">=0.14.6,<0.15"
 vulture = ">=2.14,<3"
 
+[tool.pixi.feature.irregular-laz.dependencies]
+pdal = "*"
+
 [tool.pixi.environments]
 default = { features = ["dev"] }
+irregular-laz = { features = ["dev", "irregular-laz"] }
 
 [tool.pixi.tasks]
 test = "python -m pytest"

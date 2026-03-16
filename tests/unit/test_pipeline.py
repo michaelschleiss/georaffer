@@ -495,6 +495,13 @@ class TestGenerateOutputName:
         )
         assert name == "rlp_32_362000_5604000_2023.tif"
 
+    def test_cz_image(self):
+        """Test CZ image output name generation in zone 33."""
+        from georaffer.config import Region
+
+        name = generate_output_name("oi_418_5552_2024.jp2", Region.CZ, "2024", "image")
+        assert name == "cz_33_418000_5552000_2024.tif"
+
     def test_no_coords_match(self):
         """Reject filenames without parseable coordinates."""
         from georaffer.config import Region
@@ -727,6 +734,77 @@ class TestConvertTiles:
         assert region == Region.BB
         region = workers_mod.detect_region("dop_33250-5888.zip")
         assert region == Region.BB
+
+    def test_detects_cz_region(self):
+        """Test CZ region detection from normalized raw filenames."""
+        import georaffer.workers as workers_mod
+        from georaffer.config import Region
+
+        assert workers_mod.detect_region("oi_418_5552_2024.jp2") == Region.CZ
+        assert workers_mod.detect_region("dmpok_418_5552_2025.tif") == Region.CZ
+        assert workers_mod.detect_region("dmp1g_418_5552_2013.laz") == Region.CZ
+
+    def test_cz_dmp1g_uses_irregular_backend(self, tmp_path, monkeypatch):
+        """CZ DMP1G LAZ files should bypass the regular-grid LAZ converter."""
+        import georaffer.workers as workers_mod
+
+        laz_dir = tmp_path / "raw" / "dsm"
+        processed_dir = tmp_path / "processed"
+        laz_dir.mkdir(parents=True, exist_ok=True)
+
+        laz_file = laz_dir / "dmp1g_418_5552_2013.laz"
+        laz_file.touch()
+
+        def fail_regular(*args, **kwargs):
+            raise AssertionError("regular-grid converter should not be used")
+
+        captured = {}
+
+        def fake_irregular(
+            input_path,
+            output_paths,
+            region,
+            *,
+            year=None,
+            native_resolution,
+            default_srs=None,
+            target_sizes=None,
+            num_threads=None,
+            grid_size_km=1.0,
+            profiling=False,
+        ):
+            captured["input_path"] = input_path
+            captured["region"] = region
+            captured["year"] = year
+            captured["native_resolution"] = native_resolution
+            captured["default_srs"] = default_srs
+            captured["target_sizes"] = target_sizes
+            return True
+
+        monkeypatch.setattr(workers_mod, "convert_laz", fail_regular)
+        monkeypatch.setattr(workers_mod, "convert_laz_irregular", fake_irregular)
+
+        success, fname, out_count = workers_mod.convert_dsm_worker(
+            (
+                laz_file.name,
+                str(laz_dir),
+                str(processed_dir),
+                [2000],
+                1,
+                1.0,
+                False,
+                None,
+            )
+        )
+
+        assert success is True
+        assert fname == laz_file.name
+        assert out_count == 4
+        assert captured["input_path"] == str(laz_file)
+        assert captured["year"] == "2013"
+        assert captured["native_resolution"] == 1.0
+        assert captured["default_srs"] == "EPSG:3045"
+        assert captured["target_sizes"] == [2000]
 
     def test_empty_directories(self, tmp_path):
         """Test handling of empty directories."""

@@ -191,6 +191,8 @@ def convert_jp2(
                         crs = (
                             "EPSG:25833"
                             if region == Region.BB
+                            else "EPSG:3045"
+                            if region == Region.CZ
                             else "EPSG:25832"
                         )
     

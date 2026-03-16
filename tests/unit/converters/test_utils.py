@@ -65,6 +65,26 @@ class TestParseTileCoords:
         coords = parse_tile_coords("las_32_666_5658_1_th_2020-2025.laz")
         assert coords == (666, 5658)
 
+    def test_cz_oi(self):
+        """CZ OI imagery files."""
+        coords = parse_tile_coords("oi_418_5552_2024.jp2")
+        assert coords == (418, 5552)
+
+    def test_cz_dmpok(self):
+        """CZ DMPOK raster files."""
+        coords = parse_tile_coords("dmpok_418_5552_2025.tif")
+        assert coords == (418, 5552)
+
+    def test_cz_dmp1g(self):
+        """CZ DMP1G fallback LAZ files."""
+        coords = parse_tile_coords("dmp1g_418_5552_2013.laz")
+        assert coords == (418, 5552)
+
+    def test_cz_dmp1g_temp_tif(self):
+        """CZ DMP1G temporary raster files."""
+        coords = parse_tile_coords("dmp1g_418_5552_2013.tif")
+        assert coords == (418, 5552)
+
     def test_output_file_nrw(self):
         """Processed NRW output files."""
         assert parse_tile_coords("nrw_32_350000_5600000_2021.tif") == (350000, 5600000)
@@ -73,6 +93,10 @@ class TestParseTileCoords:
     def test_output_file_rlp(self):
         """Processed RLP output files."""
         assert parse_tile_coords("rlp_32_362000_5604000_2023.tif") == (362000, 5604000)
+
+    def test_output_file_cz(self):
+        """Processed CZ output files in zone 33."""
+        assert parse_tile_coords("cz_33_418000_5552000_2025.tif") == (418000, 5552000)
 
     def test_output_file_utm_coords(self):
         """Output files with full UTM coordinates (from splits)."""
@@ -295,4 +319,3 @@ class TestResampleRaster:
         assert out_transform.a == 2.0
         assert out_transform.e == -2.0
         assert out_data.max() > 0
-

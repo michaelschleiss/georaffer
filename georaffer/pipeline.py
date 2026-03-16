@@ -18,6 +18,7 @@ from georaffer.downloaders import (
     BBDownloader,
     BWDownloader,
     BYDownloader,
+    CZDownloader,
     NRWDownloader,
     RLPDownloader,
     THDownloader,
@@ -173,6 +174,11 @@ def process_tiles(
         if Region.TH in selected_regions
         else None
     )
+    cz_downloader = (
+        CZDownloader(output_dir, imagery_from=imagery_from)
+        if Region.CZ in selected_regions
+        else None
+    )
 
     # Create output directories
     for subdir in ["raw/image", "raw/dsm", "processed/image", "processed/dsm"]:
@@ -219,6 +225,7 @@ def process_tiles(
         ("BW", bw_downloader),
         ("BY", by_downloader),
         ("TH", th_downloader),
+        ("CZ", cz_downloader),
     ]:
         if dl is None:
             continue
@@ -237,6 +244,13 @@ def process_tiles(
                         raise ValueError(
                             f"TH JP2/LAZ mismatch: {len(jp2)} vs {len(laz)} "
                             f"({len(unexpected)} unexpected gaps, expected 40 known gaps)"
+                        )
+                elif name == "CZ":
+                    orphan_dsm = laz - jp2
+                    if orphan_dsm:
+                        sample = ", ".join(map(str, sorted(orphan_dsm)[:5]))
+                        raise ValueError(
+                            f"CZ has {len(orphan_dsm)} DSM tiles without imagery (sample): {sample}"
                         )
                 else:
                     raise ValueError(f"{name} JP2/LAZ mismatch: {len(jp2)} vs {len(laz)}")
@@ -315,7 +329,7 @@ def process_tiles(
     # Calculate split factors and output counts per region
     # Use FILE_TILE_SIZE_KM (size of files after extraction) for split calculations
     region_stats = {}
-    for region in [Region.NRW, Region.RLP, Region.BB, Region.BW, Region.BY, Region.TH]:
+    for region in [Region.NRW, Region.RLP, Region.BB, Region.BW, Region.BY, Region.TH, Region.CZ]:
         region_key = region.value.lower()
         jp2_count = len(downloads_by_source.get(f"{region_key}_jp2", []))
         laz_count = len(downloads_by_source.get(f"{region_key}_laz", []))
@@ -344,7 +358,7 @@ def process_tiles(
     
     # Build table rows from region_stats
     table_rows = []
-    for region in [Region.NRW, Region.RLP, Region.BB, Region.BW, Region.BY, Region.TH]:
+    for region in [Region.NRW, Region.RLP, Region.BB, Region.BW, Region.BY, Region.TH, Region.CZ]:
         region_key = region.value.lower()
         stats = region_stats[region_key]
         table_rows.append((
@@ -390,6 +404,7 @@ def process_tiles(
         "bw": bw_downloader,
         "by": by_downloader,
         "th": th_downloader,
+        "cz": cz_downloader,
     }
     
     for region_key, downloader in region_downloaders.items():

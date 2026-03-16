@@ -8,6 +8,7 @@ import pytest
 from rasterio.enums import Resampling
 from rasterio.transform import Affine
 
+from georaffer.config import Region
 from georaffer.converters.jp2 import _convert_split_jp2, convert_jp2
 from georaffer.converters.utils import resample_raster, write_geotiff
 
@@ -122,6 +123,27 @@ class TestConvertJP2:
 
         assert result is True
         mock_split.assert_called_once()
+
+    def test_convert_cz_missing_georef_uses_epsg_3045(
+        self, mock_rasterio, mock_atomic_write, tmp_path
+    ):
+        """CZ fallback georeferencing must stay in EPSG:3045."""
+        mock_open, mock_src = mock_rasterio
+        mock_write, _ = mock_atomic_write
+        mock_src.transform = Affine.identity()
+        mock_src.crs = None
+        mock_src.read.return_value = np.zeros((3, 4000, 4000), dtype=np.uint8)
+
+        output_path = str(tmp_path / "output" / "cz_33_492000_5562000_2024.tif")
+        result = convert_jp2(
+            "/fake/oi_492_5562_2024.jp2",
+            output_path,
+            region=Region.CZ,
+            year="2024",
+        )
+
+        assert result is True
+        assert mock_write.call_args.kwargs["crs"] == "EPSG:3045"
 
 
 class TestResampleTile:
