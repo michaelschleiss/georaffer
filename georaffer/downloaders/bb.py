@@ -32,8 +32,8 @@ class BBDownloader(RegionDownloader):
     BDOM_BASE_URL: ClassVar[str] = "https://data.geobasis-bb.de/geobasis/daten/bdom/tif/"
     DOP_BASE_URL: ClassVar[str] = "https://data.geobasis-bb.de/geobasis/daten/dop/rgbi_tif/"
     UTM_ZONE: ClassVar[int] = 33
-    # Border regions not always reconstructed in bDOM (as of 2024-12)
-    EXPECTED_MISSING_BDOM: ClassVar[int] = 488
+    # Border regions not always reconstructed in bDOM (as of 2025-03)
+    EXPECTED_MISSING_BDOM: ClassVar[int] = 428
 
     def __init__(
         self,
