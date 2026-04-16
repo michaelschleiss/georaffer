@@ -18,6 +18,9 @@ from georaffer.config import (
     BW_DOP_PATTERN,
     BY_DOM_PATTERN,
     BY_DOP_PATTERN,
+    CZ_DMP1G_PATTERN,
+    CZ_DMPOK_PATTERN,
+    CZ_OI_PATTERN,
     NRW_JP2_PATTERN,
     NRW_LAZ_PATTERN,
     RLP_JP2_PATTERN,
@@ -30,7 +33,7 @@ from georaffer.config import (
 # Pattern for processed output files: {region}_{zone}_{easting}_{northing}_{year}.tif
 # Easting is 6 digits, northing is 7 digits.
 OUTPUT_FILE_PATTERN = re.compile(
-    r"(?:nrw|rlp|bb|bw|by|th)_(?:32|33)_(\d{6})_(\d{7})_\d{4}(?:_\d+)?\.tif$"
+    r"(?:nrw|rlp|bb|bw|by|th|cz)_(?:32|33)_(\d{6})_(\d{7})_\d{4}(?:_\d+)?\.tif$"
 )
 
 
@@ -85,7 +88,7 @@ def parse_rlp_tile_coords(filename: str) -> tuple[int, int] | None:
 
 
 def parse_tile_coords(filename: str) -> tuple[int, int] | None:
-    """Extract grid coordinates from NRW, RLP, BB, BW, or BY style filenames.
+    """Extract grid coordinates from supported raw and processed filenames.
 
     Handles:
     - NRW JP2: dop10rgbi_32_350_5600_1_nw_2021.jp2 → (350, 5600) [raw input tile coords]
@@ -102,6 +105,9 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
     - TH DOP: dop20rgb_32666_5658_2_th_2008.zip → (666, 5658) [raw input tile coords]
     - TH LAZ: las_32_666_5658_1_th_2020-2022.(zip|laz) → (666, 5658) [raw input tile coords]
     - TH DOM: dom1_32_666_5658_1_th_2020-2025.zip → (666, 5658) [raw input tile coords]
+    - CZ OI: oi_302_5550_2024.jp2 → (302, 5550) [raw input tile coords]
+    - CZ DMPOK: dmpok_560_5438_2025.tif → (560, 5438) [raw input tile coords]
+    - CZ DMP1G: dmp1g_302_5550_2013.laz → (302, 5550) [raw input tile coords]
     - Output files: nrw_32_350500_5600000_2021.tif → (350500, 5600000) [UTM coordinates]
 
     Pattern matching strategy:
@@ -110,11 +116,12 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
       3. Try BB patterns (zone prefix + km coords)
       4. Try BW patterns (simple km coords like RLP)
       5. Try BY patterns (simple zone + km coords)
-      6. Finally check processed output files (UTM coordinates in meters)
+      6. Try CZ patterns
+      7. Finally check processed output files (UTM coordinates in meters)
       7. Return None if no match (signals invalid/unexpected filename)
 
     Returns None for:
-      - Wrong region prefix (e.g., "hessen_..." instead of nrw/rlp/bb/bw/by/th)
+      - Wrong region prefix (e.g., "hessen_..." instead of nrw/rlp/bb/bw/by/th/cz)
       - Malformed coordinates (non-numeric, wrong format)
       - Missing required components (zone, year, coordinates)
       - Completely unrecognized filename patterns
@@ -155,6 +162,12 @@ def parse_tile_coords(filename: str) -> tuple[int, int] | None:
 
     # Try TH patterns (zone prefix optionally combined with km coords)
     for pattern in (TH_DOP_PATTERN, TH_LAZ_PATTERN, TH_DOM_PATTERN):
+        match = pattern.match(filename.lower())
+        if match:
+            return int(match.group(1)), int(match.group(2))
+
+    # Try CZ patterns (2km tile origins in km)
+    for pattern in (CZ_OI_PATTERN, CZ_DMPOK_PATTERN, CZ_DMP1G_PATTERN):
         match = pattern.match(filename.lower())
         if match:
             return int(match.group(1)), int(match.group(2))

@@ -15,12 +15,12 @@ class Region(str, Enum):
 
     Each region has different tile sizes and resolutions:
 
-                    NRW                 RLP                 BB                  BW                  BY                 TH
-    Tile size       1km x 1km           2km x 2km           1km x 1km           2km x 2km           1km x 1km          1km x 1km
-    Orthophoto      0.1 m/px            0.2 m/px            (not available)     0.2 m/px            0.2 m/px           0.2 m/px
-    DSM spacing     0.5 m               0.2 m               0.2 m (raster)      1.0 m (raster)      0.2 m (raster)     1.0 m (raster)
+                    NRW                 RLP                 BB                  BW                  BY                 TH                 CZ
+    Tile size       1km x 1km           2km x 2km           1km x 1km           2km x 2km           1km x 1km          1km x 1km        2km x 2km
+    Orthophoto      0.1 m/px            0.2 m/px            (not available)     0.2 m/px            0.2 m/px           0.2 m/px         INSPIRE OI
+    DSM spacing     0.5 m               0.2 m               0.2 m (raster)      1.0 m (raster)      0.2 m (raster)     1.0 m (raster)   0.5 m (raster)
 
-    NRW/RLP/BW/BY/TH use EPSG:25832 (UTM Zone 32N). BB uses EPSG:25833 (UTM Zone 33N).
+    NRW/RLP/BW/BY/TH use EPSG:25832 (UTM Zone 32N). BB and CZ use zone 33 products.
     """
 
     NRW = "NRW"
@@ -29,6 +29,7 @@ class Region(str, Enum):
     BW = "BW"
     BY = "BY"
     TH = "TH"
+    CZ = "CZ"
 
 
 # =============================================================================
@@ -47,6 +48,7 @@ BB_GRID_SIZE = 1000  # 1km
 BW_GRID_SIZE = 2000  # 2km ZIPs (contain 1km sub-tiles)
 BY_GRID_SIZE = 1000  # 1km
 TH_GRID_SIZE = 1000  # 1km
+CZ_GRID_SIZE = 2000  # 2km INSPIRE tiles
 
 FILE_TILE_SIZE_KM: dict[Region, int] = {
     Region.NRW: 1,
@@ -55,6 +57,7 @@ FILE_TILE_SIZE_KM: dict[Region, int] = {
     Region.BW: 1,  # Extracted from 2km ZIPs
     Region.BY: 1,
     Region.TH: 1,
+    Region.CZ: 2,
 }
 
 # Output tile size (km). Must evenly divide native sizes for splitting to work.
@@ -126,9 +129,17 @@ LAZ_SPACING_BY_REGION = {
     Region.BW: 1.0,  # DOM1 is 1m raster
     Region.BY: 0.2,  # DOM20 is 0.2m raster
     Region.TH: 1.0,  # DOM1 is 1m raster (2020-2025 vintage)
+    Region.CZ: 0.5,  # DMPOK TIFF is 0.5m raster; DMP1G LAZ is only fallback
 }
 
 LAZ_SAMPLE_SIZE = 10000  # Points to sample for verification
+
+# Product-level native rasterization targets for irregular LAZ fallback sources.
+# These are intentionally not region-wide because a region can mix regular-grid DSM
+# products (e.g. DMPOK TIFF) with irregular fallback LAZ products (e.g. DMP1G).
+IRREGULAR_LAZ_NATIVE_RESOLUTION_BY_PRODUCT = {
+    "cz_dmp1g": 1.0,
+}
 
 
 # =============================================================================
@@ -172,6 +183,9 @@ TH_DOM_PATTERN = re.compile(
     r"dom1_(?:32_)?(\d{3})_(\d{4})_1_th_(\d{4}-\d{4})\.zip$",
     re.IGNORECASE,
 )
+CZ_OI_PATTERN = re.compile(r"oi_(\d{3})_(\d{4})_(\d{4})\.jp2$", re.IGNORECASE)
+CZ_DMPOK_PATTERN = re.compile(r"dmpok_(\d{3})_(\d{4})_(\d{4})\.tif$", re.IGNORECASE)
+CZ_DMP1G_PATTERN = re.compile(r"dmp1g_(\d{3})_(\d{4})_(\d{4})\.laz$", re.IGNORECASE)
 
 
 # =============================================================================
@@ -186,6 +200,7 @@ UTM_ZONE_BY_REGION = {
     Region.BW: 32,
     Region.BY: 32,
     Region.TH: 32,
+    Region.CZ: 33,
 }
 
 

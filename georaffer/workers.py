@@ -51,7 +51,11 @@ from georaffer.config import (
     BW_DOP_PATTERN,
     BY_DOM_PATTERN,
     BY_DOP_PATTERN,
+    CZ_DMP1G_PATTERN,
+    CZ_DMPOK_PATTERN,
+    CZ_OI_PATTERN,
     FILE_TILE_SIZE_KM,
+    IRREGULAR_LAZ_NATIVE_RESOLUTION_BY_PRODUCT,
     METERS_PER_KM,
     NRW_JP2_PATTERN,
     NRW_LAZ_PATTERN,
@@ -63,7 +67,13 @@ from georaffer.config import (
     Region,
     utm_zone_str_for_region,
 )
-from georaffer.converters import convert_dsm_raster, convert_jp2, convert_laz, get_laz_year
+from georaffer.converters import (
+    convert_dsm_raster,
+    convert_jp2,
+    convert_laz,
+    convert_laz_irregular,
+    get_laz_year,
+)
 from georaffer.converters.dom_xyz import convert_dom_xyz_to_geotiff
 from georaffer.converters.utils import parse_tile_coords
 from georaffer.grids import compute_split_factor
@@ -90,7 +100,7 @@ def detect_region(filename: str) -> Region:
         filename: Source filename
 
     Returns:
-        Region enum (NRW, RLP, BB, BW, or BY)
+        Region enum for the source file
     """
     filename_lower = filename.lower()
 
@@ -106,6 +116,10 @@ def detect_region(filename: str) -> Region:
         TH_LAZ_PATTERN.match(filename_lower) or
         TH_DOM_PATTERN.match(filename_lower)):
         return Region.TH
+    if (CZ_OI_PATTERN.match(filename_lower) or
+        CZ_DMPOK_PATTERN.match(filename_lower) or
+        CZ_DMP1G_PATTERN.match(filename_lower)):
+        return Region.CZ
     if NRW_JP2_PATTERN.match(filename) or NRW_LAZ_PATTERN.match(filename):
         return Region.NRW
     raise ValueError(f"Unrecognized tile filename: {filename}")
@@ -286,6 +300,12 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, str, int]:
     input_path = Path(laz_dir) / filename
     region = detect_region(filename)
 
+    def _irregular_laz_product(source_name: str, source_region: Region) -> str | None:
+        source_lower = source_name.lower()
+        if source_region == Region.CZ and CZ_DMP1G_PATTERN.match(source_lower):
+            return "cz_dmp1g"
+        return None
+
     def _convert_laz_source(source_path: Path, source_name: str) -> tuple[bool, str, int]:
         year = resolve_source_year(source_name, source_path, data_type="dsm", region=region)
         output_paths: dict[int | None, str] = {}
@@ -296,15 +316,30 @@ def convert_dsm_worker(args: tuple) -> tuple[bool, str, int]:
             output_paths[res] = str(res_dir / output_name)
 
         try:
-            convert_laz(
-                source_path,
-                output_paths,
-                region,
-                target_sizes=resolutions,
-                num_threads=num_threads,
-                grid_size_km=grid_size_km,
-                profiling=profiling,
-            )
+            product_id = _irregular_laz_product(source_name, region)
+            if product_id is None:
+                convert_laz(
+                    source_path,
+                    output_paths,
+                    region,
+                    target_sizes=resolutions,
+                    num_threads=num_threads,
+                    grid_size_km=grid_size_km,
+                    profiling=profiling,
+                )
+            else:
+                native_resolution = IRREGULAR_LAZ_NATIVE_RESOLUTION_BY_PRODUCT[product_id]
+                convert_laz_irregular(
+                    str(source_path),
+                    output_paths,
+                    region,
+                    year=year,
+                    native_resolution=native_resolution,
+                    target_sizes=resolutions,
+                    num_threads=num_threads,
+                    grid_size_km=grid_size_km,
+                    profiling=profiling,
+                )
 
             tile_km = FILE_TILE_SIZE_KM[region]
             split_factor = compute_split_factor(tile_km, grid_size_km)
