@@ -11,7 +11,15 @@ from rasterio.warp import transform_bounds
 
 from georaffer import __version__
 from georaffer.align import align_to_reference
-from georaffer.config import DEFAULT_PIXEL_SIZE, DEFAULT_WORKERS, METERS_PER_KM, OUTPUT_TILE_SIZE_KM, UTM_ZONE, Region
+from georaffer.config import (
+    DEFAULT_PIXEL_SIZE,
+    DEFAULT_WORKERS,
+    METERS_PER_KM,
+    OUTPUT_TILE_SIZE_KM,
+    UTM_ZONE,
+    Region,
+    utm_zone_for_region,
+)
 from georaffer.grids import dedupe_by_output_tile, latlon_array_to_utm, tile_to_utm_center
 from georaffer.inputs import (
     load_from_bbox,
@@ -21,6 +29,13 @@ from georaffer.inputs import (
     load_from_pygeon,
 )
 from georaffer.pipeline import process_tiles
+from georaffer.preview import (
+    PreviewBBox,
+    build_preview_data,
+    latlon_bbox_to_utm,
+    parse_kml,
+    write_preview_html,
+)
 from georaffer.runtime import install_interrupt_signal_handlers, restore_signal_handlers
 
 # Suppress PIL decompression bomb warnings for large aerial orthophotos
@@ -89,17 +104,17 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
         coords_array = np.array(raw_coords)
         if coords_array.size == 0:
             return [], source_zone
-        
+
         if utm_zone is not None:
             raise ValueError(f"{context_inputs} inputs do not accept --utm-zone.")
-        
+
         lons = coords_array[:, 1]
         zone_candidates = np.floor((lons + 180) / 6).astype(int) + 1
         unique_zones = set(zone_candidates.tolist())
-        
+
         if len(unique_zones) > 1:
             raise ValueError(f"{context_span} spans multiple UTM zones; split input by zone.")
-        
+
         detected_zone = unique_zones.pop()
         utm_x, utm_y = latlon_array_to_utm(
             coords_array[:, 0], coords_array[:, 1], force_zone_number=detected_zone
@@ -232,6 +247,116 @@ def normalize_regions(region_args: list[str]) -> list[Region]:
     return normalized
 
 
+def validate_preview_args(args) -> list[str]:
+    """Validate `preview` arguments. Exactly one of BBOX/--kml is required."""
+
+    errors: list[str] = []
+    has_bbox = bool(getattr(args, "bbox", None))
+    has_kml = bool(getattr(args, "kml", None))
+
+    if has_bbox == has_kml:
+        errors.append("preview: provide exactly one of BBOX positional or --kml PATH")
+
+    if has_bbox:
+        parts = args.bbox.split(",")
+        if len(parts) != 4:
+            errors.append(
+                f"bbox: expected 4 comma-separated values (WEST,SOUTH,EAST,NORTH), got {len(parts)}"
+            )
+        else:
+            try:
+                min_x, min_y, max_x, max_y = map(float, parts)
+                if min_x > max_x:
+                    errors.append(f"bbox: WEST ({min_x}) must be <= EAST ({max_x})")
+                if min_y > max_y:
+                    errors.append(f"bbox: SOUTH ({min_y}) must be <= NORTH ({max_y})")
+            except ValueError:
+                errors.append("bbox: all values must be valid numbers")
+
+    if args.margin < 0:
+        errors.append(f"--margin: {args.margin} must be non-negative")
+
+    return errors
+
+
+def _tile_size_m_for_region(region_name: str | None) -> int:
+    """Tile size in meters for the preview output grid.
+
+    Defaults to ``OUTPUT_TILE_SIZE_KM``; if a region is given, the region's
+    native file tile size is used via the config map.
+    """
+    # Preview uses the same 1 km output grid that the pipeline does, so that
+    # what the user sees matches what `bbox` would download. Passing a region
+    # in future could change this; kept as a hook.
+    del region_name
+    return int(OUTPUT_TILE_SIZE_KM * METERS_PER_KM)
+
+
+def run_preview(args) -> int:
+    """Generate and write a preview HTML for the requested extent."""
+
+    tile_size_m = _tile_size_m_for_region(getattr(args, "region", None))
+    region_hint = getattr(args, "region", None)
+    utm_zone_override = getattr(args, "utm_zone", None)
+
+    kml_polygons: list[list[tuple[float, float]]] | None = None
+
+    if args.kml:
+        kml_polygons, wgs_bbox = parse_kml(args.kml)
+        if utm_zone_override is not None:
+            raise ValueError("--kml input uses WGS84 coordinates; --utm-zone is not allowed.")
+        xmin, ymin, xmax, ymax, zone = latlon_bbox_to_utm(wgs_bbox)
+    else:
+        min_x, min_y, max_x, max_y = map(float, args.bbox.split(","))
+        is_latlon = abs(min_x) < 180 and abs(max_x) < 180 and abs(min_y) < 90 and abs(max_y) < 90
+        if is_latlon:
+            if utm_zone_override is not None:
+                raise ValueError("lat/lon BBOX does not accept --utm-zone.")
+            xmin, ymin, xmax, ymax, zone = latlon_bbox_to_utm(
+                PreviewBBox(min_x, min_y, max_x, max_y)
+            )
+        elif utm_zone_override is not None:
+            zone = utm_zone_override
+            xmin, ymin, xmax, ymax = min_x, min_y, max_x, max_y
+        elif region_hint is not None:
+            zone = utm_zone_for_region(Region(region_hint.upper()))
+            xmin, ymin, xmax, ymax = min_x, min_y, max_x, max_y
+        else:
+            raise ValueError("UTM BBOX requires either --utm-zone or --region to resolve the zone.")
+
+    data = build_preview_data(
+        utm_zone=zone,
+        utm_xmin=xmin,
+        utm_ymin=ymin,
+        utm_xmax=xmax,
+        utm_ymax=ymax,
+        margin=args.margin,
+        tile_size_m=tile_size_m,
+        kml_polygons=kml_polygons,
+        title=(f"georaffer preview ({args.kml})" if args.kml else "georaffer preview (bbox)"),
+    )
+
+    out_path = write_preview_html(data, args.output)
+
+    tile_grid = data["tileGrid"]
+    margin_grid = data["marginGrid"]
+    print(f"Preview written to {out_path}")
+    print(
+        f"Tile grid: {tile_grid['cols']}x{tile_grid['rows']} = "
+        f"{tile_grid['cols'] * tile_grid['rows']} tiles"
+        f" (UTM {zone}N, E {tile_grid['e_min']}-{tile_grid['e_max']},"
+        f" N {tile_grid['n_min']}-{tile_grid['n_max']})"
+    )
+    if margin_grid is not None:
+        print(
+            f"With --margin {args.margin}: {margin_grid['cols']}x{margin_grid['rows']} = "
+            f"{margin_grid['cols'] * margin_grid['rows']} tiles"
+            f" (E {margin_grid['e_min']}-{margin_grid['e_max']},"
+            f" N {margin_grid['n_min']}-{margin_grid['n_max']})"
+        )
+    return 0
+
+
 def validate_args(args) -> list[str]:
     """Validate parsed arguments, return list of errors."""
 
@@ -329,8 +454,6 @@ Details:
                 NRW: uses yearly tile catalogs. RLP: uses WMS coverage checks (slower).
                 Examples: --from 2015 (2015 to present), --from 2015 --to 2018
 """
-
-
 
     parser = argparse.ArgumentParser(
         prog="georaffer",
@@ -513,6 +636,71 @@ Details:
         help="Path to CVL pose CSVs (data dir, dataset dir, poses dir, or a pose CSV)",
     )
 
+    # preview subcommand (does not share `shared` since it skips the download
+    # pipeline and only needs a handful of args).
+    preview_parser = subparsers.add_parser(
+        "preview",
+        help="Write an HTML map preview of the requested tiles (no download)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        usage=(
+            "georaffer preview [BBOX | --kml PATH] [options]\n\n"
+            "   ex: georaffer preview 6.9,50.9,7.1,51.1\n"
+            "                         └─ lon/lat bbox\n"
+            "       georaffer preview 621172,5629775,632345,5637505 --utm-zone 32\n"
+            "                         └─ UTM meters\n"
+            "       georaffer preview --kml ./area.kml\n"
+            "                         └─ polygons + bbox from KML\n"
+        ),
+        description=(
+            "Write a self-contained HTML map (Esri satellite basemap via Leaflet) "
+            "showing the requested bbox, the resolved 1km UTM tile grid, and the "
+            "margin ring if --margin > 0. Prints the output path; does not open it."
+        ),
+    )
+    preview_parser.add_argument(
+        "bbox",
+        metavar="BBOX",
+        nargs="?",
+        default=None,
+        help="Bounding box: XMIN,YMIN,XMAX,YMAX (UTM meters or lon/lat). Omit when using --kml.",
+    )
+    preview_parser.add_argument(
+        "--kml",
+        metavar="PATH",
+        default=None,
+        help="KML file with polygon(s) in WGS84. Overall bbox is computed from the polygons.",
+    )
+    preview_parser.add_argument(
+        "--margin",
+        type=int,
+        default=0,
+        metavar="INT",
+        help="Tile buffer ring to visualize (default: 0)",
+    )
+    preview_parser.add_argument(
+        "--utm-zone",
+        type=int,
+        choices=[32, 33],
+        metavar="ZONE",
+        help="UTM zone for UTM BBOX (required for UTM inputs; invalid for lat/lon or KML)",
+    )
+    preview_parser.add_argument(
+        "--region",
+        metavar="REGION",
+        choices=["nrw", "rlp", "bb", "bw", "by", "th", "cz"],
+        default=None,
+        help=(
+            "Region hint; used to resolve the UTM zone for UTM bbox input when "
+            "--utm-zone is not given."
+        ),
+    )
+    preview_parser.add_argument(
+        "--output",
+        metavar="PATH",
+        default="/tmp/georaffer-preview.html",
+        help="Output HTML path (default: /tmp/georaffer-preview.html)",
+    )
+
     # Don't let argparse auto-error on missing subcommand - we handle it manually
     subparsers.required = False
     args = parser.parse_args()
@@ -523,6 +711,20 @@ Details:
         sys.stdout.flush()
         print("\nerror: the following arguments are required: <command>", file=sys.stderr)
         sys.exit(2)
+
+    # Preview is an offline-only command; handle it before pipeline validation.
+    if args.command == "preview":
+        errors = validate_preview_args(args)
+        if errors:
+            print("Validation errors:", file=sys.stderr)
+            for err in errors:
+                print(f"  - {err}", file=sys.stderr)
+            sys.exit(1)
+        try:
+            sys.exit(run_preview(args))
+        except (ValueError, FileNotFoundError) as e:
+            print(f"\nerror: {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Validate arguments
     errors = validate_args(args)
@@ -537,7 +739,6 @@ Details:
     old_int = None
     old_term = None
     try:
-
         old_int, old_term = install_interrupt_signal_handlers()
 
         # Load coordinates
