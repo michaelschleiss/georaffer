@@ -5,13 +5,20 @@ import sys
 import warnings
 
 import numpy as np
-import utm
 from PIL import Image
 from rasterio.warp import transform_bounds
 
 from georaffer import __version__
 from georaffer.align import align_to_reference
-from georaffer.config import DEFAULT_PIXEL_SIZE, DEFAULT_WORKERS, METERS_PER_KM, OUTPUT_TILE_SIZE_KM, UTM_ZONE, Region
+from georaffer.config import (
+    DEFAULT_PIXEL_SIZE,
+    DEFAULT_WORKERS,
+    METERS_PER_KM,
+    OUTPUT_TILE_SIZE_KM,
+    UTM_ZONE,
+    UTM_ZONE_BY_REGION,
+    Region,
+)
 from georaffer.grids import dedupe_by_output_tile, latlon_array_to_utm, tile_to_utm_center
 from georaffer.inputs import (
     load_from_bbox,
@@ -64,6 +71,31 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
             raise ValueError("UTM inputs require --utm-zone (32 or 33).")
         return utm_zone
 
+    # Zones of the selected regions (None when called without --region, e.g. from tests)
+    region_args = getattr(args, "region", None)
+    allowed_zones: set[int] | None = (
+        {UTM_ZONE_BY_REGION[region] for region in normalize_regions(region_args)}
+        if region_args
+        else None
+    )
+
+    def _resolve_latlon_zone(lons: np.ndarray, context: str) -> int:
+        """Pick the UTM zone for lat/lon inputs.
+
+        States publish all tiles in one zone even where they extend past its 6° band
+        (eastern Bavaria lies in zone 33 but is delivered in zone 32), so the zone of
+        the selected regions wins over the natural zone of the input.
+        """
+        natural_zones = set((np.floor((np.asarray(lons) + 180) / 6).astype(int) + 1).tolist())
+        if allowed_zones is not None and len(allowed_zones) == 1:
+            return next(iter(allowed_zones))
+        candidates = natural_zones & allowed_zones if allowed_zones else natural_zones
+        if len(candidates) == 1:
+            return candidates.pop()
+        if len(natural_zones) > 1:
+            raise ValueError(f"{context} spans multiple UTM zones; split input by zone.")
+        return natural_zones.pop()
+
     def _latlon_bbox_to_utm(
         min_lon: float,
         min_lat: float,
@@ -72,13 +104,17 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
         *,
         context: str,
     ) -> tuple[float, float, float, float, int]:
-        min_x, min_y, min_zone, _ = utm.from_latlon(min_lat, min_lon)
-        max_x, max_y, max_zone, _ = utm.from_latlon(max_lat, max_lon)
         if utm_zone is not None:
             raise ValueError(f"{context} lat/lon inputs do not accept --utm-zone.")
-        if min_zone != max_zone:
-            raise ValueError(f"{context} spans multiple UTM zones; split input by zone.")
-        return min_x, min_y, max_x, max_y, min_zone
+        zone = _resolve_latlon_zone(np.array([min_lon, max_lon]), context)
+        # A lat/lon box is rotated/curved in UTM: take the envelope of its densified edges
+        n = 21
+        lons = np.linspace(min_lon, max_lon, n)
+        lats = np.linspace(min_lat, max_lat, n)
+        edge_lons = np.concatenate([lons, lons, np.full(n, min_lon), np.full(n, max_lon)])
+        edge_lats = np.concatenate([np.full(n, min_lat), np.full(n, max_lat), lats, lats])
+        xs, ys = latlon_array_to_utm(edge_lats, edge_lons, force_zone_number=zone)
+        return float(xs.min()), float(ys.min()), float(xs.max()), float(ys.max()), zone
 
     def _convert_latlon_array_to_utm(
         raw_coords: list[tuple[float, float, float]],
@@ -93,14 +129,7 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
         if utm_zone is not None:
             raise ValueError(f"{context_inputs} inputs do not accept --utm-zone.")
         
-        lons = coords_array[:, 1]
-        zone_candidates = np.floor((lons + 180) / 6).astype(int) + 1
-        unique_zones = set(zone_candidates.tolist())
-        
-        if len(unique_zones) > 1:
-            raise ValueError(f"{context_span} spans multiple UTM zones; split input by zone.")
-        
-        detected_zone = unique_zones.pop()
+        detected_zone = _resolve_latlon_zone(coords_array[:, 1], context_span)
         utm_x, utm_y = latlon_array_to_utm(
             coords_array[:, 0], coords_array[:, 1], force_zone_number=detected_zone
         )
@@ -123,11 +152,7 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
                 raise ValueError("CSV lat/lon inputs do not accept --utm-zone.")
             arr = np.array(raw_coords)  # shape (N, 2): lon, lat
             lons, lats = arr[:, 0], arr[:, 1]
-            zone_candidates = np.floor((lons + 180) / 6).astype(int) + 1
-            unique_zones = set(zone_candidates.tolist())
-            if len(unique_zones) > 1:
-                raise ValueError("CSV coordinates span multiple UTM zones; split input by zone.")
-            source_zone = unique_zones.pop()
+            source_zone = _resolve_latlon_zone(lons, "CSV coordinates")
             utm_x, utm_y = latlon_array_to_utm(lats, lons, force_zone_number=source_zone)
             coords = list(zip(np.atleast_1d(utm_x), np.atleast_1d(utm_y)))
         else:
@@ -164,7 +189,9 @@ def load_coordinates(args: argparse.Namespace) -> tuple[list[tuple[float, float]
             min_x, min_y, max_x, max_y, source_zone = _latlon_bbox_to_utm(
                 min_x, min_y, max_x, max_y, context="GeoTIFF"
             )
-        elif epsg in (25832, 25833, 32632, 32633):
+        elif epsg in (25832, 25833, 32632, 32633) and (
+            allowed_zones is None or epsg % 100 in allowed_zones
+        ):
             detected_zone = epsg % 100  # extract utm zone from epsg code
             if utm_zone is not None and utm_zone != detected_zone:
                 raise ValueError(
