@@ -6,6 +6,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 import rasterio
+import utm
 from rasterio.transform import from_origin
 
 from georaffer.cli import load_coordinates, normalize_regions, validate_args
@@ -148,6 +149,48 @@ class TestLoadCoordinatesBbox:
         assert x > 100000  # UTM easting is large
         assert y > 5000000  # UTM northing is large
 
+    def test_bbox_latlon_uses_region_zone_outside_natural_band(self):
+        """Eastern Bavaria lies in zone 33 but BY tiles are published in zone 32."""
+        args = Namespace(
+            command="bbox",
+            bbox="12.96,48.384,13.677,49.086",
+            region=["by"],
+        )
+
+        coords, source_zone = load_coordinates(args)
+
+        assert source_zone == 32
+        xs = [c[0] for c in coords]
+        assert min(xs) > 780000  # zone 32 eastings beyond the 6° band
+        assert max(xs) < 860000
+
+    def test_bbox_latlon_keeps_natural_zone_when_region_matches(self):
+        """With regions in both zones, the natural zone of the input is kept."""
+        args = Namespace(
+            command="bbox",
+            bbox="13.0,48.5,13.1,48.6",
+            region=["by", "cz"],
+        )
+
+        _, source_zone = load_coordinates(args)
+
+        assert source_zone == 33
+
+    def test_bbox_latlon_covers_all_corners(self):
+        """Tile envelope must contain all four lat/lon corners, not just SW/NE."""
+        args = Namespace(
+            command="bbox",
+            bbox="12.96,48.384,13.677,49.086",
+            region=["by"],
+        )
+
+        coords, _ = load_coordinates(args)
+
+        tiles = {(int(x // 1000), int(y // 1000)) for x, y in coords}
+        for lat, lon in [(48.384, 12.96), (48.384, 13.677), (49.086, 12.96), (49.086, 13.677)]:
+            e, n, _, _ = utm.from_latlon(lat, lon, force_zone_number=32)
+            assert (int(e // 1000), int(n // 1000)) in tiles
+
     def test_bbox_latlon_rejects_utm_zone(self):
         """Lat/lon bbox inputs should not accept --utm-zone."""
         args = Namespace(
@@ -216,15 +259,14 @@ class TestLoadCoordinatesTif:
             tif=str(tif_path),
         )
 
-        with patch("utm.from_latlon") as mock_utm:
-            mock_utm.side_effect = [
-                (350000, 5600000, 32, "N"),
-                (350500, 5600500, 32, "N"),
-            ]
-            coords, source_zone = load_coordinates(args)
+        coords, source_zone = load_coordinates(args)
 
-        assert source_zone == 32
-        assert coords == [(350500.0, 5600500.0)]
+        # 13.4°E lies in zone 33; 0.01° box is ~0.7 x 1.1 km
+        assert source_zone == 33
+        assert 1 <= len(coords) <= 6
+        x, y = coords[0]
+        assert 390000 < x < 394000
+        assert 5826000 < y < 5830000
 
 
 class TestValidateArgs:
