@@ -1,6 +1,6 @@
 # georaffer
 
-Download German orthophotos and DSM tiles as GeoTIFF. Supports NRW, RLP, BB, BW, BY, and TH.
+Download German and Czech orthophotos and DSM tiles as GeoTIFF. Supports NRW, RLP, BB, BW, BY, TH, and CZ.
 
 ## Installation
 
@@ -48,7 +48,7 @@ georaffer tiles 362,5604 --output ./tiles
 ```
 
 See `georaffer --help` for all options.
-By default, downloads target NRW + RLP; use `--region` to select others (e.g., `--region bb,bw,by,th`).
+By default, downloads target NRW, RLP, BW, and BY; use `--region` to select others (e.g., `--region bb th cz`).
 
 When using the `tif` command, aligned outputs are written to `./tiles/aligned/` and
 match the reference GeoTIFF grid (CRS, pixel size, width/height, and bounds).
@@ -95,6 +95,8 @@ Raw downloads keep the provider filenames:
 - BY DSM (TIF): `32<grid_x>_<grid_y>_20_DOM.tif`
 - TH DOP (ZIP): `dop20rgb_32_<grid_x>_<grid_y>_<n>_th_<year>.zip`
 - TH DSM (ZIP): `las_32_<grid_x>_<grid_y>_1_th_<year_range>.zip`
+- CZ orthophotos (JP2): `oi_<grid_x>_<grid_y>_<year>.jp2`
+- CZ DSM (TIF/LAZ): `dmpok_<grid_x>_<grid_y>_<year>.tif`, or `dmp1g_<grid_x>_<grid_y>_<year>.laz` as fallback
 
 Processed GeoTIFFs use a unified UTM-based pattern:
 
@@ -102,8 +104,8 @@ Processed GeoTIFFs use a unified UTM-based pattern:
 
 where:
 
-- `<region>` is `nrw`, `rlp`, `bb`, `bw`, `by`, or `th`
-- `<zone>` is the UTM zone (`32` for NRW/RLP/BW/BY/TH, `33` for BB)
+- `<region>` is `nrw`, `rlp`, `bb`, `bw`, `by`, `th`, or `cz`
+- `<zone>` is the UTM zone (`32` for NRW/RLP/BW/BY/TH, `33` for BB/CZ)
 - `<easting>` and `<northing>` are UTM coordinates of the tile’s south‑west corner in meters (for example `350000,5600000`)
 - `<year>` is the acquisition year inferred from the source filename or LAZ header (falls back to `latest` when no year is available)
 
@@ -141,7 +143,7 @@ See `georaffer/downloaders/nrw.py` as reference.
 
 ## Data Sources and Licensing
 
-German states publish orthophotos and elevation models as open data—free for commercial and non-commercial use—under [EU High-Value Datasets Regulation 2023/138](https://eur-lex.europa.eu/eli/reg_impl/2023/138) and the [INSPIRE Directive](https://inspire.ec.europa.eu/), coordinated nationally by the [AdV](https://www.adv-online.de/) (Arbeitsgemeinschaft der Vermessungsverwaltungen).
+German states publish orthophotos and elevation models as open data—free for commercial and non-commercial use—under [EU High-Value Datasets Regulation 2023/138](https://eur-lex.europa.eu/eli/reg_impl/2023/138) and the [INSPIRE Directive](https://inspire.ec.europa.eu/), coordinated nationally by the [AdV](https://www.adv-online.de/) (Arbeitsgemeinschaft der Vermessungsverwaltungen). Czech data comes from ČÚZK, which has published it as free open data since July 2023.
 
 | Region | Provider | License |
 |--------|----------|---------|
@@ -151,11 +153,13 @@ German states publish orthophotos and elevation models as open data—free for c
 | BW | [LGL BW](https://www.lgl-bw.de) | [dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0) ² |
 | BY | [LDBV Bayern](https://geodaten.bayern.de) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) ³ |
 | TH | [GDI-Th](https://geoportal.thueringen.de) | [dl-de/by-2-0](https://www.govdata.de/dl-de/by-2-0) ⁴ |
+| CZ | [ČÚZK](https://geoportal.cuzk.gov.cz) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) ⁵ |
 
 ¹ Attribution: `© GeoBasis-DE / <provider>, <year>, dl-de/by-2-0`
 ² Attribution: `Datenquelle: LGL, www.lgl-bw.de`
 ³ Attribution: `Bayerische Vermessungsverwaltung – www.geodaten.bayern.de`
 ⁴ Attribution: `© GDI-Th`
+⁵ Attribution: `© ČÚZK, CC BY 4.0`
 
 ## License
 
